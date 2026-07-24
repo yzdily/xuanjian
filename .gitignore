@@ -1,0 +1,42 @@
+data/
+*.log
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+_refs/
+.backups/
+*.backup
+.pytest_cache/
+*.png
+.backup_skills_*/
+.backups/
+*.backup
+# Burp 插件构建产物
+burp-plugin/.gradle/
+burp-plugin/bin/
+burp-plugin/build/
+burp-plugin/*.jar
+# 原始 zip 包（不入仓库）
+*.zip
+# PyInstaller 打包产物
+ms-playwright/
+*.spec
+# 打包输出
+installer_output/
+# stdout/stderr 日志
+stdout.log
+stderr.log
+start_out.txt
+start_err.txt

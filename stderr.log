@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "C:\Users\45963\.config\opencode\skills\ai\ScareAISec-main\start.py", line 445, in <module>
+  File "C:\Users\45963\.config\opencode\skills\ai\ScareAISec-main\start.py", line 429, in main
+    print(f"{BOLD}{CYAN}============================================{NC}")
+    ^^^^^^^^^^^^^^^
+  File "C:\Users\45963\.config\opencode\skills\ai\ScareAISec-main\start.py", line 201, in check_browser
+    ]
+    
+    ...<2 lines>...
+        return
+    
+  File "C:\Users\45963\AppData\Local\Programs\Python\Python314\Lib\subprocess.py", line 557, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\45963\AppData\Local\Programs\Python\Python314\Lib\subprocess.py", line 1221, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\45963\AppData\Local\Programs\Python\Python314\Lib\subprocess.py", line 1664, in _communicate
+    raise TimeoutExpired(self.args, orig_timeout)
+subprocess.TimeoutExpired: Command '['C:\\Users\\45963\\AppData\\Local\\Programs\\Python\\Python314\\python.exe', '-m', 'playwright', 'install', 'chromium']' timed out after 120 seconds

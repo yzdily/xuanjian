@@ -1,0 +1,31 @@
+
+[1m[0;36m============================================[0m
+[1m[0;36m  PentestAgent — 环境检查与启动[0m
+[1m[0;36m  平台: Windows | Python 3.14[0m
+[1m[0;36m============================================[0m
+
+[1m[0/5] 检查 Python 版本...[0m
+  [0;32m[OK][0m Python 3.14.5
+
+[1m[1/5] 检查 Python 依赖...[0m
+  [0;32m[OK][0m openai
+  [0;32m[OK][0m httpx
+  [0;32m[OK][0m pydantic
+  [0;32m[OK][0m mcp
+  [0;32m[OK][0m fastmcp
+  [0;32m[OK][0m pyyaml
+  [0;32m[OK][0m python-dotenv
+  [0;32m[OK][0m rich
+  [0;32m[OK][0m typer
+  [0;32m[OK][0m playwright
+  [0;32m[OK][0m mitmproxy
+  [0;32m[OK][0m fastapi
+  [0;32m[OK][0m uvicorn
+  [0;33m[!][0m ddddocr — 未安装。验证码自动识别不可用，安装: pip install ddddocr
+  [0;33m[!][0m rapidocr-onnxruntime — 未安装。OCR文字识别不可用，安装: pip install rapidocr-onnxruntime
+
+[1m[2/5] 检查配置文件...[0m
+  [0;32m[OK][0m .env 已配置 (模型: qwen-plus)
+
+[1m[3/5] 检查浏览器...[0m
+  [0;33m[!][0m Chromium 未完整安装，尝试下载...
