@@ -151,7 +151,8 @@ cd burp-plugin && ./gradlew jar
 
 ### 截图
 
-<img width="3320" height="1886" alt="Clipboard_Screenshot_1781007519" src="https://github.com/user-attachments/assets/806fc26f-da71-4ee7-8f5f-f83f91d91676" />
+![Uploading 704ded67-e032-4b99-869d-f90f5b049922.png…]()
+
 
 
 ---
