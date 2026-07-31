@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6633cc"/>
+      <stop offset="100%" style="stop-color:#9933ff"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+  <text x="32" y="44" text-anchor="middle" font-size="38" font-weight="700" fill="#fff" filter="url(#glow)" font-family="'Microsoft YaHei','SimHei',sans-serif">玄</text>
+</svg>

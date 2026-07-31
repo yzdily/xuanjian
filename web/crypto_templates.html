@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<title>加密接口模板 — Crypto Replay</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+  }
+  body {
+    margin: 0; background: #fff; color: #1a1a2e;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .topbar {
+    height: 48px; padding: 0 20px;
+    background: #f8f9fa; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; gap: 16px;
+    flex-shrink: 0;
+  }
+  .topbar h1 { margin: 0; color: #1565c0; font-size: 18px; }
+  .topbar .subtitle { color: #757575; font-size: 13px; }
+  .spacer { flex: 1; }
+  /* 嵌入 iframe 时隐藏自身 topbar（外层 modal 已有标题），通过 ?embed=1 触发 */
+  body.embed .topbar { display: none; }
+
+  .container {
+    display: grid; grid-template-columns: 280px 1fr;
+    flex: 1;
+    min-height: 0;       /* 关键：让 grid 在 flex 容器内正确收缩 */
+    overflow: hidden;
+  }
+  .sidebar {
+    background: #f8f9fa; border-right: 1px solid #e2e5e9;
+    overflow-y: auto; padding: 16px;
+  }
+  .sidebar h3 {
+    margin: 0 0 12px; font-size: 14px; color: #424242;
+    border-bottom: 1px solid #e2e5e9; padding-bottom: 8px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .sidebar h3 button {
+    background: #1565c0; color: #fff; border: 0;
+    padding: 4px 10px; border-radius: 3px; font-size: 12px; cursor: pointer;
+  }
+  .tpl-card {
+    background: #fff; border: 1px solid #e2e5e9; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+    transition: all .15s;
+  }
+  .tpl-card:hover { border-color: #1565c0; background: #f0f4ff; }
+  .tpl-card.active { border-color: #1565c0; background: #e3f2fd; }
+  .tpl-card .host { font-weight: 600; color: #1565c0; }
+  .tpl-card .meta { color: #757575; font-size: 11px; margin-top: 4px; }
+  .tpl-card .badge {
+    display: inline-block; background: #e3f2fd; color: #1565c0;
+    padding: 1px 6px; border-radius: 3px; font-size: 11px;
+  }
+
+  .main { overflow-y: auto; padding: 24px; }
+  .empty-msg { color: #9e9e9e; text-align: center; padding: 60px; }
+
+  .tpl-detail h2 { margin: 0 0 8px; color: #1a1a2e; font-size: 18px; }
+  .tpl-detail .url { color: #757575; font-size: 13px; margin-bottom: 16px; }
+
+  .field-card {
+    background: #fff; border: 1px solid #e2e5e9; border-left: 4px solid #1565c0;
+    border-radius: 4px; padding: 12px 16px; margin-bottom: 10px;
+  }
+  .field-card .head {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 6px;
+  }
+  .field-card .name {
+    font-family: ui-monospace, monospace; font-weight: 600;
+    color: #e65100; font-size: 14px;
+  }
+  .algo-tag {
+    background: #fff3e0; color: #e65100;
+    padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600;
+  }
+  .field-row {
+    font-size: 12px; color: #424242; margin: 3px 0;
+  }
+  .field-row .lbl {
+    color: #757575; display: inline-block; min-width: 70px;
+  }
+  .field-row code {
+    background: #f5f5f5; padding: 1px 6px; border-radius: 3px;
+    color: #424242; font-family: ui-monospace, monospace; font-size: 11px;
+    word-break: break-all;
+  }
+
+  .toolbar {
+    margin-bottom: 16px; display: flex; gap: 8px; align-items: center;
+  }
+  .toolbar button {
+    background: #1565c0; color: #fff; border: 0;
+    padding: 7px 14px; border-radius: 4px; font-size: 13px; cursor: pointer;
+  }
+  .toolbar button.danger { background: #c62828; }
+  .toolbar button.test { background: #4caf50; }
+
+  /* Modal */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    display: none; align-items: center; justify-content: center; z-index: 1000;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: #fff; border-radius: 8px; width: 560px; max-height: 80vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.2);
+  }
+  .modal-head {
+    padding: 16px 20px; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { margin: 0; color: #1565c0; }
+  .modal-head .close {
+    background: none; border: 0; font-size: 24px; color: #757575; cursor: pointer;
+  }
+  .modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+  .modal-foot {
+    padding: 12px 20px; border-top: 1px solid #e2e5e9;
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+  .modal-foot button {
+    background: #1565c0; color: #fff; border: 0;
+    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+  }
+
+  .form-row {
+    margin-bottom: 12px;
+  }
+  .form-row label {
+    display: block; font-size: 12px; color: #757575; margin-bottom: 4px;
+  }
+  .form-row input, .form-row select, .form-row textarea {
+    width: 100%; padding: 7px 10px;
+    border: 1px solid #e2e5e9; border-radius: 4px;
+    font-size: 13px; font-family: inherit;
+  }
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+    border-color: #1565c0; outline: none;
+  }
+  .form-row .hint {
+    font-size: 11px; color: #999; margin-top: 2px;
+  }
+
+  .test-result {
+    background: #fafbfc; border-left: 3px solid #4caf50;
+    padding: 10px 12px; margin-top: 12px; border-radius: 3px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+    word-break: break-all; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🔐 加密接口模板</h1>
+  <span class="subtitle">学习一次加密接口，所有相关测试自动套用</span>
+  <span class="spacer"></span>
+  <a href="/" style="color: #1565c0; text-decoration: none; font-size: 13px;">← 返回</a>
+</div>
+
+<div class="container">
+
+  <aside class="sidebar">
+    <h3>
+      所有 host 模板
+      <button onclick="openLearnModal()">+ 新增</button>
+    </h3>
+    <div id="tplList"></div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="empty-msg">在左侧选择一个模板查看，或点击"+ 新增"录入</div>
+  </main>
+
+</div>
+
+<!-- 学习/录入 Modal -->
+<div class="modal-bg" id="learnModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>📥 录入加密字段</h3>
+      <button class="close" onclick="closeModal('learnModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>host *</label>
+        <input id="lf_host" placeholder="example.com" />
+        <div class="hint">同 host 同字段会覆盖更新</div>
+      </div>
+      <div class="form-row">
+        <label>样本 URL（可选）</label>
+        <input id="lf_url" placeholder="https://example.com/api/login" />
+      </div>
+      <div class="form-row">
+        <label>字段名 *</label>
+        <input id="lf_field" placeholder="password" />
+      </div>
+      <div class="form-row">
+        <label>算法 *</label>
+        <select id="lf_algorithm">
+          <option value="aes">AES</option>
+          <option value="sm4">SM4</option>
+          <option value="sm2">SM2</option>
+          <option value="rsa">RSA</option>
+          <option value="des">DES</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-row">
+          <label>模式</label>
+          <select id="lf_mode">
+            <option>CBC</option><option>ECB</option><option>CTR</option><option>GCM</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>编码</label>
+          <select id="lf_encoding">
+            <option>base64</option><option>hex</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>密钥（base64 / hex / 字面值，自动识别）</label>
+        <input id="lf_key" />
+      </div>
+      <div class="form-row">
+        <label>IV（CBC/CTR 模式需要）</label>
+        <input id="lf_iv" />
+      </div>
+      <div class="form-row">
+        <label>位置</label>
+        <select id="lf_location">
+          <option>body</option><option>header</option><option>query</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>明文样本（可选）</label>
+        <input id="lf_sp" placeholder="hello" />
+      </div>
+      <div class="form-row">
+        <label>密文样本（可选）</label>
+        <input id="lf_sc" />
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button onclick="closeModal('learnModal')" style="background:#9e9e9e;">取消</button>
+      <button onclick="submitLearn()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 试加密 Modal -->
+<div class="modal-bg" id="testModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>🧪 试加密</h3>
+      <button class="close" onclick="closeModal('testModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>host</label>
+        <input id="tf_host" readonly />
+      </div>
+      <div class="form-row">
+        <label>字段</label>
+        <select id="tf_field"></select>
+      </div>
+      <div class="form-row">
+        <label>明文</label>
+        <textarea id="tf_plain" rows="3" placeholder="hello"></textarea>
+      </div>
+      <div id="tf_result"></div>
+    </div>
+    <div class="modal-foot">
+      <button onclick="closeModal('testModal')" style="background:#9e9e9e;">关闭</button>
+      <button onclick="submitTest()">加密</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentHost = null;
+
+async function loadList() {
+  const r = await fetch('/api/crypto/templates');
+  const data = await r.json();
+  const list = data.templates || [];
+  const box = document.getElementById('tplList');
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-msg" style="padding:12px;font-size:12px;">暂无模板</div>';
+    return;
+  }
+  box.innerHTML = list.map(t => `
+    <div class="tpl-card ${t.host === currentHost ? 'active' : ''}" data-host="${escapeHtml(t.host)}">
+      <div class="host">${escapeHtml(t.host)}</div>
+      <div class="meta">
+        <span class="badge">${t.fields_count} 字段</span>
+        ${escapeHtml(t.learned_at_human || '')}
+      </div>
+    </div>
+  `).join('');
+  document.querySelectorAll('.tpl-card').forEach(el => {
+    el.onclick = () => loadTemplate(el.dataset.host);
+  });
+}
+
+async function loadTemplate(host) {
+  currentHost = host;
+  document.querySelectorAll('.tpl-card').forEach(el => {
+    el.classList.toggle('active', el.dataset.host === host);
+  });
+  const r = await fetch('/api/crypto/template?host=' + encodeURIComponent(host));
+  if (!r.ok) {
+    document.getElementById('main').innerHTML = '<div class="empty-msg">读取失败</div>';
+    return;
+  }
+  const tpl = await r.json();
+  renderTemplate(tpl);
+}
+
+function renderTemplate(tpl) {
+  const fields = (tpl.fields || []).map(ef => `
+    <div class="field-card">
+      <div class="head">
+        <span class="name">${escapeHtml(ef.name)}</span>
+        <span class="algo-tag">${escapeHtml((ef.algorithm || '').toUpperCase())}</span>
+        <span style="color:#757575;font-size:11px;">${escapeHtml(ef.mode || '')} · ${escapeHtml(ef.location || '')}</span>
+      </div>
+      ${ef.key ? `<div class="field-row"><span class="lbl">密钥：</span><code>${escapeHtml(ef.key)}</code></div>` : ''}
+      ${ef.iv ? `<div class="field-row"><span class="lbl">IV：</span><code>${escapeHtml(ef.iv)}</code></div>` : ''}
+      ${ef.sample_plaintext ? `<div class="field-row"><span class="lbl">明文样本：</span><code>${escapeHtml(ef.sample_plaintext)}</code></div>` : ''}
+      ${ef.sample_ciphertext ? `<div class="field-row"><span class="lbl">密文样本：</span><code>${escapeHtml(ef.sample_ciphertext)}</code></div>` : ''}
+    </div>
+  `).join('');
+
+  document.getElementById('main').innerHTML = `
+    <div class="tpl-detail">
+      <h2>${escapeHtml(tpl.host)}</h2>
+      ${tpl.sample_url ? `<div class="url">📎 ${escapeHtml(tpl.sample_url)}</div>` : ''}
+      <div class="toolbar">
+        <button class="test" onclick="openTestModal()">🧪 试加密</button>
+        <button onclick="openLearnModal('${escapeHtml(tpl.host)}')">+ 添加字段</button>
+        <button class="danger" onclick="deleteTpl()">删除模板</button>
+      </div>
+      ${fields || '<div class="empty-msg">该模板暂无字段</div>'}
+    </div>
+  `;
+}
+
+function openLearnModal(prefHost) {
+  document.getElementById('learnModal').classList.add('show');
+  if (prefHost) document.getElementById('lf_host').value = prefHost;
+}
+
+async function submitLearn() {
+  const body = {
+    host: val('lf_host').trim(),
+    url: val('lf_url'),
+    field: val('lf_field').trim(),
+    algorithm: val('lf_algorithm'),
+    mode: val('lf_mode'),
+    key: val('lf_key'),
+    iv: val('lf_iv'),
+    encoding: val('lf_encoding'),
+    location: val('lf_location'),
+    sample_plaintext: val('lf_sp'),
+    sample_ciphertext: val('lf_sc'),
+  };
+  if (!body.host || !body.field) { alert('host 和字段名必填'); return; }
+  const r = await fetch('/api/crypto/learn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { alert('保存失败: ' + (await r.text())); return; }
+  closeModal('learnModal');
+  loadList();
+  await loadTemplate(body.host);
+  // 清空表单
+  ['lf_field','lf_key','lf_iv','lf_sp','lf_sc','lf_url'].forEach(id => document.getElementById(id).value = '');
+}
+
+async function deleteTpl() {
+  if (!currentHost) return;
+  if (!confirm(`确认删除 host "${currentHost}" 的模板？`)) return;
+  const r = await fetch('/api/crypto/templates/delete?host=' + encodeURIComponent(currentHost), {method: 'POST'});
+  if (r.ok) {
+    currentHost = null;
+    document.getElementById('main').innerHTML = '<div class="empty-msg">已删除</div>';
+    loadList();
+  } else { alert('删除失败'); }
+}
+
+function openTestModal() {
+  if (!currentHost) return;
+  document.getElementById('tf_host').value = currentHost;
+  fetch('/api/crypto/template?host=' + encodeURIComponent(currentHost))
+    .then(r => r.json())
+    .then(tpl => {
+      const sel = document.getElementById('tf_field');
+      sel.innerHTML = (tpl.fields || []).map(f => `<option>${escapeHtml(f.name)}</option>`).join('');
+    });
+  document.getElementById('tf_result').innerHTML = '';
+  document.getElementById('tf_plain').value = '';
+  document.getElementById('testModal').classList.add('show');
+}
+
+async function submitTest() {
+  const body = {
+    host: val('tf_host'),
+    field: val('tf_field'),
+    plaintext: val('tf_plain'),
+  };
+  const r = await fetch('/api/crypto/test', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  document.getElementById('tf_result').innerHTML = data.encrypted
+    ? `<div class="test-result"><strong>✅ 加密成功</strong>\n密文：${escapeHtml(data.ciphertext)}</div>`
+    : `<div class="test-result" style="border-left-color:#e65100;background:#fff3e0;"><strong>⚠️ 未加密</strong>\n（模板缺失或算法不支持，已降级返回原文）</div>`;
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+function val(id) { return document.getElementById(id).value || ''; }
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+// 嵌入到 skill_manager 抽屉时（?embed=1）隐藏自身顶栏，避免与外层 header 重复
+(function applyEmbedMode() {
+  try {
+    const inIframe = window.self !== window.top;
+    const flagged = /[?&]embed=1\b/.test(location.search);
+    if (inIframe || flagged) document.body.classList.add('embed');
+  } catch (_) { /* 跨域兜底：直接按 embed 处理 */
+    document.body.classList.add('embed');
+  }
+})();
+
+loadList();
+</script>
+</body>
+</html>

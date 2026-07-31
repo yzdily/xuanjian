@@ -1,0 +1,26 @@
+{
+  "name": "tanweai-security",
+  "owner": {
+    "name": "Tanwe Security Lab",
+    "email": "contact@tanweai.com"
+  },
+  "metadata": {
+    "description": "Claude Code security plugins by Tanwe Security Lab",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "wooyun-legacy",
+      "source": "./plugins/wooyun-legacy",
+      "description": "WooYun business logic vulnerability methodology — a security testing knowledge plugin distilled from 22,132 public cases, adding evidence-based references, quantitative statistics, and data-driven prioritization.",
+      "version": "2.0.0",
+      "author": {
+        "name": "Tanwe Security Lab"
+      },
+      "repository": "https://github.com/tanweai/wooyun-legacy",
+      "license": "CC-BY-NC-SA-4.0",
+      "keywords": ["security", "penetration-testing", "wooyun", "business-logic", "vulnerability"],
+      "category": "security"
+    }
+  ]
+}

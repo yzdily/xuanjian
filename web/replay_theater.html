@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<title>Replay Theater — 漏洞决策剧场</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #ffffff;
+    color: #1a1a2e;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  .topbar {
+    height: 56px; padding: 0 24px;
+    background: #f8f9fa; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 { margin: 0; color: #1565c0; font-size: 18px; }
+  .topbar .subtitle { color: #757575; font-size: 13px; }
+  .spacer { flex: 1; }
+
+  .container {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    height: calc(100vh - 56px);
+  }
+  .sidebar {
+    background: #f8f9fa; border-right: 1px solid #e2e5e9;
+    overflow-y: auto; padding: 16px;
+  }
+  .sidebar h3 {
+    margin: 0 0 12px; font-size: 14px; color: #424242;
+    border-bottom: 1px solid #e2e5e9; padding-bottom: 8px;
+  }
+
+  .run-card {
+    background: #fff; border: 1px solid #e2e5e9; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+    transition: all .15s;
+  }
+  .run-card:hover { border-color: #1565c0; background: #f0f4ff; }
+  .run-card.active { border-color: #1565c0; background: #e3f2fd; }
+  .run-card .id { font-weight: 600; color: #1565c0; font-size: 13px; word-break: break-all; }
+  .run-card .target { color: #424242; font-size: 12px; margin-top: 2px; word-break: break-all; }
+  .run-card .meta { color: #757575; font-size: 11px; margin-top: 4px; }
+  .run-card .badge {
+    display: inline-block;
+    background: #f0f1f3; color: #4a4a5a;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; margin-right: 4px;
+  }
+
+  .main { overflow-y: auto; padding: 0; }
+  .toolbar {
+    background: #fff; border-bottom: 1px solid #e2e5e9;
+    padding: 14px 24px; display: flex; align-items: center; gap: 12px;
+  }
+  .toolbar h2 { margin: 0; font-size: 16px; color: #1a1a2e; flex: 1; }
+  .toolbar button {
+    background: #1565c0; color: #fff; border: 0;
+    padding: 7px 14px; border-radius: 4px; font-size: 13px; cursor: pointer;
+  }
+  .toolbar button:hover { background: #0d47a1; }
+  .toolbar button.mine { background: #4caf50; }
+  .toolbar button.mine:hover { background: #2e7d32; }
+  .toolbar button.danger { background: #c62828; }
+  .toolbar button:disabled { background: #bdbdbd; cursor: not-allowed; }
+
+  .timeline {
+    padding: 24px; position: relative;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute; left: 80px; top: 24px; bottom: 24px;
+    width: 2px; background: #e2e5e9;
+  }
+  .frame {
+    display: flex; gap: 16px; margin-bottom: 16px; position: relative;
+  }
+  .frame .time {
+    width: 64px; flex-shrink: 0;
+    text-align: right; padding-top: 12px;
+    color: #757575; font-size: 11px;
+    font-family: ui-monospace, monospace;
+  }
+  .frame .dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #1565c0; border: 3px solid #fff;
+    box-shadow: 0 0 0 2px #e2e5e9;
+    margin-top: 14px; flex-shrink: 0; z-index: 2;
+  }
+  .frame.decision .dot { background: #1565c0; }
+  .frame.harm_validated .dot { background: #4caf50; }
+  .frame.harm_validated.vulnerable .dot { background: #c62828; }
+  .frame.lesson .dot { background: #e65100; }
+
+  .frame .body {
+    flex: 1; background: #fff;
+    border: 1px solid #e2e5e9; border-radius: 6px;
+    padding: 12px 16px;
+  }
+  .frame .head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px;
+  }
+  .kind-tag {
+    font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 3px;
+  }
+  .kind-tag.decision { background: #e3f2fd; color: #1565c0; }
+  .kind-tag.harm_validated { background: #e8f5e9; color: #2e7d32; }
+  .kind-tag.harm_validated.vulnerable { background: #ffebee; color: #c62828; }
+  .kind-tag.lesson { background: #fff3e0; color: #e65100; }
+
+  /* 剧情线徽章 */
+  .track-tag {
+    font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;
+    margin-left: 6px; letter-spacing: 0.3px;
+  }
+  .track-tag.llm     { background: #ede7f6; color: #5e35b1; }
+  .track-tag.scanner { background: #fff8e1; color: #ef6c00; }
+  .track-tag.system  { background: #eceff1; color: #455a64; }
+
+  /* 剧情线过滤器 */
+  .track-filter {
+    display: inline-flex; gap: 0; border: 1px solid #d0d3da;
+    border-radius: 6px; overflow: hidden; margin-right: 8px;
+  }
+  .track-filter button {
+    padding: 4px 10px; font-size: 12px; background: #fff; color: #555;
+    border: none; border-right: 1px solid #d0d3da; cursor: pointer;
+  }
+  .track-filter button:last-child { border-right: none; }
+  .track-filter button:hover { background: #f5f7fa; }
+  .track-filter button.active { background: #1565c0; color: #fff; }
+
+  .feature-name { font-weight: 600; color: #1a1a2e; }
+  .field-row { margin: 4px 0; font-size: 13px; }
+  .field-row .lbl {
+    color: #757575; display: inline-block; min-width: 70px;
+  }
+  .field-row code {
+    background: #f5f5f5; padding: 1px 6px; border-radius: 3px;
+    color: #e65100; font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .summary-box {
+    margin-top: 8px; padding: 8px 10px;
+    background: #fafbfc; border-left: 3px solid #1565c0;
+    color: #424242; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .severity-tag {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; font-weight: 600;
+  }
+  .severity-tag.critical { background: #b71c1c; color: #fff; }
+  .severity-tag.high { background: #f44336; color: #fff; }
+  .severity-tag.medium { background: #ff9800; color: #fff; }
+  .severity-tag.low { background: #ffc107; color: #1a1a2e; }
+
+  .empty-msg { color: #9e9e9e; padding: 60px; text-align: center; }
+
+  /* 视图切换 tabs */
+  .view-tabs {
+    display: flex; gap: 4px; margin-right: 12px;
+    background: #f0f1f3; padding: 3px; border-radius: 6px;
+  }
+  .view-tabs button {
+    background: transparent !important;
+    color: #4a4a5a !important;
+    border: 0 !important;
+    padding: 5px 12px !important;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .view-tabs button.active {
+    background: #1565c0 !important;
+    color: #fff !important;
+  }
+
+  /* SVG 流程图容器 */
+  .flow-wrap {
+    padding: 0; overflow: auto; position: relative;
+    background:
+      radial-gradient(circle, #e8eaed 1px, transparent 1px) 0 0 / 20px 20px,
+      #fafbfc;
+  }
+  .flow-toolbar {
+    position: sticky; top: 0; z-index: 5;
+    background: rgba(255,255,255,.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #e2e5e9;
+    padding: 10px 24px; display: flex; align-items: center; gap: 16px;
+    font-size: 12px; color: #4a4a5a;
+  }
+  .flow-toolbar .legend-item {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .flow-toolbar .legend-dot {
+    width: 10px; height: 10px; border-radius: 2px;
+    border: 1.5px solid;
+  }
+  .flow-toolbar .lg-feat { background: #f3e5f5; border-color: #6a1b9a; }
+  .flow-toolbar .lg-dec { background: #e3f2fd; border-color: #1565c0; }
+  .flow-toolbar .lg-val { background: #e8f5e9; border-color: #2e7d32; }
+  .flow-toolbar .lg-vuln { background: #ffebee; border-color: #c62828; }
+  .flow-toolbar .lg-less { background: #fff3e0; border-color: #e65100; }
+  .flow-toolbar .hint {
+    margin-left: auto; color: #9e9e9e; font-size: 11px;
+  }
+  .flow-svg-wrap { padding: 24px; }
+  .flow-svg { display: block; min-width: 100%; }
+  .flow-svg .swim-bg {
+    fill: rgba(106,27,154,.04);
+    stroke: rgba(106,27,154,.15);
+    stroke-dasharray: 4 4; stroke-width: 1;
+    rx: 6; ry: 6;
+  }
+  .flow-svg .swim-label {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 11px; fill: #6a1b9a; font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .flow-svg .node-rect {
+    stroke-width: 1.5;
+    rx: 8; ry: 8;
+    transition: filter .15s;
+    cursor: pointer;
+  }
+  .flow-svg g.node:hover .node-rect {
+    filter: drop-shadow(0 3px 8px rgba(21,101,192,.35));
+  }
+  .flow-svg .node-text {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 12px; fill: #1a1a2e;
+    pointer-events: none;
+    dominant-baseline: middle;
+  }
+  .flow-svg .node-text.title { font-weight: 600; font-size: 12px; }
+  .flow-svg .node-text.muted { fill: #6a6a7a; font-size: 10.5px; }
+  .flow-svg .node-text.tag {
+    font-size: 10px; fill: #fff; font-weight: 600;
+  }
+  .flow-svg .node-tag-bg {
+    rx: 3; ry: 3;
+  }
+  .flow-svg .edge {
+    stroke: #b0bec5; stroke-width: 1.5; fill: none;
+    marker-end: url(#arrow);
+  }
+  .flow-svg .edge.success { stroke: #4caf50; }
+  .flow-svg .edge.fail { stroke: #c62828; }
+  .flow-svg .edge.dim { stroke: #cfd8dc; stroke-dasharray: 3 3; }
+
+  /* 节点配色（与时间线 dot 颜色对齐） */
+  .flow-svg .n-decision { fill: #e3f2fd; stroke: #1565c0; }
+  .flow-svg .n-validated { fill: #e8f5e9; stroke: #2e7d32; }
+  .flow-svg .n-vuln { fill: #ffebee; stroke: #c62828; }
+  .flow-svg .n-lesson { fill: #fff3e0; stroke: #e65100; }
+  .flow-svg .n-feature { fill: #f3e5f5; stroke: #6a1b9a; }
+  .flow-svg .n-scanner { fill: #fff8e1; stroke: #ef6c00; }
+
+  /* 漏洞节点闪烁强调 */
+  @keyframes vuln-pulse {
+    0%,100% { filter: drop-shadow(0 0 0 rgba(198,40,40,0)); }
+    50%     { filter: drop-shadow(0 0 6px rgba(198,40,40,.7)); }
+  }
+  .flow-svg g.node.vuln .node-rect { animation: vuln-pulse 1.6s ease-in-out infinite; }
+
+  /* Tooltip */
+  .flow-tooltip {
+    position: fixed; z-index: 100;
+    background: #1a1a2e; color: #f5f5f5;
+    border-radius: 6px; padding: 10px 12px;
+    font-size: 12px; line-height: 1.5;
+    max-width: 420px; min-width: 220px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.25);
+    pointer-events: none;
+    opacity: 0; transition: opacity .12s;
+  }
+  .flow-tooltip.show { opacity: 1; }
+  .flow-tooltip .tt-title { font-weight: 600; color: #90caf9; margin-bottom: 4px; }
+  .flow-tooltip .tt-row { margin: 3px 0; }
+  .flow-tooltip .tt-label { color: #9e9e9e; margin-right: 6px; }
+  .flow-tooltip .tt-summary {
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px solid #424242;
+    color: #e0e0e0; white-space: pre-wrap;
+    max-height: 200px; overflow-y: auto;
+    font-size: 11.5px;
+  }
+  .flow-tooltip code {
+    background: #2a2a3e; padding: 1px 5px; border-radius: 3px;
+    color: #ffd54f; font-family: ui-monospace, monospace;
+  }
+
+  /* 统计视图 */
+  .stats-wrap { padding: 24px; }
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .stat-card {
+    background: #fff; border: 1px solid #e2e5e9; border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .stat-card .label { color: #757575; font-size: 12px; }
+  .stat-card .value { color: #1565c0; font-size: 26px; font-weight: 600; margin-top: 4px; }
+  .stat-card.danger .value { color: #c62828; }
+  .stat-card.success .value { color: #2e7d32; }
+  .stat-card.warn .value { color: #e65100; }
+  .stats-section { background: #fff; border: 1px solid #e2e5e9; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .stats-section h4 { margin: 0 0 10px; color: #424242; font-size: 13px; }
+  .stats-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; }
+  .stats-bar .name { width: 140px; color: #424242; flex-shrink: 0; }
+  .stats-bar .track { flex: 1; height: 14px; background: #f0f1f3; border-radius: 4px; position: relative; overflow: hidden; }
+  .stats-bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: #1565c0; }
+  .stats-bar .num { width: 60px; text-align: right; color: #757575; }
+
+  /* Mine modal */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    display: none; align-items: center; justify-content: center; z-index: 1000;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: #fff; border-radius: 8px; width: 720px; max-height: 80vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.2);
+  }
+  .modal-head {
+    padding: 16px 20px; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { margin: 0; color: #1565c0; }
+  .modal-head .close {
+    background: none; border: 0; font-size: 24px; color: #757575; cursor: pointer;
+  }
+  .modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+  .modal-foot {
+    padding: 12px 20px; border-top: 1px solid #e2e5e9;
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+  .modal-foot button {
+    background: #4caf50; color: #fff; border: 0;
+    padding: 8px 16px; border-radius: 4px; cursor: pointer;
+  }
+  .lesson-item {
+    border-left: 3px solid #1565c0;
+    background: #fafbfc; padding: 10px 12px; margin-bottom: 8px;
+    border-radius: 3px;
+  }
+  .lesson-item.positive { border-left-color: #4caf50; background: #e8f5e9; }
+  .lesson-item.negative { border-left-color: #c62828; background: #ffebee; }
+  .lesson-item .stats { color: #757575; font-size: 11px; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🎬 Replay Theater</h1>
+  <span class="subtitle">漏洞决策剧场 · 录制 / 回放 / 反推经验</span>
+  <span class="spacer"></span>
+  <a href="/replay-advanced" style="color: #1565c0; text-decoration: none; font-size: 13px; margin-right: 16px;">🔬 高级可视化 →</a>
+  <a href="/" style="color: #1565c0; text-decoration: none; font-size: 13px;">← 返回</a>
+</div>
+
+<div class="container">
+
+  <aside class="sidebar">
+    <h3>所有剧本（runs）</h3>
+    <div id="runList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <h2 id="runTitle">选择左侧的剧本查看回放</h2>
+      <div class="track-filter" id="trackFilter" title="按剧情线筛选">
+        <button class="active" data-track="all" onclick="switchTrack('all')">全部</button>
+        <button data-track="llm" onclick="switchTrack('llm')">🧠 LLM 决策</button>
+        <button data-track="scanner" onclick="switchTrack('scanner')">⚡ 自动扫描</button>
+      </div>
+      <div class="view-tabs" id="viewTabs">
+        <button class="active" data-view="timeline" onclick="switchView('timeline')">⏱️ 时间线</button>
+        <button data-view="flow" onclick="switchView('flow')">🌳 流程图</button>
+        <button data-view="stats" onclick="switchView('stats')">📊 统计</button>
+      </div>
+      <button class="mine" id="mineBtn" disabled>🧠 反推经验</button>
+      <button class="danger" id="deleteBtn" disabled>删除</button>
+    </div>
+    <div class="timeline" id="timeline">
+      <div class="empty-msg">在左侧选择一个剧本</div>
+    </div>
+    <div class="flow-wrap" id="flowView" style="display:none;">
+      <div class="empty-msg">在左侧选择一个剧本</div>
+    </div>
+    <div class="flow-tooltip" id="flowTooltip"></div>
+    <div class="stats-wrap" id="statsView" style="display:none;">
+      <div class="empty-msg">在左侧选择一个剧本</div>
+    </div>
+  </main>
+
+</div>
+
+<!-- Mine modal -->
+<div class="modal-bg" id="mineModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>🧠 候选经验</h3>
+      <button class="close" onclick="document.getElementById('mineModal').classList.remove('show')">×</button>
+    </div>
+    <div class="modal-body" id="mineBody"></div>
+    <div class="modal-foot">
+      <button id="writeBackBtn">写回 Memory</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentRunId = null;
+let currentFrames = [];
+let currentView = 'timeline';
+let currentTrack = 'all';  // ★ 剧情线过滤：all / llm / scanner
+
+// 从帧里抽取 track（优先顺序：extra.track > track > 默认 llm）
+function frameTrack(f) {
+  if (f && f.extra && f.extra.track) return f.extra.track;
+  if (f && f.track) return f.track;
+  // 历史帧兼容：xss_findings 路径过来的当 scanner
+  if (f && f.extra && f.extra.source === 'xss_findings') return 'scanner';
+  return 'llm';
+}
+
+function filterByTrack(frames) {
+  if (currentTrack === 'all') return frames;
+  return frames.filter(f => frameTrack(f) === currentTrack);
+}
+
+function switchTrack(t) {
+  currentTrack = t;
+  document.querySelectorAll('#trackFilter button').forEach(b => {
+    b.classList.toggle('active', b.dataset.track === t);
+  });
+  // 重新渲染当前视图
+  const fs = filterByTrack(currentFrames);
+  if (currentView === 'timeline') renderTimeline(fs);
+  else if (currentView === 'flow') renderFlow(fs);
+  else if (currentView === 'stats') renderStats(fs);
+}
+
+function switchView(v) {
+  currentView = v;
+  document.querySelectorAll('#viewTabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === v);
+  });
+  document.getElementById('timeline').style.display = (v === 'timeline') ? '' : 'none';
+  document.getElementById('flowView').style.display = (v === 'flow') ? '' : 'none';
+  document.getElementById('statsView').style.display = (v === 'stats') ? '' : 'none';
+  const fs = filterByTrack(currentFrames);
+  if (v === 'flow') renderFlow(fs);
+  else if (v === 'stats') renderStats(fs);
+  else renderTimeline(fs);
+}
+
+// 提取 URL 域名用于简洁展示
+function shortTarget(url) {
+  if (!url) return '';
+  try { return new URL(url).hostname; } catch (e) { return url; }
+}
+
+async function loadRuns() {
+  const r = await fetch('/api/replay/runs');
+  const data = await r.json();
+  const runs = data.runs || [];
+  const box = document.getElementById('runList');
+  if (!runs.length) {
+    box.innerHTML = '<div class="empty-msg" style="padding:12px;font-size:12px;">暂无剧本<br><small>主流程 emit 决策事件后自动产生</small></div>';
+    return;
+  }
+  box.innerHTML = runs.map(r => `
+    <div class="run-card" data-run="${escapeHtml(r.run_id)}">
+      <div class="id">${escapeHtml(r.run_id)}</div>
+      ${r.target ? `<div class="target">${escapeHtml(shortTarget(r.target))}</div>` : ''}
+      <div class="meta">
+        <span class="badge">${r.frame_count || 0} 帧</span>
+        ${escapeHtml(r.ended_at_human || '')}
+      </div>
+    </div>
+  `).join('');
+  document.querySelectorAll('.run-card').forEach(el => {
+    el.onclick = () => loadScript(el.dataset.run);
+  });
+}
+
+async function loadScript(runId) {
+  document.querySelectorAll('.run-card').forEach(el => {
+    el.classList.toggle('active', el.dataset.run === runId);
+  });
+  currentRunId = runId;
+  const r = await fetch('/api/replay/script?run_id=' + encodeURIComponent(runId));
+  if (!r.ok) {
+    document.getElementById('timeline').innerHTML = '<div class="empty-msg">读取失败</div>';
+    return;
+  }
+  const data = await r.json();
+  const meta = data.meta || {};
+  document.getElementById('runTitle').textContent =
+    `${meta.run_id || runId} · ${shortTarget(meta.target) || '(no target)'} · ${meta.frame_count || 0} 帧`;
+  document.getElementById('mineBtn').disabled = false;
+  document.getElementById('deleteBtn').disabled = false;
+  currentFrames = data.frames || [];
+  const fs = filterByTrack(currentFrames);
+  renderTimeline(fs);
+  // 当前如果在流程图/统计视图，则同步刷新
+  if (currentView === 'flow') renderFlow(fs);
+  else if (currentView === 'stats') renderStats(fs);
+}
+
+function renderTimeline(frames) {
+  if (!frames.length) {
+    document.getElementById('timeline').innerHTML = '<div class="empty-msg">该剧本没有帧</div>';
+    return;
+  }
+  const html = frames.map(f => renderFrame(f)).join('');
+  document.getElementById('timeline').innerHTML = html;
+}
+
+function renderFrame(f) {
+  const t = new Date(f.timestamp * 1000);
+  const time = t.toLocaleTimeString();
+  const isVuln = (f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+  const cls = isVuln ? `${f.kind} vulnerable` : f.kind;
+  const kindLabel = ({
+    decision: '决策',
+    harm_validated: isVuln ? '🔴 漏洞确认' : '✅ 验证',
+    lesson: '💡 经验',
+    note: '备注'
+  })[f.kind] || f.kind;
+
+  // ★ 剧情线徽章
+  const trk = frameTrack(f);
+  const trackLabel = ({llm: '🧠 LLM', scanner: '⚡ 自动', system: '⚙️ 系统'})[trk] || trk;
+  const trackHtml = `<span class="track-tag ${trk}">${trackLabel}</span>`;
+
+  const fields = [];
+  if (f.feature_name) fields.push(row('功能点', `<span class="feature-name">${escapeHtml(f.feature_name)}</span>`));
+  if (f.vuln_type) fields.push(row('漏洞类型', `<code>${escapeHtml(f.vuln_type)}</code>`));
+  if (f.skill_used) fields.push(row('SKILL', `<code>${escapeHtml(f.skill_used)}</code>`));
+  if (f.target_url) fields.push(row('目标', `<code>${escapeHtml(f.target_url)}</code>`));
+  if (f.payload) fields.push(row('payload', `<code>${escapeHtml(f.payload).slice(0, 200)}</code>`));
+  if (f.conclusion) {
+    const cClass = f.conclusion === 'vulnerable' ? 'critical' : '';
+    fields.push(row('结论', `<span class="severity-tag ${cClass}">${escapeHtml(f.conclusion)}</span>`));
+  }
+  if (f.severity) fields.push(row('严重度', `<span class="severity-tag ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span>`));
+
+  const summary = f.llm_summary
+    ? `<div class="summary-box">${escapeHtml(f.llm_summary)}</div>` : '';
+
+  return `
+    <div class="frame ${cls}">
+      <div class="time">${time}</div>
+      <div class="dot"></div>
+      <div class="body">
+        <div class="head"><span class="kind-tag ${cls}">${kindLabel}</span>${trackHtml}</div>
+        ${fields.join('')}
+        ${summary}
+      </div>
+    </div>
+  `;
+}
+function row(label, value) {
+  return `<div class="field-row"><span class="lbl">${label}：</span>${value}</div>`;
+}
+
+// =================================================================
+// 🌳 决策泳道图（纯 SVG，无外部依赖）
+//   核心逻辑：
+//   1) 智能分组：优先按 vuln_type，其次 feature_name，最后归到「(基础探测)」
+//   2) 合并连续相同 SKILL：sitemap_add_feature × 19 → 折叠成单节点（数量徽章）
+//   3) 节点信息升级：title=漏洞类型/SKILL，sub=payload预览或目标URL
+//   4) Tooltip：hover 显示完整 LLM 思考、payload、目标
+//   5) 结论卡：每条泳道末尾若有 harm_validated/lesson 则单独突出
+// =================================================================
+
+// 全局存储：节点 idx → 完整 frame 数据，供 tooltip 使用
+let _flowFrameMap = {};
+
+function renderFlow(frames) {
+  const host = document.getElementById('flowView');
+  if (!frames || !frames.length) {
+    host.innerHTML = '<div class="empty-msg">该剧本没有帧</div>';
+    return;
+  }
+  _flowFrameMap = {};
+
+  // ---------- 1) 分组策略 ----------
+  // 桶顺序：先看是否有 vuln_type（说明在测特定漏洞），再看 feature_name，
+  // 都没有则归到「基础探测」桶（如 sitemap、cookie、screenshot 这类侦察动作）
+  const RECON_TOOLS = new Set([
+    'browser_goto', 'browser_screenshot', 'browser_get_content',
+    'browser_get_cookies', 'sitemap_add_feature', 'sitemap_set_business',
+    'crypto_detect', 'phase_complete'
+  ]);
+
+  function groupKey(f) {
+    if (f.vuln_type) return `🎯 ${f.vuln_type}`;
+    if (f.feature_name && f.feature_name !== f.skill_used) return `📌 ${f.feature_name}`;
+    if (f.skill_used && RECON_TOOLS.has(f.skill_used)) return '🔍 基础探测';
+    if (f.kind === 'lesson') return '💡 经验沉淀';
+    return '🔧 其它操作';
+  }
+
+  const groups = new Map();
+  frames.forEach((f, gIdx) => {
+    f._gidx = gIdx;
+    const key = groupKey(f);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  });
+
+  // ---------- 2) 每组内：合并连续相同 SKILL ----------
+  function compressGroup(list) {
+    const out = [];
+    for (const f of list) {
+      const last = out[out.length - 1];
+      if (
+        last && last.kind === 'decision' && f.kind === 'decision' &&
+        last.skill_used && last.skill_used === f.skill_used
+      ) {
+        last._merged = (last._merged || [last._frame]);
+        last._merged.push(f);
+        last._count = last._merged.length;
+        // 取第一个作为代表帧
+      } else {
+        out.push({
+          _frame: f,
+          _merged: null,
+          _count: 1,
+          kind: f.kind,
+          skill_used: f.skill_used,
+        });
+      }
+    }
+    return out;
+  }
+
+  // ---------- 3) 布局参数 ----------
+  const NODE_W = 200, NODE_H = 60;
+  const COL_GAP = 50, ROW_GAP = 24;
+  const SWIM_PAD_X = 16, SWIM_PAD_Y = 14;
+  const SWIM_LABEL_H = 24;
+  const SWIM_GAP = 22;
+  const PAD_X = 24, PAD_Y = 16;
+  const MAX_ROW_W = 1500;
+
+  let svgInner = '';
+  let yCursor = PAD_Y;
+  let maxRight = 0;
+
+  // ---------- 4) 渲染每条泳道 ----------
+  for (const [groupName, rawList] of groups.entries()) {
+    const list = compressGroup(rawList);
+
+    // 预计算泳道高度（折行）
+    const innerWidth = MAX_ROW_W - 2 * SWIM_PAD_X;
+    const perRow = Math.max(1, Math.floor((innerWidth + COL_GAP) / (NODE_W + COL_GAP)));
+    const rowsCount = Math.ceil(list.length / perRow);
+    const swimH = SWIM_LABEL_H + SWIM_PAD_Y * 2 + rowsCount * NODE_H + (rowsCount - 1) * ROW_GAP;
+    const swimW = MAX_ROW_W;
+
+    // 泳道背景
+    svgInner += `<rect class="swim-bg" x="${PAD_X}" y="${yCursor}" width="${swimW}" height="${swimH}"/>`;
+    // 泳道标题
+    svgInner += `<text class="swim-label" x="${PAD_X + 14}" y="${yCursor + 16}">
+      ${escapeHtml(groupName)} <tspan fill="#9e9e9e" font-weight="400">·  ${list.length} 步骤 / ${rawList.length} 帧</tspan>
+    </text>`;
+
+    let prevAnchor = null;
+    list.forEach((item, idx) => {
+      const col = idx % perRow;
+      const row = Math.floor(idx / perRow);
+      const x = PAD_X + SWIM_PAD_X + col * (NODE_W + COL_GAP);
+      const y = yCursor + SWIM_LABEL_H + SWIM_PAD_Y + row * (NODE_H + ROW_GAP);
+
+      const f = item._frame;
+      const isVuln = (f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+      const trk = frameTrack(f);
+
+      let cls;
+      if (isVuln) cls = 'n-vuln';
+      else if (f.kind === 'harm_validated') cls = 'n-validated';
+      else if (f.kind === 'lesson') cls = 'n-lesson';
+      else if (trk === 'scanner') cls = 'n-scanner';
+      else cls = 'n-decision';
+
+      // 节点标题：优先级 vuln_type → skill_used → kind
+      let title;
+      if (isVuln) title = '🔴 ' + (f.vuln_type || '漏洞确认');
+      else if (f.kind === 'harm_validated') title = '✅ ' + (f.vuln_type || '验证');
+      else if (f.kind === 'lesson') title = '💡 ' + (f.lesson_summary || '经验');
+      else if (f.skill_used) title = (trk === 'scanner' ? '⚡ ' : '🎯 ') + f.skill_used;
+      else title = f.kind;
+
+      // 节点副标题：feature_name / target_url / payload 之一
+      let sub = '';
+      if (f.feature_name && f.feature_name !== f.skill_used) sub = f.feature_name;
+      else if (f.payload && typeof f.payload === 'string') sub = f.payload;
+      else if (f.target_url) {
+        try { sub = new URL(f.target_url).pathname || f.target_url; }
+        catch (e) { sub = f.target_url; }
+      } else if (f.severity) sub = f.severity.toUpperCase();
+
+      const countBadge = item._count > 1 ? `×${item._count}` : '';
+
+      // 存进 map 供 tooltip 用
+      const nodeKey = `n_${f._gidx}`;
+      _flowFrameMap[nodeKey] = {
+        frame: f,
+        merged: item._merged ? item._merged.map(m => m._gidx ? frames[m._gidx] : m) : null,
+      };
+
+      svgInner += renderNode(x, y, NODE_W, NODE_H, cls, title, sub, countBadge, isVuln, nodeKey);
+
+      // 连线
+      if (prevAnchor) {
+        let edgeCls = 'dim';
+        if (f.kind === 'harm_validated') edgeCls = isVuln ? 'fail' : 'success';
+        // 同一行：水平连接；换行：从上一个右下角到当前左中心
+        if (row === prevAnchor.row) {
+          svgInner += renderEdge(prevAnchor.x, prevAnchor.y, x, y + NODE_H / 2, edgeCls);
+        } else {
+          // 换行连接：用更柔和的曲线
+          svgInner += renderEdge(prevAnchor.x, prevAnchor.y, x, y + NODE_H / 2, edgeCls);
+        }
+      }
+      prevAnchor = { x: x + NODE_W, y: y + NODE_H / 2, row };
+
+      maxRight = Math.max(maxRight, x + NODE_W);
+    });
+
+    yCursor += swimH + SWIM_GAP;
+  }
+
+  const W = Math.max(MAX_ROW_W + PAD_X * 2, maxRight + PAD_X * 2);
+  const H = yCursor + PAD_Y;
+
+  // 顶部图例 + SVG
+  host.innerHTML = `
+    <div class="flow-toolbar">
+      <span class="legend-item"><span class="legend-dot lg-feat"></span>分组泳道</span>
+      <span class="legend-item"><span class="legend-dot lg-dec"></span>LLM 决策</span>
+      <span class="legend-item"><span class="legend-dot lg-val"></span>验证通过</span>
+      <span class="legend-item"><span class="legend-dot lg-vuln"></span>命中漏洞</span>
+      <span class="legend-item"><span class="legend-dot lg-less"></span>沉淀经验</span>
+      <span class="hint">💡 鼠标悬停节点查看 LLM 思考全文</span>
+    </div>
+    <div class="flow-svg-wrap">
+      <svg class="flow-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"
+           xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#b0bec5"/>
+          </marker>
+        </defs>
+        ${svgInner}
+      </svg>
+    </div>
+  `;
+
+  // 绑定 tooltip
+  bindFlowTooltip();
+
+  function renderNode(x, y, w, h, cls, title, sub, countBadge, isVuln, nodeKey) {
+    const titleStr = String(title).slice(0, 26);
+    const subStr = sub ? String(sub).slice(0, 30) : '';
+    const titleY = subStr ? y + 22 : y + h / 2;
+    const subSvg = subStr
+      ? `<text class="node-text muted" x="${x + 12}" y="${y + 42}">${escapeHtml(subStr)}</text>`
+      : '';
+    const badgeSvg = countBadge
+      ? `<rect class="node-tag-bg" x="${x + w - 36}" y="${y + 6}" width="30" height="16" fill="#1565c0"/>
+         <text class="node-text tag" x="${x + w - 21}" y="${y + 14}" text-anchor="middle">${countBadge}</text>`
+      : '';
+    return `
+      <g class="node ${isVuln ? 'vuln' : ''}" data-key="${nodeKey}">
+        <rect class="node-rect ${cls}" x="${x}" y="${y}" width="${w}" height="${h}"/>
+        <text class="node-text title" x="${x + 12}" y="${titleY}">${escapeHtml(titleStr)}</text>
+        ${subSvg}
+        ${badgeSvg}
+      </g>
+    `;
+  }
+
+  function renderEdge(x1, y1, x2, y2, cls) {
+    const dx = Math.max(30, Math.abs(x2 - x1) / 2);
+    const c1x = x1 + dx, c1y = y1;
+    const c2x = x2 - dx, c2y = y2;
+    return `<path class="edge ${cls}" d="M ${x1},${y1} C ${c1x},${c1y} ${c2x},${c2y} ${x2},${y2}"/>`;
+  }
+}
+
+// ---------- Tooltip 绑定 ----------
+function bindFlowTooltip() {
+  const tip = document.getElementById('flowTooltip');
+  document.querySelectorAll('#flowView g.node').forEach(g => {
+    g.addEventListener('mouseenter', e => {
+      const key = g.dataset.key;
+      const data = _flowFrameMap[key];
+      if (!data) return;
+      tip.innerHTML = renderTooltipHtml(data);
+      tip.classList.add('show');
+      moveTooltip(e);
+    });
+    g.addEventListener('mousemove', moveTooltip);
+    g.addEventListener('mouseleave', () => {
+      tip.classList.remove('show');
+    });
+  });
+
+  function moveTooltip(e) {
+    const tip = document.getElementById('flowTooltip');
+    const x = e.clientX + 14;
+    const y = e.clientY + 14;
+    const tw = tip.offsetWidth || 300;
+    const th = tip.offsetHeight || 100;
+    const finalX = (x + tw > window.innerWidth) ? e.clientX - tw - 14 : x;
+    const finalY = (y + th > window.innerHeight) ? window.innerHeight - th - 8 : y;
+    tip.style.left = finalX + 'px';
+    tip.style.top = finalY + 'px';
+  }
+}
+
+function renderTooltipHtml(data) {
+  const f = data.frame;
+  const merged = data.merged;
+  const t = new Date(f.timestamp * 1000).toLocaleString();
+  const isVuln = (f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+  const titleEmoji = isVuln ? '🔴' :
+    (f.kind === 'harm_validated' ? '✅' :
+     f.kind === 'lesson' ? '💡' : '🎯');
+
+  let title;
+  if (f.vuln_type) title = `${titleEmoji} ${f.vuln_type}`;
+  else if (f.skill_used) title = `${titleEmoji} ${f.skill_used}`;
+  else title = `${titleEmoji} ${f.kind}`;
+
+  let html = `<div class="tt-title">${escapeHtml(title)}</div>`;
+  html += `<div class="tt-row"><span class="tt-label">时间</span>${escapeHtml(t)}</div>`;
+  if (merged && merged.length > 1) {
+    html += `<div class="tt-row"><span class="tt-label">合并</span>该节点合并了 ${merged.length} 次连续的相同调用</div>`;
+  }
+  if (f.feature_name) html += `<div class="tt-row"><span class="tt-label">功能点</span>${escapeHtml(f.feature_name)}</div>`;
+  if (f.skill_used) html += `<div class="tt-row"><span class="tt-label">SKILL</span><code>${escapeHtml(f.skill_used)}</code></div>`;
+  if (f.target_url) html += `<div class="tt-row"><span class="tt-label">目标</span><code>${escapeHtml(f.target_url).slice(0, 80)}</code></div>`;
+  if (f.payload) {
+    const p = typeof f.payload === 'string' ? f.payload : JSON.stringify(f.payload);
+    html += `<div class="tt-row"><span class="tt-label">payload</span><code>${escapeHtml(p).slice(0, 200)}</code></div>`;
+  }
+  if (f.conclusion) html += `<div class="tt-row"><span class="tt-label">结论</span>${escapeHtml(f.conclusion)}</div>`;
+  if (f.severity) html += `<div class="tt-row"><span class="tt-label">严重度</span>${escapeHtml(f.severity)}</div>`;
+  if (f.llm_summary) {
+    html += `<div class="tt-summary">${escapeHtml(f.llm_summary)}</div>`;
+  }
+  return html;
+}
+
+// =================================================================
+// 📊 统计视图
+// =================================================================
+function renderStats(frames) {
+  const host = document.getElementById('statsView');
+  if (!frames || !frames.length) {
+    host.innerHTML = '<div class="empty-msg">该剧本没有帧</div>';
+    return;
+  }
+  const total = frames.length;
+  const decisions = frames.filter(f => f.kind === 'decision').length;
+  const validated = frames.filter(f => f.kind === 'harm_validated').length;
+  const vulns = frames.filter(f => f.kind === 'harm_validated' && f.conclusion === 'vulnerable').length;
+  const lessons = frames.filter(f => f.kind === 'lesson').length;
+  const successRate = validated ? Math.round((vulns / validated) * 100) : 0;
+
+  // ★ 真正的 SKILL 加载统计：从 knowledge_load_skill 调用的 payload 里抠 SKILL 名
+  // 兼容两种参数形态：JSON ({"name":"xxx"} / {"skill_name":"xxx"}) 与裸字符串
+  // 注意：必须先算 skillLoadCount，再算 toolCount（toolCount 需要用它做黑名单过滤）
+  const skillLoadCount = {};
+  frames.forEach(f => {
+    if (f.skill_used !== 'knowledge_load_skill') return;
+    const payload = f.payload;
+    if (!payload) return;
+    let skillName = '';
+    if (typeof payload === 'string') {
+      // 先试 JSON
+      try {
+        const obj = JSON.parse(payload);
+        skillName = obj.name || obj.skill_name || obj.skill || '';
+      } catch (_) {
+        // 再试正则抠 "name":"xxx" / "skill_name":"xxx"
+        const m = payload.match(/"(?:name|skill_name|skill)"\s*:\s*"([^"]+)"/);
+        if (m) skillName = m[1];
+        else if (/^[a-zA-Z0-9_\-\/]+$/.test(payload.trim())) skillName = payload.trim();
+      }
+    } else if (typeof payload === 'object') {
+      skillName = payload.name || payload.skill_name || payload.skill || '';
+    }
+    if (skillName) skillLoadCount[skillName] = (skillLoadCount[skillName] || 0) + 1;
+  });
+  const skillBars = Object.entries(skillLoadCount).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  const maxSkill = skillBars.length ? skillBars[0][1] : 1;
+  const totalSkillLoads = Object.values(skillLoadCount).reduce((s, n) => s + n, 0);
+  const uniqueSkills = Object.keys(skillLoadCount).length;
+
+  // 工具调用 TOP 10（注意：这里统计的是工具，不是 SKILL）
+  // 过滤规则：剔除 SKILL 注入帧、剔除已识别为 SKILL 名的条目、剔除 *-methodology 命名特征
+  const toolCount = {};
+  frames.forEach(f => {
+    if (!f.skill_used) return;
+    if (f.event === 'skill_injected') return;            // ① SKILL 预注入帧不算工具
+    if (f.skill_used in skillLoadCount) return;          // ② 已识别为真实 SKILL 名
+    if (/-methodology$/.test(f.skill_used)) return;      // ③ SKILL 命名约定后缀
+    toolCount[f.skill_used] = (toolCount[f.skill_used] || 0) + 1;
+  });
+  const toolBars = Object.entries(toolCount).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  const maxTool = toolBars.length ? toolBars[0][1] : 1;
+
+  // 漏洞类型分布
+  const vulnCount = {};
+  frames.filter(f => f.kind === 'harm_validated' && f.conclusion === 'vulnerable')
+    .forEach(f => { if (f.vuln_type) vulnCount[f.vuln_type] = (vulnCount[f.vuln_type] || 0) + 1; });
+  const vulnBars = Object.entries(vulnCount).sort((a,b) => b[1]-a[1]);
+  const maxVuln = vulnBars.length ? vulnBars[0][1] : 1;
+
+  host.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">总帧数</div><div class="value">${total}</div></div>
+      <div class="stat-card"><div class="label">决策次数</div><div class="value">${decisions}</div></div>
+      <div class="stat-card success"><div class="label">验证次数</div><div class="value">${validated}</div></div>
+      <div class="stat-card danger"><div class="label">命中漏洞</div><div class="value">${vulns}</div></div>
+      <div class="stat-card warn"><div class="label">命中率</div><div class="value">${successRate}%</div></div>
+      <div class="stat-card"><div class="label">沉淀经验</div><div class="value">${lessons}</div></div>
+    </div>
+    <div class="stats-section">
+      <h4>📚 SKILL 方法论加载 <span style="font-weight:400;color:#9e9e9e;font-size:12px;margin-left:8px;">（共加载 ${totalSkillLoads} 次，去重 ${uniqueSkills} 个）</span></h4>
+      ${skillBars.length ? skillBars.map(([k,v]) => `
+        <div class="stats-bar">
+          <div class="name" title="${escapeHtml(k)}">${escapeHtml(k)}</div>
+          <div class="track"><div class="fill" style="width:${(v/maxSkill*100).toFixed(0)}%;background:#6a1b9a"></div></div>
+          <div class="num">${v}</div>
+        </div>`).join('') : '<div style="color:#9e9e9e;font-size:12px;padding:6px 0">本剧本未通过 <code>knowledge_load_skill</code> 加载任何 SKILL 方法论</div>'}
+    </div>
+    <div class="stats-section">
+      <h4>🛠️ 工具调用 TOP 10 <span style="font-weight:400;color:#9e9e9e;font-size:12px;margin-left:8px;">（LLM 实际下发的工具调用，不等于 SKILL）</span></h4>
+      ${toolBars.length ? toolBars.map(([k,v]) => `
+        <div class="stats-bar">
+          <div class="name">${escapeHtml(k)}</div>
+          <div class="track"><div class="fill" style="width:${(v/maxTool*100).toFixed(0)}%"></div></div>
+          <div class="num">${v}</div>
+        </div>`).join('') : '<div style="color:#9e9e9e;font-size:12px">无</div>'}
+    </div>
+    <div class="stats-section">
+      <h4>🔴 漏洞类型分布</h4>
+      ${vulnBars.length ? vulnBars.map(([k,v]) => `
+        <div class="stats-bar">
+          <div class="name">${escapeHtml(k)}</div>
+          <div class="track"><div class="fill" style="width:${(v/maxVuln*100).toFixed(0)}%;background:#c62828"></div></div>
+          <div class="num">${v}</div>
+        </div>`).join('') : '<div style="color:#9e9e9e;font-size:12px">本剧本未命中漏洞</div>'}
+    </div>
+  `;
+}
+
+async function mine() {
+  if (!currentRunId) return;
+  const r = await fetch('/api/replay/mine', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run_id: currentRunId, write_back: false, min_total: 2}),
+  });
+  if (!r.ok) { alert('反推失败'); return; }
+  const data = await r.json();
+  const candidates = data.candidates || [];
+  if (!candidates.length) {
+    document.getElementById('mineBody').innerHTML =
+      '<div class="empty-msg">本剧本中没有满足阈值的经验候选<br><small>需要至少 2 次决策+验证配对，且成功率 > 66% 或 < 34%</small></div>';
+  } else {
+    document.getElementById('mineBody').innerHTML = [
+      '<div style="margin-bottom:8px;font-size:12px;color:#9e9e9e;">',
+      '  <label style="cursor:pointer;margin-right:12px;"><input type="checkbox" id="mineSelectAll" onchange="mineToggleAll()" checked> 全选</label>',
+      `  <span>共 ${candidates.length} 条候选</span>`,
+      '</div>'
+    ].join('') + candidates.map((ls, idx) => {
+      const cls = ls.success_rate >= 0.5 ? 'positive' : 'negative';
+      const id = `mineChk${idx}`;
+      return `
+        <div class="lesson-item ${cls}" style="display:flex;align-items:flex-start;gap:8px;">
+          <input type="checkbox" class="mine-chk" id="${id}" data-idx="${idx}" checked style="flex-shrink:0;margin-top:2px;">
+          <div style="flex:1;">
+            <div><strong>[${escapeHtml(ls.scope)}=${escapeHtml(ls.scope_value)}]</strong> ${escapeHtml(ls.lesson)}</div>
+            <div class="stats">命中 ${ls.success_count}/${ls.success_count + ls.fail_count} · 成功率 ${(ls.success_rate * 100).toFixed(0)}%</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    window._mineCandidates = candidates;
+  }
+  document.getElementById('mineModal').classList.add('show');
+}
+
+function mineToggleAll() {
+  var all = document.getElementById('mineSelectAll').checked;
+  document.querySelectorAll('.mine-chk').forEach(cb => cb.checked = all);
+}
+
+async function writeBack() {
+  if (!currentRunId) return;
+  var chks = document.querySelectorAll('.mine-chk:checked');
+  if (!chks.length) { alert('请至少选择一条经验'); return; }
+  var selected = [];
+  chks.forEach(cb => selected.push(parseInt(cb.dataset.idx)));
+  const r = await fetch('/api/replay/mine', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run_id: currentRunId, write_back: true, min_total: 2, selected_indices: selected}),
+  });
+  if (!r.ok) { alert('写回失败'); return; }
+  var data = await r.json();
+  // 重新拉取候选（已写回的可能变少）
+  var remaining = selected.length - (data.written || 0);
+  alert('✅ 已写回 ' + data.written + ' 条经验到 Memory');
+  document.getElementById('mineModal').classList.remove('show');
+}
+
+async function deleteRun() {
+  if (!currentRunId) return;
+  if (!confirm(`确认删除剧本 ${currentRunId}？`)) return;
+  const r = await fetch('/api/replay/delete?run_id=' + encodeURIComponent(currentRunId), {method: 'POST'});
+  if (r.ok) {
+    currentRunId = null;
+    currentFrames = [];
+    document.getElementById('runTitle').textContent = '选择左侧的剧本查看回放';
+    document.getElementById('timeline').innerHTML = '<div class="empty-msg">已删除</div>';
+    document.getElementById('flowView').innerHTML = '<div class="empty-msg">已删除</div>';
+    document.getElementById('statsView').innerHTML = '<div class="empty-msg">已删除</div>';
+    document.getElementById('mineBtn').disabled = true;
+    document.getElementById('deleteBtn').disabled = true;
+    loadRuns();
+  } else {
+    alert('删除失败');
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+document.getElementById('mineBtn').onclick = mine;
+document.getElementById('writeBackBtn').onclick = writeBack;
+document.getElementById('deleteBtn').onclick = deleteRun;
+
+loadRuns();
+</script>
+</body>
+</html>

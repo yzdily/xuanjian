@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>安全仪表盘 — 玄鉴 XuanJian</title>
+<style>
+  :root {
+    --bg-base: #0b0d12; --bg-surface: #11131a; --bg-elevated: #181b24;
+    --bg-hover: #252a3a; --border-color: #232837; --border-hover: #32394d;
+    --text-primary: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
+    --accent-indigo: #6366f1; --accent-purple: #8b5cf6; --accent-blue: #3b82f6;
+    --accent-green: #10b981; --accent-yellow: #f59e0b; --accent-red: #ef4444;
+    --radius-lg: 12px; --radius-md: 8px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-base); color: var(--text-primary);
+    padding: 32px; min-height: 100vh;
+  }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 32px;
+  }
+  .header h1 { font-size: 24px; font-weight: 700; background: linear-gradient(90deg, #e2e8f0, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 8px 16px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-elevated);
+    color: var(--text-secondary); transition: all 0.2s;
+  }
+  .btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-hover); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent-indigo), var(--accent-purple)); color: #fff; border: none; }
+  .btn-primary:hover { opacity: 0.9; }
+
+  .grid { display: grid; gap: 20px; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 1200px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 768px) { .grid-4, .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  .stat-card {
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg); padding: 24px;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: all 0.2s;
+  }
+  .stat-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+  .stat-value { font-size: 32px; font-weight: 800; line-height: 1; }
+  .stat-value.critical { color: var(--accent-red); }
+  .stat-value.high { color: var(--accent-orange); }
+  .stat-value.medium { color: var(--accent-yellow); }
+  .stat-value.good { color: var(--accent-green); }
+  .stat-value.info { color: var(--accent-blue); }
+  .stat-label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+
+  .card {
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg); overflow: hidden;
+  }
+  .card-header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border-color);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-header h3 { font-size: 15px; font-weight: 600; }
+  .card-body { padding: 20px; }
+
+  .chart-bar-container { display: flex; flex-direction: column; gap: 10px; }
+  .chart-bar-row { display: flex; align-items: center; gap: 12px; }
+  .chart-bar-label { font-size: 12px; color: var(--text-secondary); width: 80px; flex-shrink: 0; text-align: right; }
+  .chart-bar-track { flex: 1; height: 24px; background: var(--bg-elevated); border-radius: 12px; overflow: hidden; }
+  .chart-bar-fill { height: 100%; border-radius: 12px; transition: width 0.8s ease; display: flex; align-items: center; padding-left: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+  .chart-bar-value { font-size: 12px; color: var(--text-muted); width: 40px; }
+
+  .severity-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; }
+  .severity-dot.critical { background: var(--accent-red); }
+  .severity-dot.high { background: var(--accent-orange); }
+  .severity-dot.medium { background: var(--accent-yellow); }
+  .severity-dot.low { background: var(--accent-blue); }
+  .severity-dot.info { background: var(--text-muted); }
+
+  .trend-chart { display: flex; align-items: flex-end; gap: 8px; height: 120px; padding-top: 10px; }
+  .trend-bar { flex: 1; border-radius: 4px 4px 0 0; min-height: 4px; transition: height 0.6s ease; position: relative; background: linear-gradient(to top, var(--accent-indigo), var(--accent-purple)); }
+  .trend-bar:hover { opacity: 0.8; }
+  .trend-label { text-align: center; font-size: 11px; color: var(--text-muted); padding-top: 6px; }
+
+  .vuln-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+  .vuln-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 13px; }
+  .vuln-item:last-child { border-bottom: none; }
+  .vuln-type { flex: 1; color: var(--text-secondary); }
+  .vuln-count { font-weight: 600; }
+
+  .loading { text-align: center; padding: 60px; color: var(--text-muted); font-size: 14px; }
+  .error { color: var(--accent-red); text-align: center; padding: 20px; }
+
+  .refresh-time { font-size: 12px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>📊 安全扫描仪表盘</h1>
+    <div class="header-actions">
+      <span class="refresh-time" id="refreshTime"></span>
+      <button class="btn btn-primary" onclick="loadDashboard()">🔄 刷新</button>
+      <button class="btn" onclick="window.close()">✕ 关闭</button>
+    </div>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="grid grid-4" id="statsCards">
+    <div class="stat-card"><div class="stat-value info" id="statScans">-</div><div class="stat-label">扫描任务</div></div>
+    <div class="stat-card"><div class="stat-value" id="statFeatures">-</div><div class="stat-label">功能点覆盖</div></div>
+    <div class="stat-card"><div class="stat-value critical" id="statVulns">-</div><div class="stat-label">已发现漏洞</div></div>
+    <div class="stat-card"><div class="stat-value good" id="statFixed">-</div><div class="stat-label">已修复/误报</div></div>
+  </div>
+
+  <div class="grid grid-2" style="margin-top: 20px;">
+    <!-- 漏洞严重级别分布 -->
+    <div class="card">
+      <div class="card-header"><h3>🔴 漏洞严重级别分布</h3></div>
+      <div class="card-body">
+        <div class="chart-bar-container" id="severityChart">
+          <div class="loading">加载中...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 每日扫描趋势（近7天） -->
+    <div class="card">
+      <div class="card-header"><h3>📈 扫描趋势（近7天）</h3></div>
+      <div class="card-body">
+        <div class="trend-chart" id="trendChart">
+          <div class="loading">加载中...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 漏洞类型排行 -->
+    <div class="card">
+      <div class="card-header"><h3>🏆 漏洞类型排行</h3></div>
+      <div class="card-body">
+        <div class="vuln-list" id="vulnTypeList">
+          <div class="loading">加载中...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 扫描覆盖度 -->
+    <div class="card">
+      <div class="card-header"><h3>✅ 安全覆盖度</h3></div>
+      <div class="card-body">
+        <div id="coverageInfo">
+          <div class="loading">加载中...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadDashboard() {
+      try {
+        const resp = await fetch('/api/dashboard/stats');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderStats(data);
+        renderSeverityChart(data.by_severity || {});
+        renderTrendChart(data.daily_scans || []);
+        renderVulnTypes(data.by_type || []);
+        renderCoverage(data.scan_coverage || {});
+        document.getElementById('refreshTime').textContent = '上次刷新: ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        console.error('仪表盘加载失败:', e);
+        document.querySelectorAll('.loading').forEach(el => {
+          el.innerHTML = '<span class="error">加载失败: ' + e.message + '</span>';
+        });
+      }
+    }
+
+    function renderStats(data) {
+      document.getElementById('statScans').textContent = data.total_scans || 0;
+      document.getElementById('statFeatures').textContent = data.total_features || 0;
+      document.getElementById('statVulns').textContent = data.total_vulns || 0;
+      const fixed = (data.by_severity ? (data.by_severity.info || 0) : 0);
+      document.getElementById('statFixed').textContent = fixed;
+    }
+
+    function renderSeverityChart(bySeverity) {
+      const colors = { critical: '#ef4444', high: '#f97316', medium: '#f59e0b', low: '#3b82f6', info: '#64748b' };
+      const labels = { critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息' };
+      const maxVal = Math.max(...Object.values(bySeverity), 1);
+
+      let html = '';
+      for (const [key, label] of Object.entries(labels)) {
+        const count = bySeverity[key] || 0;
+        const pct = Math.max((count / maxVal) * 100, count > 0 ? 8 : 0);
+        html += `<div class="chart-bar-row">
+          <div class="chart-bar-label"><span class="severity-dot ${key}"></span>${label}</div>
+          <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${pct}%;background:${colors[key]}">${count > 0 ? count : ''}</div></div>
+          <div class="chart-bar-value">${count}</div>
+        </div>`;
+      }
+      document.getElementById('severityChart').innerHTML = html;
+    }
+
+    function renderTrendChart(dailyScans) {
+      const container = document.getElementById('trendChart');
+      if (!dailyScans || dailyScans.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px">暂无数据</div>';
+        return;
+      }
+      const maxVal = Math.max(...dailyScans, 1);
+      const days = ['一', '二', '三', '四', '五', '六', '日'];
+      let html = '';
+      dailyScans.forEach((count, i) => {
+        const height = Math.max((count / maxVal) * 100, count > 0 ? 10 : 0);
+        html += `<div class="trend-bar" style="height:${height}%" title="周${days[i]}: ${count}次"></div>`;
+      });
+      container.innerHTML = html + '<div style="display:flex;gap:8px;position:absolute;bottom:-20px;left:0;right:0">' +
+        days.slice(0, dailyScans.length).map(d => `<div style="flex:1;text-align:center;font-size:11px;color:var(--text-dim)">${d}</div>`).join('') +
+        '</div>';
+      container.style.position = 'relative';
+    }
+
+    function renderVulnTypes(types) {
+      const container = document.getElementById('vulnTypeList');
+      if (!types || types.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px">暂无漏洞数据，开始扫描后显示</div>';
+        return;
+      }
+      const maxCount = types[0]?.count || 1;
+      const colors = ['#6366f1', '#8b5cf6', '#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#f97316'];
+      let html = '';
+      types.slice(0, 10).forEach((t, i) => {
+        const pct = Math.round((t.count / maxCount) * 100);
+        const color = colors[i % colors.length];
+        html += `<div class="chart-bar-row">
+          <div class="chart-bar-label" style="width:100px;text-align:left;font-size:11px">${t.name}</div>
+          <div class="chart-bar-track" style="height:20px"><div class="chart-bar-fill" style="width:${pct}%;background:${color};font-size:10px">${t.count > 5 ? t.count : ''}</div></div>
+          <div class="chart-bar-value" style="font-size:11px">${t.count}</div>
+        </div>`;
+      });
+      container.innerHTML = html;
+    }
+
+    function renderCoverage(coverage) {
+      const container = document.getElementById('coverageInfo');
+      const total = Object.values(coverage).reduce((a, b) => a + b, 0);
+      const critical = coverage.critical || 0;
+      const high = coverage.high || 0;
+      if (total === 0) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:20px">暂无扫描数据</div>';
+        return;
+      }
+      const riskScore = Math.min(100, Math.round(((critical * 10 + high * 5) / Math.max(total, 1)) * 20));
+      const riskLevel = riskScore >= 70 ? '高危' : riskScore >= 40 ? '中危' : '低危';
+      const riskColor = riskScore >= 70 ? 'var(--accent-red)' : riskScore >= 40 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+      container.innerHTML = `
+        <div style="text-align:center;margin-bottom:20px">
+          <div style="font-size:48px;font-weight:800;color:${riskColor}">${riskScore}</div>
+          <div style="font-size:13px;color:var(--text-muted)">安全风险评分 (${riskLevel})</div>
+        </div>
+        <div style="display:flex;justify-content:space-around;text-align:center">
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent-red)">${critical}</div><div style="font-size:11px;color:var(--text-muted)">严重</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent-orange)">${high}</div><div style="font-size:11px;color:var(--text-muted)">高危</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent-yellow)">${coverage.medium || 0}</div><div style="font-size:11px;color:var(--text-muted)">中危</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent-blue)">${coverage.low || 0}</div><div style="font-size:11px;color:var(--text-muted)">低危</div></div>
+        </div>`;
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 30000);
+  </script>
+</body>
+</html>

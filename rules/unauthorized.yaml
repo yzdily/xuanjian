@@ -1,0 +1,72 @@
+# 未授权访问检测规则
+- name: API 未授权访问
+  type: unauthorized
+  severity: high
+  description: 去除认证头后仍可访问受保护的 API
+  detection:
+    method: auth_comparison
+    # 带认证请求 vs 去认证请求
+    drop_headers:
+      - Cookie
+      - Authorization
+      - cookie
+      - authorization
+    # 对比条件
+    compare: response_length
+    similarity_threshold: 0.8
+  fix: 添加认证中间件，对所有 API 请求强制鉴权
+
+- name: 敏感接口未授权
+  type: unauthorized
+  severity: critical
+  description: 敏感管理接口无需认证即可访问
+  paths:
+    - /admin
+    - /admin/users
+    - /admin/config
+    - /api/admin
+    - /api/users/all
+    - /api/config
+    - /manage
+    - /management
+    - /system
+    - /api/system/info
+  detection:
+    method: status_code
+    expected: 200
+    without_auth: true
+  fix: 对管理接口添加严格的认证和授权
+
+- name: 水平越权
+  type: unauthorized
+  severity: high
+  description: 通过修改用户ID参数访问其他用户数据
+  detection:
+    method: idor
+    # 替换用户ID参数
+    params:
+      - id
+      - userId
+      - uid
+      - account_id
+      - order_id
+    test_values:
+      - "1"
+      - "0"
+      - "-1"
+      - "999999"
+  fix: 基于当前用户身份进行数据权限校验
+
+- name: 垂直越权
+  type: unauthorized
+  severity: critical
+  description: 普通用户可访问管理员接口
+  detection:
+    method: role_comparison
+    # 用普通用户 token 访问管理接口
+    admin_paths:
+      - /admin
+      - /api/admin
+      - /manage
+    test_with: low_privilege_token
+  fix: 实施基于角色的访问控制(RBAC)

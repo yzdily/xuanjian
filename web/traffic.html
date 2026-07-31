@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" style="background:#ffffff;">
+<head>
+<meta charset="UTF-8">
+<title>流量管理 - 游刃AISec</title>
+<script>
+  (function(){
+    var t = localStorage.getItem('pentest-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.background = t === 'dark' ? '#1e1e2e' : '#ffffff';
+  })();
+</script>
+<style>
+  /* 明亮模式全局覆盖 */
+  [data-theme="light"] { background: #ffffff !important; }
+  [data-theme="light"] body { background: #ffffff !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar h1 { color: #1565c0 !important; }
+[data-theme="light"] .topbar .back-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+    [data-theme="light"] .topbar .back-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+    [data-theme="light"] .topbar .topbar-mini-btn { background: #ffffff !important; color: #1565c0 !important; border-color: #cfd8dc !important; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    [data-theme="light"] .topbar .topbar-mini-btn:hover { background: #e3f2fd !important; color: #0d47a1 !important; border-color: #1565c0 !important; }
+    [data-theme="light"] .topbar .diff-btn { font-weight: 600 !important; }
+  [data-theme="light"] .task-select { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar .stats { color: #757575 !important; }
+  [data-theme="light"] .topbar .stats span b { color: #212121 !important; }
+  [data-theme="light"] .topbar .stats .vuln { color: #c62828 !important; }
+  [data-theme="light"] .topbar .stats .review { color: #e65100 !important; }
+  [data-theme="light"] .left-pane { background: #f8f9fa !important; border-right-color: #e2e5e9 !important; }
+  [data-theme="light"] .resizer { background: #e2e5e9 !important; }
+  [data-theme="light"] .resizer:hover { background: #1565c0 !important; }
+  [data-theme="light"] .search-bar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar input { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar input:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .filter-bar { border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .filter-btn { border-color: #e2e5e9 !important; color: #757575 !important; }
+  [data-theme="light"] .filter-btn.active { background: #e3f2fd !important; color: #1565c0 !important; border-color: #1565c0 !important; }
+  [data-theme="light"] .filter-btn:hover { color: #1a1a2e !important; }
+  [data-theme="light"] .tree-list { color: #212121 !important; }
+  [data-theme="light"] .module-group { border-bottom-color: #f0f1f3 !important; }
+  [data-theme="light"] .module-header { background: #f0f1f3 !important; color: #1565c0 !important; }
+  [data-theme="light"] .module-header:hover { background: #e8eaed !important; }
+  [data-theme="light"] .module-header .mod-count { color: #9e9e9e !important; }
+  [data-theme="light"] .badge-vuln { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .badge-review { background: #fff8e1 !important; color: #e65100 !important; }
+  [data-theme="light"] .feature-item { border-left-color: transparent !important; }
+  [data-theme="light"] .feature-item:hover { background: #f0f4ff !important; }
+  [data-theme="light"] .feature-item.active { background: #e3f2fd !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .feature-item.vuln { border-left-color: #c62828 !important; }
+  [data-theme="light"] .feature-item.review { border-left-color: #e65100 !important; }
+  [data-theme="light"] .feature-item .fi-name { color: #212121 !important; }
+  [data-theme="light"] .cl-item:hover { background: #f5f8ff !important; color: #424242 !important; }
+  [data-theme="light"] .cl-item { color: #757575 !important; }
+  [data-theme="light"] .right-pane { background: #fff !important; }
+  [data-theme="light"] .detail-tabs { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .detail-tab { color: #757575 !important; }
+  [data-theme="light"] .detail-tab:hover { color: #1a1a2e !important; }
+  [data-theme="light"] .detail-tab.active { color: #1565c0 !important; border-bottom-color: #1565c0 !important; }
+  [data-theme="light"] .empty-state { color: #9e9e9e !important; }
+  [data-theme="light"] .info-card { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .info-card h3 { color: #212121 !important; }
+  [data-theme="light"] .info-label { color: #757575 !important; }
+  [data-theme="light"] .info-value { color: #212121 !important; }
+  [data-theme="light"] .check-item { background: #f5f5f5 !important; }
+  [data-theme="light"] .check-item:hover { border-color: #e2e5e9 !important; }
+  [data-theme="light"] .check-item.vulnerable { border-left-color: #c62828 !important; }
+  [data-theme="light"] .check-item.needs_review { border-left-color: #e65100 !important; }
+  [data-theme="light"] .check-item.not_vuln { border-left-color: #2e7d32 !important; }
+  [data-theme="light"] .check-name { color: #424242 !important; }
+  /* 统计卡片 */
+  [data-theme="light"] .overview-card { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .overview-num { color: #1565c0 !important; }
+  [data-theme="light"] .overview-label { color: #757575 !important; }
+  [data-theme="light"] .page-size-select { background: #f0f1f3 !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  /* 数据包表格 */
+  [data-theme="light"] .packet-table-container { background: #fff !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .sort-header { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; color: #616161 !important; }
+  [data-theme="light"] .sort-header span[data-sort]:hover { color: #1a1a2e !important; }
+  [data-theme="light"] .sort-arrows { border-color: #e2e5e9 !important; background: #fff !important; }
+  [data-theme="light"] .packet-card { background: #fff !important; border-bottom-color: #f0f1f3 !important; }
+  [data-theme="light"] .packet-card:hover { background: #f5f8ff !important; }
+  [data-theme="light"] .packet-card.expanded { background: #f5f8ff !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .packet-header .url { color: #212121 !important; }
+  [data-theme="light"] .packet-header .source-badge { background: #f0f1f3 !important; color: #757575 !important; }
+  [data-theme="light"] .packet-header .pkt-time { color: #9e9e9e !important; }
+  [data-theme="light"] .packet-header .copy-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .packet-header .copy-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  /* HTTP 方法标签 — 明亮模式 */
+  [data-theme="light"] .m-get { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .m-post { background: #e8f5e9 !important; color: #2e7d32 !important; }
+  [data-theme="light"] .m-put { background: #fff8e1 !important; color: #e65100 !important; }
+  [data-theme="light"] .m-patch { background: #f3e5f5 !important; color: #7b1fa2 !important; }
+  [data-theme="light"] .m-delete { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .m-other { background: #f5f5f5 !important; color: #757575 !important; }
+  /* 状态码颜色 */
+  [data-theme="light"] .s2xx { color: #2e7d32 !important; }
+  [data-theme="light"] .s3xx { color: #1565c0 !important; }
+  [data-theme="light"] .s4xx { color: #e65100 !important; }
+  [data-theme="light"] .s5xx { color: #c62828 !important; }
+  /* 数据包详情 */
+  [data-theme="light"] .packet-body { border-top-color: #f0f1f3 !important; }
+  [data-theme="light"] .pane-label { color: #757575 !important; }
+  [data-theme="light"] .http-block { background: #f8f9fa !important; color: #37474f !important; }
+  [data-theme="light"] .http-block .http-method { color: #1565c0 !important; }
+  [data-theme="light"] .http-block .http-header-key { color: #7b1fa2 !important; }
+  [data-theme="light"] .http-block .http-header-val { color: #2e7d32 !important; }
+  [data-theme="light"] .http-block .http-body { color: #e65100 !important; }
+  [data-theme="light"] .s2xx-text { color: #2e7d32 !important; }
+  [data-theme="light"] .s4xx-text { color: #e65100 !important; }
+  [data-theme="light"] .s5xx-text { color: #c62828 !important; }
+  /* 操作按钮 */
+  [data-theme="light"] .actions { background: #f8f9fa !important; }
+  [data-theme="light"] .action-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .action-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .action-btn.primary { background: #e3f2fd !important; border-color: #1565c0 !important; color: #1565c0 !important; }
+  [data-theme="light"] .action-btn.danger { background: #fce4ec !important; border-color: #c62828 !important; color: #c62828 !important; }
+  /* 漏洞证据卡 */
+  [data-theme="light"] .evidence-card { background: #fff5f5 !important; border-color: #ffcdd2 !important; }
+  [data-theme="light"] .evidence-card.review { border-color: #ffe0b2 !important; }
+  [data-theme="light"] .evidence-header .vuln-type { color: #c62828 !important; font-size: 14px !important; }
+  [data-theme="light"] .evidence-card.review .vuln-type { color: #e65100 !important; }
+  [data-theme="light"] .evidence-detail { color: #37474f !important; font-size: 13px !important; line-height: 1.6 !important; }
+  [data-theme="light"] .evidence-steps { color: #2e7d32 !important; background: #f1f8e9 !important; font-size: 12px !important; }
+  [data-theme="light"] .evidence-header .fp-name { color: #616161 !important; }
+  [data-theme="light"] .evidence-severity { background: #ffebee !important; color: #c62828 !important; }
+  [data-theme="light"] .evidence-fix { color: #2e7d32 !important; font-size: 13px !important; }
+  /* 统计卡片（内联样式覆盖） */
+  [data-theme="light"] [style*="background:#181825"] { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] [style*="background: #181825"] { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] [style*="color:#6c7086"] { color: #757575 !important; }
+  [data-theme="light"] [style*="color: #6c7086"] { color: #757575 !important; }
+  [data-theme="light"] [style*="color:#45475a"] { color: #9e9e9e !important; }
+  [data-theme="light"] [style*="border-top:1px solid #313244"] { border-top-color: #e2e5e9 !important; }
+  [data-theme="light"] [style*="border:1px solid #313244"] { border-color: #e2e5e9 !important; }
+  /* 分页选择器内联样式覆盖 */
+  [data-theme="light"] [style*="background:#313244"] { background: #f0f1f3 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] [style*="color:#cdd6f4"] { color: #1a1a2e !important; }
+  /* 通用文字颜色覆盖 */
+  [data-theme="light"] pre { background: #f5f5f5 !important; color: #37474f !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] textarea,
+  [data-theme="light"] input,
+  [data-theme="light"] select { background: #f8f9fa !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .toast { background: #fff !important; color: #212121 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .toast.ok { background: #e8f5e9 !important; color: #2e7d32 !important; }
+  [data-theme="light"] .toast.err { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8ccd0 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-track { background: #f5f5f5 !important; }
+  /* 关联API标签 */
+  .api-tag-pill { background: #252535; color: #cdd6f4; }
+  [data-theme="light"] .api-tag-pill { background: #f0f1f3 !important; color: #37474f !important; }
+</style>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+  background: #1e1e2e; color: #cdd6f4; min-height: 100vh; overflow: hidden;
+}
+
+/* ---- 顶栏 ---- */
+.topbar {
+  background: #181825; border-bottom: 1px solid #313244;
+  padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.topbar h1 { font-size: 15px; color: #89b4fa; font-weight: 600; }
+.topbar .back-btn {
+  background: #313244; color: #bac2de; border: 1px solid #45475a;
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  text-decoration: none;
+}
+.topbar .back-btn:hover { background: #45475a; }
+.task-select {
+  background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;
+  padding: 5px 10px; border-radius: 6px; font-size: 12px; min-width: 240px;
+}
+.topbar .stats { color: #6c7086; font-size: 11px; margin-left: auto; display: flex; gap: 16px; }
+.topbar .stats span b { color: #cdd6f4; }
+.topbar .stats .vuln { color: #f38ba8; }
+.topbar .stats .review { color: #f9e2af; }
+
+/* ---- 主布局 ---- */
+.layout { display: flex; height: calc(100vh - 49px); }
+
+/* ---- 左侧功能点树 ---- */
+.left-pane {
+  width: 300px; min-width: 220px; background: #181825;
+  border-right: 1px solid #313244; display: flex; flex-direction: column; flex-shrink: 0;
+}
+.resizer {
+  width: 4px; cursor: col-resize; background: #313244; flex-shrink: 0;
+  transition: background .15s;
+}
+.resizer:hover { background: #89b4fa; }
+
+.search-bar {
+  padding: 8px 10px; border-bottom: 1px solid #313244;
+  position: sticky; top: 0; background: #181825; z-index: 5; flex-shrink: 0;
+}
+.search-bar input {
+  width: 100%; padding: 5px 9px; background: #1e1e2e; color: #cdd6f4;
+  border: 1px solid #313244; border-radius: 5px; font-size: 12px;
+}
+.search-bar input:focus { outline: none; border-color: #89b4fa; }
+
+.filter-bar {
+  padding: 6px 10px; border-bottom: 1px solid #313244; display: flex; gap: 6px; flex-shrink: 0;
+}
+.filter-btn {
+  padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;
+  border: 1px solid #45475a; background: transparent; color: #6c7086;
+}
+.filter-btn.active { background: #313244; color: #cdd6f4; border-color: #89b4fa; }
+.filter-btn:hover { color: #cdd6f4; }
+
+.tree-list { flex: 1; overflow-y: auto; }
+
+.module-group { border-bottom: 1px solid #252535; }
+.module-header {
+  padding: 7px 10px; font-size: 12px; font-weight: 600; color: #89b4fa;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+  background: #1e1e2e; user-select: none;
+}
+.module-header:hover { background: #252535; }
+.module-header .arrow { font-size: 10px; transition: transform .15s; }
+.module-header.collapsed .arrow { transform: rotate(-90deg); }
+.module-header .mod-name { flex: 1; }
+.module-header .mod-count { color: #6c7086; font-size: 10px; font-weight: 400; }
+.module-header .badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 600; }
+.badge-vuln { background: #3d1a1a; color: #f38ba8; }
+.badge-review { background: #3d2e00; color: #f9e2af; }
+
+.feature-item {
+  padding: 6px 10px 6px 22px; font-size: 12px; cursor: pointer;
+  border-left: 2px solid transparent; transition: all .1s;
+  display: flex; align-items: center; gap: 6px;
+}
+.feature-item:hover { background: #252535; }
+.feature-item.active { background: #252535; border-left-color: #89b4fa; }
+.feature-item.vuln { border-left-color: #f38ba8; }
+.feature-item.review { border-left-color: #f9e2af; }
+.feature-item .fi-name { flex: 1; color: #cdd6f4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feature-item .fi-status { font-size: 10px; flex-shrink: 0; }
+.feature-item .method-tag {
+  font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 700; flex-shrink: 0;
+}
+.status-icon { font-size: 12px; flex-shrink: 0; }
+
+/* ---- 三级：checklist 项 ---- */
+.cl-item {
+  padding: 4px 10px 4px 42px; font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; color: #6c7086;
+  transition: background .1s; border-left: 2px solid transparent;
+}
+.cl-item:hover { background: #1e1e2e; color: #bac2de; }
+.cl-item .cl-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- 右侧详情 ---- */
+.right-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+.detail-tabs {
+  background: #181825; border-bottom: 1px solid #313244;
+  padding: 0 16px; display: flex; gap: 0; flex-shrink: 0;
+}
+.detail-tab {
+  padding: 10px 16px; font-size: 12px; cursor: pointer; color: #6c7086;
+  border-bottom: 2px solid transparent; transition: all .1s;
+}
+.detail-tab:hover { color: #cdd6f4; }
+.detail-tab.active { color: #89b4fa; border-bottom-color: #89b4fa; }
+
+.detail-content { flex: 1; overflow-y: auto; padding: 16px; }
+
+/* ---- 空状态 ---- */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 100%; color: #45475a; font-size: 13px; gap: 8px;
+}
+.empty-state .icon { font-size: 48px; }
+
+/* ---- 功能点信息卡 ---- */
+.info-card {
+  background: #181825; border: 1px solid #313244; border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.info-card h3 { font-size: 14px; color: #cdd6f4; margin-bottom: 8px; }
+.info-row { display: flex; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+.info-label { color: #6c7086; min-width: 70px; flex-shrink: 0; }
+.info-value { color: #cdd6f4; word-break: break-all; }
+.priority-high { color: #f38ba8; }
+.priority-medium { color: #f9e2af; }
+.priority-low { color: #a6e3a1; }
+
+/* ---- Checklist ---- */
+.checklist-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px; margin-top: 8px;
+}
+.check-item {
+  background: #252535; border-radius: 5px; padding: 7px 10px; font-size: 11px;
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid transparent; transition: border-color .1s;
+}
+.check-item:hover { border-color: #45475a; }
+.check-item.vulnerable { border-left: 3px solid #f38ba8; }
+.check-item.needs_review { border-left: 3px solid #f9e2af; }
+.check-item.not_vuln { border-left: 3px solid #a6e3a1; }
+.check-item.skipped { opacity: .5; }
+.check-icon { font-size: 13px; flex-shrink: 0; }
+.check-name { flex: 1; color: #bac2de; }
+
+/* ---- 数据包列表 ---- */
+.packet-list { display: flex; flex-direction: column; gap: 0; }
+/* ---- 数据包表格容器 ---- */
+.packet-table-container {
+  background: #181825; border: 1px solid #313244; border-radius: 8px;
+  overflow: hidden;
+}
+/* ---- 统一的网格列布局 ---- */
+.pkt-grid {
+  display: grid;
+  grid-template-columns: 16px 56px 1fr 60px 84px 72px 96px;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 24px;
+}
+/* ---- 排序表头 ---- */
+.sort-header {
+  background: #1e1e2e; border-bottom: 1px solid #313244;
+  font-size: 12px; color: #6c7086; user-select: none;
+  position: sticky; top: 0; z-index: 2;
+}
+.sort-header span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.sort-header span[data-sort] { cursor: pointer; transition: color .15s; }
+.sort-header span[data-sort]:hover { color: #cdd6f4; }
+.sort-arrows {
+  display: inline-flex; align-items: center; padding: 1px 3px;
+  border: 1px solid #313244; border-radius: 3px; background: #181825;
+  cursor: pointer; transition: border-color .15s;
+}
+.sort-arrows:hover { border-color: #89b4fa; }
+/* 统计卡片 */
+.overview-card {
+  background: #181825; border: 1px solid #313244; border-radius: 8px;
+  padding: 14px; text-align: center; cursor: pointer;
+}
+.overview-num { font-size: 24px; font-weight: 700; }
+.overview-label { font-size: 11px; color: #6c7086; margin-top: 4px; }
+.page-size-select {
+  background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+  border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer;
+}
+.packet-card {
+  background: #181825; border-bottom: 1px solid #252535;
+  overflow: hidden; cursor: pointer; transition: background-color .1s;
+}
+.packet-card:hover { background: #1e1e2e; }
+.packet-card.expanded { background: #1e1e2e; border-left: 2px solid #89b4fa; }
+.packet-header {
+  font-size: 12px;
+}
+.packet-header .method {
+  font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-align: left;
+}
+.m-get    { background: #1e3a5f; color: #89b4fa; }
+.m-post   { background: #1a3d1a; color: #a6e3a1; }
+.m-put    { background: #3d2e00; color: #f9e2af; }
+.m-patch  { background: #2d2040; color: #cba6f7; }
+.m-delete { background: #3d1a1a; color: #f38ba8; }
+.m-other  { background: #252535; color: #6c7086; }
+.packet-header .url { color: #cdd6f4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.packet-header .status { font-size: 11px; text-align: center; }
+.s2xx { color: #a6e3a1; }
+.s3xx { color: #89b4fa; }
+.s4xx { color: #f9e2af; }
+.s5xx { color: #f38ba8; }
+.packet-header .source-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 3px; background: #252535; color: #6c7086; text-align: center;
+}
+.packet-header .pkt-time {
+  font-size: 10px; color: #6c7086; text-align: center;
+}
+.packet-header .pkt-actions {
+  display: flex; align-items: center; gap: 4px; justify-content: center;
+}
+.packet-header .copy-btn {
+  font-size: 10px; padding: 2px 7px; background: #313244; color: #bac2de;
+  border: 1px solid #45475a; border-radius: 4px; cursor: pointer; flex-shrink: 0;
+}
+.packet-header .copy-btn:hover { background: #45475a; color: #cdd6f4; }
+
+.packet-body { border-top: 1px solid #252535; }
+.packet-detail-wrap { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.pane-label {
+  font-size: 10px; font-weight: 600; color: #6c7086; text-transform: uppercase;
+  letter-spacing: .05em; display: flex; align-items: center; gap: 8px;
+}
+.http-block {
+  background: #1e1e2e; border-radius: 4px; padding: 10px 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px;
+  line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  color: #cdd6f4; max-height: 400px; overflow-y: auto;
+}
+.http-block .http-method { color: #89b4fa; font-weight: bold; }
+.http-block .http-header-key { color: #cba6f7; }
+.http-block .http-header-val { color: #a6e3a1; }
+.http-block .http-body { color: #f9e2af; }
+.http-block .http-status { font-weight: bold; }
+.s2xx-text { color: #a6e3a1; }
+.s4xx-text { color: #f9e2af; }
+.s5xx-text { color: #f38ba8; }
+
+.actions { padding: 8px 12px; display: flex; gap: 8px; background: #252535; }
+.action-btn {
+  padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer;
+  border: 1px solid #45475a; background: #313244; color: #bac2de;
+}
+.action-btn:hover { background: #45475a; color: #cdd6f4; }
+.action-btn.primary { background: #1e3a5f; border-color: #89b4fa; color: #89b4fa; }
+.action-btn.primary:hover { background: #2a4a6f; }
+.action-btn.danger { background: #3d1a1a; border-color: #f38ba8; color: #f38ba8; }
+
+/* ---- 漏洞证据卡 ---- */
+.evidence-card {
+  background: #181825; border: 1px solid #f38ba830; border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.evidence-card.review { border-color: #f9e2af30; }
+.evidence-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.evidence-header .vuln-type { font-size: 14px; font-weight: 600; color: #f38ba8; }
+.evidence-card.review .vuln-type { color: #f9e2af; }
+.evidence-header .fp-name { font-size: 11px; color: #6c7086; }
+.evidence-detail { font-size: 13px; color: #cdd6f4; margin-bottom: 10px; line-height: 1.6; }
+.evidence-steps { font-size: 11px; color: #a6e3a1; background: #1e1e2e; border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; white-space: pre-wrap; }
+.evidence-severity { font-size: 12px; background: #3d1a1a; color: #f38ba8; padding: 2px 8px; border-radius: 3px; font-weight: 500; }
+.evidence-fix { margin-top: 8px; font-size: 13px; color: #a6e3a1; line-height: 1.5; }
+
+/* ---- JS上下文 ---- */
+.js-context {
+  background: #1e1e2e; border: 1px solid #313244; border-radius: 4px;
+  padding: 10px 12px; font-size: 11px; color: #cba6f7; white-space: pre-wrap;
+  max-height: 200px; overflow-y: auto; margin-top: 8px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ---- 通知 ---- */
+.toast {
+  position: fixed; bottom: 20px; right: 20px; background: #313244; color: #cdd6f4;
+  padding: 8px 14px; border-radius: 6px; font-size: 12px; z-index: 9999;
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+/* ---- 加载 ---- */
+.loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: #6c7086; font-size: 13px; gap: 8px; }
+.spinner { width: 16px; height: 16px; border: 2px solid #313244; border-top-color: #89b4fa; border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #45475a; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/" class="back-btn">← 返回</a>
+  <h1>📡 流量管理</h1>
+  <select class="task-select" id="taskSelect" onchange="switchTask(this.value)">
+    <option value="">加载中...</option>
+  </select>
+  <span id="activeIndicator" style="display:none;font-size:11px;color:#a6e3a1;background:#1e2e1e;padding:2px 8px;border-radius:4px;border:1px solid #2a3a2a">🟢 运行中 · 15s 自动刷新</span>
+  <button class="topbar-mini-btn" onclick="refreshCurrentTask()" style="background:#313244;color:#bac2de;border:1px solid #45475a;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px" title="立即刷新">🔄</button>
+  <button class="topbar-mini-btn diff-btn" onclick="openSitemapDiff()" style="background:#313244;color:#bac2de;border:1px solid #45475a;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:6px" title="Sitemap 版本对比 + 增量回归扫描">📊 版本对比</button>
+  <button class="topbar-mini-btn theater-btn" onclick="window.open('/replay-theater','_blank')" style="background:linear-gradient(135deg,#cba6f7 0%,#89b4fa 100%);color:#1e1e2e;border:1px solid #cba6f7;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;margin-left:6px;font-weight:600" title="决策剧场 — 可视化流程图 / 录制回放 / 反推经验">🎬 决策剧场</button>
+  <div class="stats" id="statsBar">
+    <span>功能点 <b id="statFeatures">-</b></span>
+    <span>数据包 <b id="statPackets">-</b></span>
+    <span class="vuln">漏洞 <b id="statVulns">-</b></span>
+    <span class="review">待审 <b id="statReview">-</b></span>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- 左侧功能点树 -->
+  <div class="left-pane" id="leftPane">
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="🔍 搜索功能点、API..." oninput="filterTree(this.value)">
+    </div>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="setFilter('all', this)">全部</button>
+      <button class="filter-btn" onclick="setFilter('vuln', this)">🔴 漏洞</button>
+      <button class="filter-btn" onclick="setFilter('review', this)">🟡 待审</button>
+      <button class="filter-btn" onclick="setFilter('tested', this)">✅ 已测</button>
+    </div>
+    <div class="tree-list" id="treeList">
+      <!-- ★ 全量数据包入口（固定在最顶部，不依赖功能点） -->
+      <div class="module-group" id="allPacketsGroup" style="border-bottom:2px solid #313244;display:none">
+        <div class="module-header" id="allPacketsHeader" onclick="selectAllPackets()" style="color:#cba6f7">
+          <span class="arrow" id="allPacketsArrow">▶</span>
+          <span class="mod-name">📦 全部数据包</span>
+          <span class="mod-count" id="allPacketCount">-</span>
+        </div>
+      </div>
+      <!-- 功能点树渲染到这里 -->
+      <div id="featureTreeContainer"></div>
+    </div>
+  </div>
+
+  <!-- 拖拽分隔条 -->
+  <div class="resizer" id="resizer"></div>
+
+  <!-- 右侧详情 -->
+  <div class="right-pane">
+    <div class="detail-tabs" id="detailTabs" style="display:none">
+      <div class="detail-tab active" onclick="switchTab('info', this)">功能点信息</div>
+      <div class="detail-tab" onclick="switchTab('packets', this)">数据包 <span id="tabPacketCount"></span></div>
+      <div class="detail-tab" onclick="switchTab('checklist', this)">Checklist</div>
+      <div class="detail-tab" onclick="switchTab('evidence', this)">漏洞证据 <span id="tabEvidenceCount"></span></div>
+      <div class="detail-tab" onclick="switchTab('replay', this)">🎬 决策回放 <span id="tabReplayCount"></span></div>
+    </div>
+    <div class="detail-content" id="detailContent">
+      <div class="empty-state">
+        <div class="icon">📡</div>
+        <div>选择左侧功能点查看详情</div>
+        <div style="font-size:11px; color:#45475a; margin-top:4px;">包含 API 数据包、请求响应、漏洞证据</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 📊 Sitemap 版本对比抽屉（嵌入 /sitemap-diff，保留独立页作为新页打开后备） -->
+<div id="sitemapDiffModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#fff; width:96%; max-width:1400px; height:92vh; border-radius:8px; border:1px solid #e2e5e9; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #e2e5e9; flex-shrink:0; background:#f8f9fa;">
+      <div style="color:#1565c0; font-size:14px; font-weight:600;">📊 Sitemap 版本对比 + 增量回归扫描</div>
+      <div style="display:flex; gap:8px;">
+        <a href="/sitemap-diff" target="_blank" style="background:#fff;color:#1565c0;border:1px solid #c8d3e0;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;text-decoration:none;" title="新页打开">⧉ 新页打开</a>
+        <button onclick="closeSitemapDiff()" style="background:#fff;color:#424242;border:1px solid #c8d3e0;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">关闭</button>
+      </div>
+    </div>
+    <iframe id="sitemapDiffFrame" src="about:blank" style="flex:1; border:0; background:#fff;"></iframe>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// 状态
+// =====================================================================
+let currentTaskId = '';
+let summaryData = null;        // /api/traffic/{task_id} 的结果
+let currentFpId = '';
+let currentFpDetail = null;    // /api/traffic/{task_id}/feature/{fp_id}
+let currentTab = 'info';
+let filterMode = 'all';
+let searchKeyword = '';
+let _autoRefreshTimer = null;  // ★ v4.2: 自动刷新定时器
+let _activeTaskId = '';        // ★ v4.2: 运行中的任务 ID（自动刷新时跳过重载任务列表）
+
+// =====================================================================
+// 初始化
+// =====================================================================
+async function init() {
+  await loadTaskList();
+  // ★ v4.2: 启动自动刷新（检测运行中任务，15 秒轮询）
+  startAutoRefresh();
+}
+
+function startAutoRefresh() {
+  if (_autoRefreshTimer) return;
+  _autoRefreshTimer = setInterval(async () => {
+    // 只在查看运行中任务时自动刷新摘要（不刷任务列表，避免闪烁）
+    if (_activeTaskId && currentTaskId === _activeTaskId && !currentFpId) {
+      try {
+        const res = await fetch(`/api/traffic/${currentTaskId}`);
+        if (res.ok) {
+          summaryData = await res.json();
+          updateStats();
+          renderTree();
+        }
+      } catch(e) { /* 静默失败 */ }
+    }
+  }, 15000); // 15 秒
+}
+
+async function loadTaskList() {
+  try {
+    const res = await fetch('/api/traffic/tasks');
+    const data = await res.json();
+    const sel = document.getElementById('taskSelect');
+    sel.innerHTML = '';
+    if (!data.tasks || !data.tasks.length) {
+      sel.innerHTML = '<option value="">暂无任务</option>';
+      _activeTaskId = '';
+      return;
+    }
+    data.tasks.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.task_id;
+      const host = t.target.replace(/https?:\/\//, '').split('/')[0];
+      // 从 task_id (task_{timestamp}_{hex}) 解析时间
+      let timeStr = '';
+      const tsParts = t.task_id.split('_');
+      if (tsParts.length >= 2) {
+        const ts = parseInt(tsParts[1]);
+        if (ts > 1000000000) {
+          const d = new Date(ts * 1000);
+          timeStr = ` ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        }
+      }
+      // ★ v4.2: 运行中任务标记 🟢
+      const activeMark = t.active ? ' 🟢运行中' : '';
+      opt.textContent = `${host}${timeStr} (${t.features_count}功能点)${activeMark}`;
+      sel.appendChild(opt);
+      // 记录运行中的 task_id
+      if (t.active) _activeTaskId = t.task_id;
+    });
+    // 自动加载第一个
+    switchTask(data.tasks[0].task_id);
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+async function switchTask(taskId) {
+  if (!taskId) return;
+  currentTaskId = taskId;
+  currentFpId = '';
+  currentFpDetail = null;
+  document.getElementById('detailTabs').style.display = 'none';
+  document.getElementById('detailContent').innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+  // 只清空功能点树容器，保留"全部数据包"固定入口
+  const ftContainer = document.getElementById('featureTreeContainer');
+  if (ftContainer) ftContainer.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+  const allGroup = document.getElementById('allPacketsGroup');
+  if (allGroup) allGroup.style.display = 'none';
+
+  // ★ v4.2: 显示/隐藏运行中指示器
+  const indicator = document.getElementById('activeIndicator');
+  if (taskId === _activeTaskId) {
+    indicator.style.display = 'inline';
+  } else {
+    indicator.style.display = 'none';
+  }
+
+  try {
+    const res = await fetch(`/api/traffic/${taskId}`);
+    summaryData = await res.json();
+
+    // ★ 显示"全部数据包"固定入口
+    const allGroup = document.getElementById('allPacketsGroup');
+    const allCount = document.getElementById('allPacketCount');
+    if (allGroup) {
+      allGroup.style.display = 'block';
+      allCount.textContent = summaryData.stats?.total || 0;
+    }
+
+    renderTree();
+    updateStats();
+
+    // ★ 如果没有功能点但有数据包，自动展示全量数据包列表
+    const hasFeatures = (summaryData.feature_tree || []).some(m => (m.features || []).length > 0);
+    if (!hasFeatures && (summaryData.stats?.total || 0) > 0) {
+      selectAllPackets();
+    } else {
+      document.getElementById('detailContent').innerHTML = `
+        <div style="padding:20px">
+          <div style="font-size:13px;color:#6c7086;margin-bottom:16px">选择左侧功能点查看详情，或点击"📦 全部数据包"浏览全部流量</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+            ${[
+              {label:'功能点', val: summaryData.stats.features_total||0, color:'#89b4fa'},
+              {label:'数据包', val: summaryData.stats.total||0, color:'#cba6f7'},
+              {label:'漏洞', val: (() => { let v=0; (summaryData.feature_tree||[]).forEach(m=>m.features.forEach(f=>v+=f.status_counts.vulnerable||0)); return v; })(), color:'#f38ba8'},
+              {label:'待审', val: (() => { let v=0; (summaryData.feature_tree||[]).forEach(m=>m.features.forEach(f=>v+=f.status_counts.needs_review||0)); return v; })(), color:'#f9e2af'},
+            ].map(c => `<div style="background:#181825;border:1px solid #313244;border-radius:8px;padding:14px;text-align:center">
+              <div style="font-size:24px;font-weight:700;color:${c.color}">${c.val}</div>
+              <div style="font-size:11px;color:#6c7086;margin-top:4px">${c.label}</div>
+            </div>`).join('')}
+          </div>
+          <div style="background:#181825;border:1px solid #313244;border-radius:8px;padding:12px 16px;font-size:12px">
+            <div style="color:#6c7086;margin-bottom:4px">目标</div>
+            <div style="color:#89b4fa;font-family:monospace">${escHtml(summaryData.target||'')}</div>
+            ${summaryData.business_summary ? `<div style="color:#6c7086;margin:10px 0 4px">业务描述</div><div style="color:#bac2de;line-height:1.5">${escHtml(summaryData.business_summary.slice(0,200))}</div>` : ''}
+            ${summaryData.tech_stack ? `<div style="color:#6c7086;margin:10px 0 4px">技术栈</div><div style="color:#a6e3a1">${escHtml(summaryData.tech_stack)}</div>` : ''}
+          </div>
+        </div>`;
+    }
+  } catch(e) {
+    const ftContainer2 = document.getElementById('featureTreeContainer');
+    if (ftContainer2) ftContainer2.innerHTML = '<div class="empty-state" style="padding:30px"><div>加载失败</div></div>';
+    console.error(e);
+  }
+}
+
+// ★ v4.2: 手动刷新当前任务
+async function refreshCurrentTask() {
+  if (currentTaskId) {
+    await loadTaskList();  // 刷新任务列表（检测是否还在运行中）
+    await switchTask(currentTaskId);
+  }
+}
+
+// =====================================================================
+// 统计栏
+// =====================================================================
+function updateStats() {
+  if (!summaryData) return;
+  const s = summaryData.stats;
+  document.getElementById('statFeatures').textContent = s.features_total || 0;
+  document.getElementById('statPackets').textContent = s.total || 0;
+
+  let vulns = 0, reviews = 0;
+  (summaryData.feature_tree || []).forEach(m => {
+    m.features.forEach(f => {
+      vulns += f.status_counts.vulnerable || 0;
+      reviews += f.status_counts.needs_review || 0;
+    });
+  });
+  document.getElementById('statVulns').textContent = vulns;
+  document.getElementById('statReview').textContent = reviews;
+}
+
+// =====================================================================
+// 功能点树渲染（三级：模块 → 功能点 → checklist）
+// =====================================================================
+function renderTree() {
+  const tree = summaryData?.feature_tree || [];
+  // ★ 只操作功能点容器，不碰"全部数据包"固定入口
+  const container = document.getElementById('featureTreeContainer');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const kw = searchKeyword.toLowerCase();
+  const checkIcons = { vulnerable: '🔴', needs_review: '🟡', not_vuln: '✅', skipped: '⏭️', pending: '⬜' };
+
+  tree.forEach(module => {
+    const features = module.features.filter(f => {
+      if (filterMode === 'vuln' && !f.has_vuln) return false;
+      if (filterMode === 'review' && !f.has_review) return false;
+      if (filterMode === 'tested' && f.test_status === 'not_tested') return false;
+      if (kw && !f.name.toLowerCase().includes(kw) && !f.related_apis.join('').toLowerCase().includes(kw)) return false;
+      return true;
+    });
+    if (!features.length) return;
+
+    const group = document.createElement('div');
+    group.className = 'module-group';
+
+    // ---- 一级：模块标题 ----
+    const header = document.createElement('div');
+    header.className = 'module-header';
+    let badges = '';
+    if (module.has_vuln) badges += '<span class="badge badge-vuln">漏洞</span>';
+    else if (module.has_review) badges += '<span class="badge badge-review">待审</span>';
+    header.innerHTML = `
+      <span class="arrow">▼</span>
+      <span class="mod-name">${escHtml(module.module || '其他')}</span>
+      <span class="mod-count">${features.length}</span>
+      ${badges}`;
+
+    const featureContainer = document.createElement('div');
+
+    header.onclick = () => {
+      header.classList.toggle('collapsed');
+      featureContainer.style.display = header.classList.contains('collapsed') ? 'none' : 'block';
+    };
+
+    // ---- 二级：功能点（默认折叠）----
+    features.forEach(f => {
+      const fpWrap = document.createElement('div');
+
+      const stateClass = f.has_vuln ? 'vuln' : f.has_review ? 'review' : '';
+      const status = f.has_vuln ? '🔴' : f.has_review ? '🟡'
+        : f.test_status === 'not_tested' ? '⬜'
+        : f.test_status === 'in_progress' ? '🔵' : '✅';
+
+      // 功能点行（可点击展开 checklist，也可点击加载详情）
+      const fpRow = document.createElement('div');
+      fpRow.className = `feature-item${stateClass ? ' '+stateClass : ''}${currentFpId === f.id ? ' active' : ''}`;
+      fpRow.dataset.fpId = f.id;
+      fpRow.innerHTML = `
+        <span class="fi-arrow" style="font-size:9px;color:#45475a;margin-right:2px;transition:transform .12s;display:inline-block">▶</span>
+        <span class="status-icon">${status}</span>
+        <span class="fi-name" title="${escHtml(f.name)}">${escHtml(f.name)}</span>
+        <span class="fi-status" style="color:#6c7086;font-size:10px">${f.checklist_total}项</span>`;
+
+      // ---- 三级：checklist 列表（默认隐藏）----
+      const clContainer = document.createElement('div');
+      clContainer.style.display = 'none';
+
+      // 点击功能点行：展开/收起 checklist + 同时加载右侧详情
+      fpRow.onclick = (e) => {
+        const arrow = fpRow.querySelector('.fi-arrow');
+        const isOpen = clContainer.style.display !== 'none';
+        clContainer.style.display = isOpen ? 'none' : 'block';
+        if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+        // 同时加载右侧详情
+        selectFeature(f.id);
+      };
+
+      // checklist 懒加载：展开时才填充内容
+      let clLoaded = false;
+      const origOnclick = fpRow.onclick;
+      fpRow.onclick = (e) => {
+        if (!clLoaded && f.checklist) {
+          f.checklist.forEach(c => {
+            const clItem = document.createElement('div');
+            clItem.className = 'cl-item';
+            clItem.innerHTML = `<span>${checkIcons[c.result] || '⬜'}</span><span class="cl-name">${escHtml(c.vuln_type || '')}</span>`;
+            clItem.onclick = (e2) => {
+              e2.stopPropagation();
+              selectFeature(f.id, c.vuln_type);
+            };
+            clContainer.appendChild(clItem);
+          });
+          clLoaded = true;
+        }
+        origOnclick(e);
+      };
+
+      fpWrap.appendChild(fpRow);
+      fpWrap.appendChild(clContainer);
+      featureContainer.appendChild(fpWrap);
+    });
+
+    group.appendChild(header);
+    group.appendChild(featureContainer);
+    container.appendChild(group);
+  });
+
+  if (!container.children.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:30px"><div>无匹配结果</div></div>';
+  }
+}
+
+function setFilter(mode, btn) {
+  filterMode = mode;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderTree();
+}
+
+function filterTree(kw) {
+  searchKeyword = kw;
+  renderTree();
+}
+
+// =====================================================================
+// 选择功能点 → 加载详情
+// =====================================================================
+async function selectFeature(fpId, focusVulnType) {
+  currentFpId = fpId;
+  currentTab = 'info';
+
+  // 高亮左侧
+  document.querySelectorAll('.feature-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.fpId === fpId);
+  });
+
+  document.getElementById('detailTabs').style.display = 'flex';
+  document.getElementById('detailContent').innerHTML = '<div class="loading"><div class="spinner"></div>加载详情...</div>';
+
+  // 重置 tab 激活状态
+  document.querySelectorAll('.detail-tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+
+  try {
+    const res = await fetch(`/api/traffic/${currentTaskId}/feature/${fpId}`);
+    currentFpDetail = await res.json();
+
+    const packets = currentFpDetail.packets || [];
+    const fp = currentFpDetail.fp || {};
+    const checklist = fp.checklist || [];
+    const evidencePackets = (currentFpDetail.packets || []).filter(p => p.source === 'evidence');
+    const vulnChecks = checklist.filter(c => c.result === 'vulnerable' || c.result === 'needs_review');
+
+    document.getElementById('tabPacketCount').textContent = packets.length ? `(${packets.length})` : '';
+    document.getElementById('tabEvidenceCount').textContent = vulnChecks.length ? `(${vulnChecks.length})` : '';
+
+    renderTab('info');
+    // 如果点的是 checklist 项，自动切到 Checklist Tab
+    if (focusVulnType) {
+      const tabs = document.querySelectorAll('.detail-tab');
+      tabs.forEach((t, i) => t.classList.toggle('active', i === 2));
+      currentTab = 'checklist';
+      renderTab('checklist');
+    }
+  } catch(e) {
+    document.getElementById('detailContent').innerHTML = `<div class="empty-state"><div>加载失败: ${e.message}</div></div>`;
+    console.error(e);
+  }
+}
+
+// =====================================================================
+// ★ 全量数据包浏览（不依赖功能点）
+// =====================================================================
+let allPacketsData = null;
+let allPacketsPage = 1;
+let allPacketsTotal = 0;
+let allPacketsSort = '';       // 排序字段：status_code / path / method / timestamp
+let allPacketsSortDir = 'asc'; // 排序方向
+let ALL_PACKETS_PAGE_SIZE = 20;
+
+async function selectAllPackets() {
+  currentFpId = '';
+  currentFpDetail = null;
+  allPacketsData = null;
+
+  // 高亮"全部数据包"，取消功能点高亮
+  document.querySelectorAll('.feature-item').forEach(el => el.classList.remove('active'));
+  const allHeader = document.getElementById('allPacketsHeader');
+  if (allHeader) {
+    document.querySelectorAll('.module-header').forEach(h => h.style.background = '');
+    allHeader.style.background = '#252535';
+  }
+
+  document.getElementById('detailTabs').style.display = 'none';
+  document.getElementById('detailContent').innerHTML = '<div class="loading"><div class="spinner"></div>加载全部数据包...</div>';
+
+  try {
+    allPacketsPage = 1;
+    await loadAllPacketsPage();
+  } catch(e) {
+    document.getElementById('detailContent').innerHTML = `<div class="empty-state"><div>加载失败: ${e.message}</div></div>`;
+    console.error(e);
+  }
+}
+
+async function loadAllPacketsPage() {
+  const contentEl = document.getElementById('detailContent');
+  try {
+    let url = `/api/traffic/${currentTaskId}/packets?page=${allPacketsPage}&page_size=${ALL_PACKETS_PAGE_SIZE}`;
+    if (allPacketsSort) url += `&sort=${allPacketsSort}&sort_dir=${allPacketsSortDir}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    allPacketsData = data.packets || [];
+    allPacketsTotal = data.total || 0;
+    if (!allPacketsTotal) {
+      contentEl.innerHTML = '<div class="empty-state"><div class="icon">📭</div><div>暂无数据包</div></div>';
+      return;
+    }
+    renderAllPacketsPage(contentEl);
+  } catch(e) {
+    contentEl.innerHTML = `<div class="empty-state"><div>加载失败: ${e.message}</div></div>`;
+    console.error(e);
+  }
+}
+
+function _renderTaskOverview() {
+  // 复用 switchTask 中的统计卡片和任务概览
+  const s = summaryData?.stats || {};
+  let vulns = 0, reviews = 0;
+  (summaryData?.feature_tree || []).forEach(m => {
+    m.features.forEach(f => {
+      vulns += f.status_counts?.vulnerable || 0;
+      reviews += f.status_counts?.needs_review || 0;
+    });
+  });
+  return `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      ${[
+        {label:'功能点', val: s.features_total||0, color:'#89b4fa'},
+        {label:'数据包', val: s.total||0, color:'#cba6f7'},
+        {label:'漏洞', val: vulns, color:'#f38ba8'},
+        {label:'待审', val: reviews, color:'#f9e2af'},
+      ].map(c => `<div class="overview-card" onclick="showTaskOverview()">
+        <div class="overview-num" style="color:${c.color}">${c.val}</div>
+        <div class="overview-label">${c.label}</div>
+      </div>`).join('')}
+    </div>`;
+}
+
+function showTaskOverview() {
+  // 取消"全部数据包"高亮，回到概览
+  const allHeader = document.getElementById('allPacketsHeader');
+  if (allHeader) allHeader.style.background = '';
+  document.getElementById('detailTabs').style.display = 'none';
+  document.getElementById('detailContent').innerHTML = `<div style="padding:20px">${_renderTaskOverview()}</div>`;
+}
+
+function renderAllPacketsPage(contentEl) {
+  const pagePackets = allPacketsData || [];
+  const total = allPacketsTotal;
+  const totalPages = Math.ceil(total / ALL_PACKETS_PAGE_SIZE);
+  const start = (allPacketsPage - 1) * ALL_PACKETS_PAGE_SIZE;
+
+  // 表格列头式排序控件（与 packet-header 布局对齐）
+  function sortIcon(field) {
+    const active = allPacketsSort === field;
+    const upColor = active && allPacketsSortDir === 'asc' ? '#cdd6f4' : '#45475a';
+    const downColor = active && allPacketsSortDir === 'desc' ? '#cdd6f4' : '#45475a';
+    return `<span class="sort-arrows">` +
+      `<svg width="10" height="12" viewBox="0 0 10 12" style="vertical-align:middle">` +
+      `<path d="M5 1 L8.5 5 L1.5 5 Z" fill="${upColor}"/>` +
+      `<path d="M5 11 L8.5 7 L1.5 7 Z" fill="${downColor}"/>` +
+      `</svg></span>`;
+  }
+  const sortBar = `
+    <div class="sort-header pkt-grid">
+      <span></span>
+      <span data-sort="method" onclick="toggleSort('method')" title="点击排序">方法 ${sortIcon('method')}</span>
+      <span data-sort="path" onclick="toggleSort('path')" title="点击排序">路径 ${sortIcon('path')}</span>
+      <span data-sort="status_code" onclick="toggleSort('status_code')" title="点击排序" style="justify-content:center">状态码 ${sortIcon('status_code')}</span>
+      <span style="justify-content:center">来源</span>
+      <span data-sort="timestamp" onclick="toggleSort('timestamp')" title="点击排序" style="justify-content:center">时间 ${sortIcon('timestamp')}</span>
+      <span style="justify-content:center">操作</span>
+    </div>`;
+
+  const pageSizeSelector = `
+    <select class="page-size-select" onchange="changeAllPacketSize(this.value)">
+      <option value="20" ${ALL_PACKETS_PAGE_SIZE===20?'selected':''}>20条/页</option>
+      <option value="50" ${ALL_PACKETS_PAGE_SIZE===50?'selected':''}>50条/页</option>
+      <option value="100" ${ALL_PACKETS_PAGE_SIZE===100?'selected':''}>100条/页</option>
+    </select>`;
+
+  const pagination = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:12px;color:#6c7086">
+      <button class="action-btn" onclick="changeAllPacketPage(-1)" ${allPacketsPage===1?'disabled':''}>← 上一页</button>
+      <span>第 ${allPacketsPage} / ${totalPages} 页（共 ${total} 条）</span>
+      <button class="action-btn" onclick="changeAllPacketPage(1)" ${allPacketsPage===totalPages?'disabled':''}>下一页 →</button>
+      ${pageSizeSelector}
+    </div>` : `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#45475a;padding:6px 0"><span>共 ${total} 条</span>${pageSizeSelector}</div>`;
+
+  contentEl.innerHTML = `
+    <div style="padding:20px">
+      ${_renderTaskOverview()}
+      <div class="packet-table-container">
+        ${sortBar}
+        <div class="packet-list">${pagePackets.map((p, i) => renderPacketCard(p, 'all_' + (start + i))).join('')}</div>
+        <div style="padding:8px 12px;border-top:1px solid #313244">
+          ${pagination}
+        </div>
+      </div>
+    </div>`;
+
+  if (total === 1) {
+    setTimeout(() => togglePacket('all_0'), 0);
+  }
+}
+
+async function changeAllPacketPage(delta) {
+  const totalPages = Math.ceil(allPacketsTotal / ALL_PACKETS_PAGE_SIZE);
+  allPacketsPage = Math.max(1, Math.min(totalPages, allPacketsPage + delta));
+  await loadAllPacketsPage();
+}
+
+async function changeAllPacketSize(size) {
+  ALL_PACKETS_PAGE_SIZE = parseInt(size);
+  allPacketsPage = 1;
+  await loadAllPacketsPage();
+}
+
+async function toggleSort(field) {
+  if (allPacketsSort === field) {
+    // 同一字段：asc → desc → 取消
+    if (allPacketsSortDir === 'asc') {
+      allPacketsSortDir = 'desc';
+    } else {
+      allPacketsSort = '';
+      allPacketsSortDir = 'asc';
+    }
+  } else {
+    allPacketsSort = field;
+    allPacketsSortDir = 'asc';
+  }
+  allPacketsPage = 1;
+  await loadAllPacketsPage();
+}
+
+// =====================================================================
+// Tab 切换
+// =====================================================================
+function switchTab(tab, el) {
+  currentTab = tab;
+  document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderTab(tab);
+}
+
+function renderTab(tab) {
+  const content = document.getElementById('detailContent');
+  if (!currentFpDetail) return;
+
+  if (tab === 'info') renderInfoTab(content);
+  else if (tab === 'packets') renderPacketsTab(content);
+  else if (tab === 'checklist') renderChecklistTab(content);
+  else if (tab === 'evidence') renderEvidenceTab(content);
+  else if (tab === 'replay') renderReplayTab(content);
+}
+
+// =====================================================================
+// 📊 Sitemap Diff 抽屉
+// =====================================================================
+function openSitemapDiff() {
+  const modal = document.getElementById('sitemapDiffModal');
+  const frame = document.getElementById('sitemapDiffFrame');
+  if (frame.src === 'about:blank' || !frame.src) {
+    frame.src = '/sitemap-diff';
+  }
+  modal.style.display = 'flex';
+}
+function closeSitemapDiff() {
+  document.getElementById('sitemapDiffModal').style.display = 'none';
+}
+// ESC 关闭
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const m = document.getElementById('sitemapDiffModal');
+    if (m && m.style.display === 'flex') closeSitemapDiff();
+  }
+});
+
+// =====================================================================
+// 🎬 决策回放 Tab — 当前功能点的相关 frames（跨 run 聚合）
+// =====================================================================
+
+// 主题感知颜色映射（支持明亮/深色模式自动切换）
+function replayColors() {
+  var isLight = (document.documentElement.getAttribute('data-theme') || 'light') === 'light';
+  if (isLight) {
+    return {
+      panelBg: '#ffffff', panelBorder: '#e2e5e9',
+      toggleBg: '#f0f1f3', toggleActiveBg: '#1565c0', toggleOnText: '#ffffff',
+      toggleOffText: '#4a4a5a',
+      muted: '#9e9e9e', subtle: '#757575', text: '#424242', bright: '#212121',
+      heading: '#1565c0',
+      badgeBg: '#f0f1f3', badgeText: '#4a4a5a',
+      fieldText: '#4a4a5a', codeBg: '#f5f5f5',
+      skillCode: '#e65100', payloadCode: '#2e7d32',
+      sevText: '#c62828', accentPurple: '#7b1fa2',
+      summaryBg: '#f8f9fa', summaryBorder: '#1565c0', summaryText: '#424242',
+      divider: '#f0f1f3', emptySubtle: '#9e9e9e',
+      // SVG node fills
+      svgFillVuln: '#fce4ec', svgStrokeVuln: '#c62828',
+      svgFillOk: '#e8f5e9', svgStrokeOk: '#2e7d32',
+      svgFillLesson: '#fff8e1', svgStrokeLesson: '#e65100',
+      svgFillDecision: '#e3f2fd', svgStrokeDecision: '#1565c0',
+      svgText: '#212121', svgMuted: '#9e9e9e',
+      svgEdgeMuted: '#bdbdbd', svgArrow: '#bdbdbd',
+    };
+  }
+  return {
+    panelBg: '#1e1e2e', panelBorder: '#313244',
+    toggleBg: '#313244', toggleActiveBg: '#89b4fa', toggleOnText: '#1e1e2e',
+    toggleOffText: '#bac2de',
+    muted: '#6c7086', subtle: '#9e9e9e', text: '#bac2de', bright: '#cdd6f4',
+    heading: '#89b4fa',
+    badgeBg: '#313244', badgeText: '#cba6f7',
+    fieldText: '#bac2de', codeBg: '#313244',
+    skillCode: '#f9e2af', payloadCode: '#a6e3a1',
+    sevText: '#f38ba8', accentPurple: '#cba6f7',
+    summaryBg: '#181825', summaryBorder: '#89b4fa', summaryText: '#a6adc8',
+    divider: '#313244', emptySubtle: '#6c7086',
+    // SVG node fills
+    svgFillVuln: '#5a1b1b', svgStrokeVuln: '#f38ba8',
+    svgFillOk: '#1b3a1b', svgStrokeOk: '#a6e3a1',
+    svgFillLesson: '#3a2a0a', svgStrokeLesson: '#fab387',
+    svgFillDecision: '#1a2a4a', svgStrokeDecision: '#89b4fa',
+    svgText: '#cdd6f4', svgMuted: '#9e9e9e',
+    svgEdgeMuted: '#6c7086', svgArrow: '#6c7086',
+  };
+}
+
+async function renderReplayTab(content) {
+  const fp = (currentFpDetail && currentFpDetail.fp) || {};
+  const fname = fp.name || '';
+  const fid = fp.id || fp.fp_id || '';
+  if (!fname && !fid) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">🎬</div><div>当前功能点缺少标识，无法关联剧本</div></div>';
+    return;
+  }
+
+  var c = replayColors();
+  content.innerHTML = `
+    <div class="info-card" style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <h3 style="margin:0;">🎬 决策回放</h3>
+        <span style="color:${c.subtle}; font-size:12px;">来源：剧本中关联功能点「${escHtml(fname)}」的所有 frames</span>
+        <span style="flex:1;"></span>
+        <div style="display:flex; gap:4px; background:${c.toggleBg}; padding:3px; border-radius:6px;">
+          <button class="rv-btn active" data-rv="timeline" onclick="switchReplayView('timeline')"
+                  style="background:${c.toggleActiveBg}; color:${c.toggleOnText}; border:0; padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer;">⏱️ 时间线</button>
+          <button class="rv-btn" data-rv="flow" onclick="switchReplayView('flow')"
+                  style="background:transparent; color:${c.toggleOffText}; border:0; padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer;">🌳 流程图</button>
+        </div>
+        <a href="/replay-theater" target="_blank" style="background:linear-gradient(135deg,#cba6f7 0%,#89b4fa 100%);color:#1e1e2e;border:1px solid #cba6f7;padding:5px 12px;border-radius:5px;cursor:pointer;font-size:12px;text-decoration:none;font-weight:600;" title="打开完整决策剧场（可视化流程图 / 录制回放 / 反推经验）">🎬 完整决策剧场 ↗</a>
+      </div>
+    </div>
+    <div id="replayPanelBody" style="background:${c.panelBg}; border:1px solid ${c.panelBorder}; border-radius:6px; padding:12px; min-height:200px;">
+      <div class="empty-state" style="padding:40px;">加载中...</div>
+    </div>
+  `;
+
+  // 拉取并缓存到 window，避免 switchReplayView 再次拉
+  try {
+    const params = new URLSearchParams();
+    if (fname) params.set('feature_name', fname);
+    if (fid) params.set('feature_id', fid);
+    const r = await fetch('/api/replay/by_feature?' + params.toString());
+    if (!r.ok) throw new Error('http ' + r.status);
+    const data = await r.json();
+    window._replayFrames = data.frames || [];
+    window._replayRuns = data.runs || [];
+    document.getElementById('tabReplayCount').textContent = window._replayFrames.length ? `(${window._replayFrames.length})` : '';
+    renderReplayBody('timeline');
+  } catch (e) {
+    document.getElementById('replayPanelBody').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div>读取失败：${escHtml(String(e))}</div></div>`;
+  }
+}
+
+function switchReplayView(view) {
+  var c = replayColors();
+  document.querySelectorAll('.rv-btn').forEach(b => {
+    const on = b.dataset.rv === view;
+    b.classList.toggle('active', on);
+    b.style.background = on ? c.toggleActiveBg : 'transparent';
+    b.style.color = on ? c.toggleOnText : c.toggleOffText;
+  });
+  renderReplayBody(view);
+}
+
+function renderReplayBody(view) {
+  const frames = window._replayFrames || [];
+  const runs = window._replayRuns || [];
+  const body = document.getElementById('replayPanelBody');
+  if (!body) return;
+  var c = replayColors();
+  if (!frames.length) {
+    body.innerHTML = `<div class="empty-state" style="padding:40px;">
+      <div class="icon">📭</div>
+      <div>该功能点暂无关联剧本帧</div>
+      <div style="font-size:11px; color:${c.emptySubtle}; margin-top:6px;">主流程发生「决策 / 漏洞验证」时会自动产生 frames</div>
+    </div>`;
+    return;
+  }
+
+  if (view === 'timeline') {
+    body.innerHTML = renderReplayTimeline(frames, runs, c);
+  } else {
+    body.innerHTML = renderReplayFlowSVG(frames, c);
+  }
+}
+
+function renderReplayTimeline(frames, runs, c) {
+  const runHeader = runs.length
+    ? `<div style="font-size:11px; color:${c.subtle}; margin-bottom:10px;">命中 ${runs.length} 个剧本：${
+        runs.map(r => `<span style="background:${c.badgeBg}; padding:1px 6px; border-radius:3px; margin-right:4px; color:${c.badgeText};">${escHtml(r.run_id)} (${r.hit_count})</span>`).join('')
+      }</div>`
+    : '';
+  const items = frames.map(f => {
+    const t = new Date((f.timestamp || 0) * 1000).toLocaleString();
+    const isVuln = f.kind === 'harm_validated' && f.conclusion === 'vulnerable';
+    const tagBg = isVuln ? '#c62828' :
+                  f.kind === 'harm_validated' ? '#2e7d32' :
+                  f.kind === 'lesson' ? '#e65100' : '#1565c0';
+    const label = isVuln ? '🔴 漏洞确认' :
+                  f.kind === 'harm_validated' ? '✅ 验证' :
+                  f.kind === 'lesson' ? '💡 经验' :
+                  f.kind === 'decision' ? '🎯 决策' : f.kind;
+    const fields = [];
+    if (f.skill_used) fields.push(`<div style="font-size:11px; color:${c.fieldText};">SKILL: <code style="color:${c.skillCode}; background:${c.codeBg}; padding:1px 4px; border-radius:2px;">${escHtml(f.skill_used)}</code></div>`);
+    if (f.vuln_type) fields.push(`<div style="font-size:11px; color:${c.fieldText};">漏洞类型: <code style="color:${c.skillCode}; background:${c.codeBg}; padding:1px 4px; border-radius:2px;">${escHtml(f.vuln_type)}</code></div>`);
+    if (f.payload) fields.push(`<div style="font-size:11px; color:${c.fieldText};">payload: <code style="color:${c.payloadCode}; background:${c.codeBg}; padding:1px 4px; border-radius:2px;">${escHtml(String(f.payload).slice(0,160))}</code></div>`);
+    if (f.severity) fields.push(`<div style="font-size:11px; color:${c.fieldText};">严重度: <span style="color:${c.sevText};">${escHtml(f.severity)}</span></div>`);
+    const summary = f.llm_summary
+      ? `<div style="margin-top:6px; padding:6px 8px; border-left:2px solid ${c.summaryBorder}; background:${c.summaryBg}; color:${c.summaryText}; font-size:11px; white-space:pre-wrap;">${escHtml(f.llm_summary)}</div>`
+      : '';
+    return `
+      <div style="display:flex; gap:10px; padding:8px 0; border-bottom:1px solid ${c.divider};">
+        <div style="width:130px; flex-shrink:0; color:${c.muted}; font-size:11px; font-family:monospace;">${escHtml(t)}</div>
+        <div style="flex:1;">
+          <div style="margin-bottom:3px;"><span style="background:${tagBg}; color:#fff; font-size:10px; padding:1px 6px; border-radius:3px; font-weight:600;">${label}</span>
+          <span style="color:${c.muted}; font-size:11px; margin-left:6px;">${escHtml(f._run_id || '')}</span></div>
+          ${fields.join('')}
+          ${summary}
+        </div>
+      </div>
+    `;
+  }).join('');
+  return runHeader + items;
+}
+
+function renderReplayFlowSVG(frames, c) {
+  // 主题感知 SVG 流程图：横向时间轴串联
+  const NODE_W = 170, NODE_H = 50, GAP = 50, PAD = 20;
+  let x = PAD, y = PAD;
+  let svgInner = '';
+  let prev = null;
+  let row = 0;
+  frames.forEach((f, i) => {
+    const isVuln = f.kind === 'harm_validated' && f.conclusion === 'vulnerable';
+    const fill = isVuln ? c.svgFillVuln :
+                 f.kind === 'harm_validated' ? c.svgFillOk :
+                 f.kind === 'lesson' ? c.svgFillLesson : c.svgFillDecision;
+    const stroke = isVuln ? c.svgStrokeVuln :
+                   f.kind === 'harm_validated' ? c.svgStrokeOk :
+                   f.kind === 'lesson' ? c.svgStrokeLesson : c.svgStrokeDecision;
+    const title = (f.kind === 'decision' && f.skill_used) ? `🎯 ${f.skill_used}` :
+                  (f.kind === 'harm_validated') ? (isVuln ? '🔴 漏洞确认' : '✅ 验证通过') :
+                  (f.kind === 'lesson') ? '💡 经验' : f.kind;
+    const sub = f.vuln_type || (f.payload ? String(f.payload).slice(0, 22) : (f.severity || ''));
+
+    if (i > 0 && i % 6 === 0) {
+      row++;
+      x = PAD;
+      y = PAD + row * (NODE_H + 30);
+      prev = null;
+    }
+
+    svgInner += `
+      <g>
+        <rect x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="6" ry="6"
+              fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
+        <text x="${x + 10}" y="${y + 20}" fill="${c.svgText}" font-size="12" font-weight="600">${escHtml(title).slice(0, 22)}</text>
+        ${sub ? `<text x="${x + 10}" y="${y + 38}" fill="${c.svgMuted}" font-size="10">${escHtml(sub).slice(0, 26)}</text>` : ''}
+      </g>
+    `;
+    if (prev) {
+      const edgeColor = isVuln ? c.svgStrokeVuln : (f.kind === 'harm_validated' ? c.svgStrokeOk : c.svgEdgeMuted);
+      const x1 = prev.x + NODE_W, y1 = prev.y + NODE_H / 2;
+      const x2 = x, y2 = y + NODE_H / 2;
+      svgInner += `<path d="M ${x1},${y1} C ${x1+20},${y1} ${x2-20},${y2} ${x2},${y2}"
+                          stroke="${edgeColor}" stroke-width="1.5" fill="none" marker-end="url(#rArrow)"/>`;
+    }
+    prev = { x, y };
+    x += NODE_W + GAP;
+  });
+
+  const W = Math.max(900, PAD + 6 * (NODE_W + GAP));
+  const H = PAD * 2 + (row + 1) * (NODE_H + 30);
+  return `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" style="min-width:${W}px;" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="rArrow" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="${c.svgArrow}"/>
+        </marker>
+      </defs>
+      ${svgInner}
+    </svg>
+  `;
+}
+
+// =====================================================================
+// Tab: 功能点信息
+// =====================================================================
+function renderInfoTab(content) {
+  const fp = currentFpDetail.fp || {};
+  const apis = (fp.related_apis || []).map(a =>
+    `<span class="api-tag-pill" style="font-family:monospace;font-size:11px;padding:2px 6px;border-radius:3px;margin:2px;display:inline-block">
+      <span class="method" style="color:${methodColor(a.split(' ')[0])}">${escHtml(a.split(' ')[0])}</span>
+      ${escHtml(a.split(' ').slice(1).join(' '))}
+    </span>`
+  ).join('');
+
+  const priority = fp.priority || 'medium';
+  const prioClass = priority === 'high' ? 'priority-high' : priority === 'low' ? 'priority-low' : 'priority-medium';
+
+  content.innerHTML = `
+    <div class="info-card">
+      <h3>${escHtml(fp.name || '')}</h3>
+      <div class="info-row"><span class="info-label">描述</span><span class="info-value">${escHtml(fp.description || '-')}</span></div>
+      <div class="info-row"><span class="info-label">页面</span><span class="info-value" style="color:#89b4fa">${escHtml(fp.page_url || '-')}</span></div>
+      <div class="info-row"><span class="info-label">优先级</span><span class="info-value ${prioClass}">${priority}</span></div>
+      <div class="info-row"><span class="info-label">测试状态</span><span class="info-value">${renderTestStatus(fp.test_status)}</span></div>
+      <div class="info-row"><span class="info-label">模块</span><span class="info-value">${escHtml(fp.module || '-')}</span></div>
+    </div>
+    <div class="info-card">
+      <h3>关联 API</h3>
+      <div style="margin-top:6px">${apis || '<span style="color:#6c7086">无</span>'}</div>
+    </div>
+    ${currentFpDetail.sample_file ? `
+    <div class="info-card">
+      <h3>数据包概要文件</h3>
+      <pre style="font-size:11px;color:#a6e3a1;background:#1e1e2e;padding:10px;border-radius:4px;overflow:auto;max-height:300px;white-space:pre-wrap">${escHtml(currentFpDetail.sample_file.slice(0, 3000))}${currentFpDetail.sample_file.length > 3000 ? '\n...[截断]' : ''}</pre>
+    </div>` : ''}`;
+}
+
+// =====================================================================
+// Tab: 数据包
+// =====================================================================
+let packetPage = 1;
+let PACKET_PAGE_SIZE = 20;
+
+function renderPacketsTab(content) {
+  const packets = currentFpDetail.packets || [];
+  if (!packets.length) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">📭</div><div>暂无数据包</div></div>';
+    return;
+  }
+  packetPage = 1;
+  renderPacketsPage(content, packets);
+}
+
+function renderPacketsPage(content, packets) {
+  const total = packets.length;
+  const totalPages = Math.ceil(total / PACKET_PAGE_SIZE);
+  const start = (packetPage - 1) * PACKET_PAGE_SIZE;
+  const pagePackets = packets.slice(start, start + PACKET_PAGE_SIZE);
+
+  const fpPageSizeSelector = `
+    <select onchange="changeFpPacketSize(this.value)" style="background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer">
+      <option value="20" ${PACKET_PAGE_SIZE===20?'selected':''}>20条/页</option>
+      <option value="50" ${PACKET_PAGE_SIZE===50?'selected':''}>50条/页</option>
+      <option value="100" ${PACKET_PAGE_SIZE===100?'selected':''}>100条/页</option>
+    </select>`;
+
+  const pagination = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 0;font-size:12px;color:#6c7086">
+      <button class="action-btn" onclick="changePacketPage(-1)" ${packetPage===1?'disabled':''}>← 上一页</button>
+      <span>第 ${packetPage} / ${totalPages} 页（共 ${total} 条）</span>
+      <button class="action-btn" onclick="changePacketPage(1)" ${packetPage===totalPages?'disabled':''}>下一页 →</button>
+      ${fpPageSizeSelector}
+    </div>` : `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#45475a;padding:6px 0"><span>共 ${total} 条</span>${fpPageSizeSelector}</div>`;
+
+  content.innerHTML = `
+    ${pagination}
+    <div class="packet-list">${pagePackets.map((p, i) => renderPacketCard(p, start + i)).join('')}</div>
+    ${totalPages > 1 ? pagination : ''}`;
+
+  // 只有 1 条时自动展开，省去点击
+  if (total === 1) {
+    setTimeout(() => togglePacket(start), 0);
+  }
+}
+
+function changePacketPage(delta) {
+  const packets = currentFpDetail?.packets || [];
+  const totalPages = Math.ceil(packets.length / PACKET_PAGE_SIZE);
+  packetPage = Math.max(1, Math.min(totalPages, packetPage + delta));
+  renderPacketsPage(document.getElementById('detailContent'), packets);
+}
+
+function changeFpPacketSize(size) {
+  PACKET_PAGE_SIZE = parseInt(size);
+  packetPage = 1;
+  const packets = currentFpDetail?.packets || [];
+  renderPacketsPage(document.getElementById('detailContent'), packets);
+}
+
+function renderPacketCard(p, idx) {
+  const method = p.method || 'GET';
+  const statusClass = p.status_code >= 500 ? 's5xx' : p.status_code >= 400 ? 's4xx' : p.status_code >= 300 ? 's3xx' : 's2xx';
+  const methodClass = `m-${method.toLowerCase()}`;
+  const url = p.url || p.path || '';
+  const ts = p.timestamp ? new Date(p.timestamp * 1000).toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+
+  // ★ idx 可能是字符串如 "all_0"，HTML onclick 里必须加引号
+  const idxStr = String(idx).replace(/'/g, "\\'");
+  return `<div class="packet-card" id="pc_${idx}">
+    <div class="packet-header pkt-grid" onclick="togglePacket('${idxStr}')">
+      <span id="pa_${idx}" style="font-size:10px;color:#45475a;transition:transform .15s;display:inline-block">▶</span>
+      <span class="method ${methodClass}">${escHtml(method)}</span>
+      <span class="url" title="${escHtml(url)}">${escHtml(url)}</span>
+      <span class="status ${statusClass}">${p.status_code || '-'}</span>
+      <span class="source-badge">${p.source || ''}</span>
+      <span class="pkt-time">${ts}</span>
+      <span class="pkt-actions">
+        <button class="copy-btn" onclick="event.stopPropagation(); copyCurl('${idxStr}')">curl</button>
+        <button class="copy-btn" onclick="event.stopPropagation(); copyRequest('${idxStr}')">复制</button>
+      </span>
+    </div>
+    <div id="pb_${idx}" style="display:none"></div>
+  </div>`;
+}
+
+function renderPacketBody(p, idx) {
+  const reqHeaders = formatHeaders(p.request_headers || {});
+  const respHeaders = formatHeaders(p.response_headers || {});
+  const reqBody = p.request_body || '';
+  const respBody = p.response_body || '';
+  const statusClass = p.status_code >= 500 ? 's5xx-text' : p.status_code >= 400 ? 's4xx-text' : 's2xx-text';
+  const jsCtx = p.js_context || '';
+
+  const reqLine = `<span class="http-method">${escHtml(p.method)}</span> ${escHtml(p.url || p.path || '')} HTTP/1.1`;
+  const reqBlock = reqLine + (reqHeaders ? '\n' + reqHeaders : '') + (reqBody ? '\n\n<span class="http-body">' + escHtml(reqBody) + '</span>' : '');
+  const respLine = `<span class="http-status ${statusClass}">HTTP/1.1 ${p.status_code || '-'}</span>`;
+  const respBlock = respLine + (respHeaders ? '\n' + respHeaders : '') + (respBody ? '\n\n<span class="http-body">' + tryFormatJson(respBody) + '</span>' : '<span style="color:#45475a"> （无响应体）</span>');
+
+  return `
+    <div class="packet-detail-wrap">
+      <div class="pane-label">请求</div>
+      <div class="http-block">${reqBlock}</div>
+
+      <div class="pane-label" style="margin-top:8px">响应</div>
+      <div class="http-block">${respBlock}</div>
+
+      ${jsCtx ? `<div class="pane-label" style="margin-top:8px">JS 上下文</div><div class="http-block">${escHtml(jsCtx)}</div>` : ''}
+
+      <div class="actions">
+        <button class="action-btn primary" onclick="copyCurl('${String(idx).replace(/'/g, "\\'")}')">📋 复制 curl</button>
+        <button class="action-btn" onclick="copyRequest('${String(idx).replace(/'/g, "\\'")}')">复制请求</button>
+        <button class="action-btn" onclick="copyResponse('${String(idx).replace(/'/g, "\\'")}')">复制响应</button>
+      </div>
+    </div>`;
+}
+
+function switchPTab(idx, tab, el) {
+  ['req', 'resp', 'js'].forEach(t => {
+    const el2 = document.getElementById(`pt_${t}_${idx}`);
+    if (el2) el2.style.display = 'none';
+  });
+  const target = document.getElementById(`pt_${tab}_${idx}`);
+  if (target) target.style.display = 'block';
+  const card = document.getElementById(`pc_${idx}`);
+  if (card) card.querySelectorAll('.packet-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+}
+
+function _getPacket(idx) {
+  // idx 可能是数字或字符串如 "all_0"
+  if (typeof idx === 'string' && idx.startsWith('all_')) {
+    const n = parseInt(idx.replace('all_', ''), 10);
+    // n 是全局索引，需要转换为当前页内索引
+    const pageStart = (allPacketsPage - 1) * ALL_PACKETS_PAGE_SIZE;
+    return allPacketsData?.[n - pageStart] || null;
+  }
+  const n = parseInt(idx, 10);
+  return currentFpDetail?.packets?.[n] || null;
+}
+
+function togglePacket(idx) {
+  const body = document.getElementById(`pb_${idx}`);
+  const card = document.getElementById(`pc_${idx}`);
+  const arrow = document.getElementById(`pa_${idx}`);
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  if (open) {
+    body.style.display = 'none';
+    card.classList.remove('expanded');
+    if (arrow) arrow.style.transform = '';
+  } else {
+    // 懒加载：第一次展开才渲染 body（避免批量渲染卡死浏览器）
+    if (!body.dataset.loaded) {
+      const p = _getPacket(idx);
+      if (p) {
+        body.innerHTML = renderPacketBody(p, idx);
+        body.dataset.loaded = '1';
+      }
+    }
+    body.style.display = 'block';
+    card.classList.add('expanded');
+    if (arrow) arrow.style.transform = 'rotate(90deg)';
+  }
+}
+
+
+// =====================================================================
+// Tab: Checklist
+// =====================================================================
+function renderChecklistTab(content) {
+  const fp = currentFpDetail.fp || {};
+  const checklist = fp.checklist || [];
+
+  if (!checklist.length) {
+    content.innerHTML = '<div class="empty-state"><div>暂无 Checklist</div></div>';
+    return;
+  }
+
+  const icons = { vulnerable: '🔴', needs_review: '🟡', not_vuln: '✅', skipped: '⏭️', pending: '⬜' };
+  const items = checklist.map(c => `
+    <div class="check-item ${c.result || 'pending'}" onclick="showCheckDetail(this)" 
+         data-detail="${escAttr(JSON.stringify(c))}">
+      <span class="check-icon">${icons[c.result] || '⬜'}</span>
+      <span class="check-name">${escHtml(c.vuln_type || '')}</span>
+      ${c.severity ? `<span style="font-size:9px;color:#f38ba8">${escHtml(c.severity)}</span>` : ''}
+    </div>`).join('');
+
+  content.innerHTML = `
+    <div class="info-card">
+      <h3>Checklist（${checklist.length} 项）</h3>
+      <div class="checklist-grid">${items}</div>
+    </div>
+    <div class="info-card" id="checkDetailCard" style="display:none">
+      <h3 id="checkDetailTitle"></h3>
+      <div id="checkDetailBody"></div>
+    </div>`;
+}
+
+function showCheckDetail(el) {
+  try {
+    const c = JSON.parse(el.dataset.detail);
+    const card = document.getElementById('checkDetailCard');
+    const title = document.getElementById('checkDetailTitle');
+    const body = document.getElementById('checkDetailBody');
+    card.style.display = 'block';
+    title.textContent = c.vuln_type || '';
+    let html = '';
+    if (c.detail) html += `<div class="info-row"><span class="info-label">结论</span><span class="info-value">${escHtml(c.detail)}</span></div>`;
+    if (c.severity) html += `<div class="info-row"><span class="info-label">严重性</span><span class="info-value priority-high">${escHtml(c.severity)}</span></div>`;
+    if (c.reproduce_steps) html += `<div class="info-row"><span class="info-label">复现步骤</span></div><div class="evidence-steps">${escHtml(c.reproduce_steps)}</div>`;
+    if (c.fix_suggestion) html += `<div class="info-row"><span class="info-label">修复建议</span><span class="info-value">${escHtml(c.fix_suggestion)}</span></div>`;
+    if (c.evidence_request) html += `<div class="info-row"><span class="info-label">证据请求</span></div><div class="http-block">${escHtml(c.evidence_request)}</div>`;
+    if (c.evidence_response) html += `<div class="info-row"><span class="info-label">证据响应</span></div><div class="http-block">${escHtml(c.evidence_response)}</div>`;
+    if (c.evidence_flow_id) html += `<div class="info-row"><span class="info-label">Flow ID</span><span class="info-value" style="color:#89b4fa;font-family:monospace">${escHtml(c.evidence_flow_id)}</span></div>`;
+    body.innerHTML = html || '<span style="color:#6c7086">无详情</span>';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch(e) {}
+}
+
+// =====================================================================
+// Tab: 漏洞证据
+// =====================================================================
+function renderEvidenceTab(content) {
+  const fp = currentFpDetail.fp || {};
+  const checklist = fp.checklist || [];
+  const vulnChecks = checklist.filter(c => c.result === 'vulnerable' || c.result === 'needs_review');
+
+  if (!vulnChecks.length) {
+    content.innerHTML = '<div class="empty-state"><div class="icon">🛡️</div><div>未发现漏洞证据</div></div>';
+    return;
+  }
+
+  const cards = vulnChecks.map(c => {
+    const isReview = c.result === 'needs_review';
+    return `
+      <div class="evidence-card ${isReview ? 'review' : ''}">
+        <div class="evidence-header">
+          <span class="vuln-type">${isReview ? '🟡' : '🔴'} ${escHtml(c.vuln_type || '')}</span>
+          ${c.severity ? `<span class="evidence-severity">${escHtml(c.severity)}</span>` : ''}
+        </div>
+        ${c.detail ? `<div class="evidence-detail">${escHtml(c.detail)}</div>` : ''}
+        ${c.reproduce_steps ? `<div class="evidence-steps">${escHtml(c.reproduce_steps)}</div>` : ''}
+        ${c.evidence_request ? `<div style="margin-bottom:8px"><div style="font-size:12px;color:#6c7086;margin-bottom:4px">请求包</div><div class="http-block">${escHtml(c.evidence_request)}</div></div>` : ''}
+        ${c.evidence_response ? `<div style="margin-bottom:8px"><div style="font-size:12px;color:#6c7086;margin-bottom:4px">响应包</div><div class="http-block">${escHtml(c.evidence_response)}</div></div>` : ''}
+        ${c.evidence_flow_id ? `<div style="font-size:12px;color:#6c7086">Flow ID: <span style="color:#89b4fa;font-family:monospace">${escHtml(c.evidence_flow_id)}</span></div>` : ''}
+        ${c.fix_suggestion ? `<div class="evidence-fix">💡 ${escHtml(c.fix_suggestion)}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  content.innerHTML = `<div>${cards}</div>`;
+}
+
+// =====================================================================
+// 复制功能
+// =====================================================================
+function copyCurl(idx) {
+  const p = _getPacket(idx);
+  if (!p) return;
+  const headers = Object.entries(p.request_headers || {})
+    .map(([k, v]) => `-H '${k}: ${v}'`).join(' \\\n  ');
+  const body = p.request_body ? `-d '${p.request_body}'` : '';
+  const method = p.method !== 'GET' ? `-X ${p.method}` : '';
+  const parts = ['curl', method, headers, body, `'${p.url}'`].filter(Boolean);
+  navigator.clipboard.writeText(parts.join(' \\\n  ')).then(() => showToast('curl 已复制'));
+}
+
+function copyRequest(idx) {
+  const p = _getPacket(idx);
+  if (!p) return;
+  const headers = Object.entries(p.request_headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+  const text = `${p.method} ${p.url}\n${headers}${p.request_body ? '\n\n' + p.request_body : ''}`;
+  navigator.clipboard.writeText(text).then(() => showToast('请求已复制'));
+}
+
+function copyResponse(idx) {
+  const p = _getPacket(idx);
+  if (!p) return;
+  navigator.clipboard.writeText(p.response_body || '').then(() => showToast('响应已复制'));
+}
+
+// =====================================================================
+// 工具函数
+// =====================================================================
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) {
+  return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function formatHeaders(headers) {
+  if (!headers || !Object.keys(headers).length) return '';
+  return Object.entries(headers)
+    .map(([k, v]) => `<span class="http-header-key">${escHtml(k)}</span>: <span class="http-header-val">${escHtml(String(v))}</span>`)
+    .join('\n');
+}
+
+function tryFormatJson(body) {
+  if (!body) return '';
+  // 超过 50KB 直接截断，不做高亮，避免卡死浏览器
+  const MAX = 50000;
+  const truncated = body.length > MAX;
+  const text = truncated ? body.slice(0, MAX) + '\n...[截断，共 ' + body.length + ' 字符]' : body;
+  try {
+    const obj = JSON.parse(truncated ? body.slice(0, MAX) : body);
+    const pretty = JSON.stringify(obj, null, 2);
+    // 简单行级高亮（不用复杂正则，逐行处理避免回溯）
+    const lines = pretty.split('\n').map(line => {
+      // key: value 行
+      const keyMatch = line.match(/^(\s*)("(?:[^"\\]|\\.)*")\s*:/);
+      if (keyMatch) {
+        const rest = line.slice(keyMatch[0].length);
+        const keyPart = escHtml(keyMatch[1]) + '<span style="color:#cba6f7">' + escHtml(keyMatch[2]) + '</span>:';
+        // 简单着色值部分
+        return keyPart + colorValue(rest);
+      }
+      return colorValue(line);
+    });
+    return lines.join('\n') + (truncated ? '\n<span style="color:#f38ba8">...[截断]</span>' : '');
+  } catch {
+    return escHtml(text);
+  }
+}
+
+function colorValue(s) {
+  const t = s.trim();
+  if (t === 'true' || t === 'false') return escHtml(s.replace(t, '')) + '<span style="color:#f9e2af">' + t + '</span>';
+  if (t === 'null') return escHtml(s.replace(t, '')) + '<span style="color:#6c7086">null</span>';
+  if (/^-?\d/.test(t)) return escHtml(s.replace(t, '')) + '<span style="color:#fab387">' + escHtml(t) + '</span>';
+  if (t.startsWith('"')) return escHtml(s.replace(t, '')) + '<span style="color:#a6e3a1">' + escHtml(t) + '</span>';
+  return escHtml(s);
+}
+
+function methodColor(m) {
+  const map = { GET: '#89b4fa', POST: '#a6e3a1', PUT: '#f9e2af', PATCH: '#cba6f7', DELETE: '#f38ba8' };
+  return map[(m || '').toUpperCase()] || '#6c7086';
+}
+
+function renderTestStatus(s) {
+  const map = { not_tested: '⬜ 未测试', in_progress: '🔵 测试中', completed: '✅ 已完成', vuln_found: '🔴 发现漏洞' };
+  return map[s] || s || '-';
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+// =====================================================================
+// 拖拽分隔条
+// =====================================================================
+(function() {
+  const resizer = document.getElementById('resizer');
+  const leftPane = document.getElementById('leftPane');
+  let dragging = false, startX = 0, startW = 0;
+
+  resizer.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.clientX;
+    startW = leftPane.offsetWidth;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const w = Math.max(180, Math.min(600, startW + e.clientX - startX));
+    leftPane.style.width = w + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
+
+// 启动
+init();
+</script>
+</body>
+</html>

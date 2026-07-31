@@ -1,0 +1,77 @@
+# ============================================================
+# XuanJian 打包配置文件
+# 供 scripts/build.py 读取
+# ============================================================
+
+app_name: "玄鉴 XuanJian"
+app_version: "0.1.0"
+exe_name: "XuanJian"
+output_dir: "dist"
+entry_script: "start.py"
+icon: null                      # 可替换为 .ico 绝对/相对路径，如 "assets/icon.ico"
+
+# ---------- 包含内容 ----------
+include:
+  # Python 源码包（会被 --add-data 递归打包）
+  python_packages:
+    - core
+    - web
+    - mcp_servers
+    - scripts
+
+  # 静态/资源目录
+  static_dirs:
+    - skills_my
+
+  # 独立文件
+  files:
+    - .env.example
+    - pyproject.toml
+    - LICENSE
+    - README.md
+    - DISCLAIMER.md
+
+  # 打包时排除的模式（PyInstaller 仍可能分析到，但 add-data 时手动过滤）
+  exclude_patterns:
+    - "__pycache__"
+    - "*.pyc"
+    - ".git"
+    - "data"
+    - "burp-plugin"
+    - "crypto_hook"
+    - "build"
+    - "dist"
+
+# ---------- Playwright 浏览器 ----------
+playwright:
+  browsers:
+    - chromium
+  # 打包前若本地未安装则自动下载
+  install_if_missing: true
+  # 是否将浏览器目录一起打进 exe（true=内嵌，false=首次运行时由用户自行下载）
+  include_in_package: true
+
+# ---------- 隐藏导入（动态导入/未自动分析的模块） ----------
+hidden_imports:
+  - uvicorn.logging
+  - uvicorn.loops.auto
+  - uvicorn.protocols.http.auto
+  - uvicorn.protocols.websockets.auto
+  - engineio.async_drivers.threading
+  - mitmproxy.tools.main
+  - mitmproxy.addons.default_addons
+  - ddddocr
+  - rapidocr_onnxruntime
+  - PIL._tkinter_finder
+  - yaml
+  - dotenv
+
+# ---------- PyInstaller 选项 ----------
+pyinstaller:
+  onefile: true
+  console: true
+  windowed: false
+  upx: false
+  clean: true
+  noconfirm: true
+  log_level: WARN

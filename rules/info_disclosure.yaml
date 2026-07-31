@@ -1,0 +1,111 @@
+# 信息泄露检测规则
+- name: 敏感文件泄露
+  type: info_disclosure
+  severity: high
+  description: 检测可访问的敏感文件和配置文件
+  paths:
+    - /.env
+    - /.git/config
+    - /.git/HEAD
+    - /.svn/entries
+    - /.DS_Store
+    - /.htaccess
+    - /.htpasswd
+    - /web.config
+    - /config.php.bak
+    - /config.yml
+    - /application.yml
+    - /backup.sql
+    - /db.sql
+    - /database.sql
+    - /dump.sql
+    - /backup.zip
+    - /www.zip
+    - /web.zip
+    - /docker-compose.yml
+    - /Dockerfile
+  detection:
+    method: status_code
+    expected: 200
+    min_length: 10
+  fix: 限制对敏感文件的访问，添加访问控制
+
+- name: API 文档泄露
+  type: info_disclosure
+  severity: medium
+  description: 检测可访问的 API 文档
+  paths:
+    - /swagger-ui.html
+    - /swagger-ui/
+    - /v2/api-docs
+    - /api-docs
+    - /openapi.json
+    - /api/swagger
+  detection:
+    method: status_code
+    expected: 200
+  fix: 生产环境关闭 API 文档访问
+
+- name: Spring Actuator 泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Boot Actuator 端点未授权访问
+  paths:
+    - /actuator
+    - /actuator/env
+    - /actuator/health
+    - /actuator/heapdump
+    - /actuator/mappings
+    - /actuator/beans
+    - /actuator/configprops
+  detection:
+    method: status_code
+    expected: 200
+  fix: 禁用或限制 Actuator 端点，添加认证
+
+- name: 响应头信息泄露
+  type: info_disclosure
+  severity: low
+  description: 响应头泄露服务器版本和技术栈信息
+  headers:
+    - x-powered-by
+    - server
+    - x-aspnet-version
+    - x-generator
+  fix: 移除或混淆版本信息响应头
+
+- name: 源码映射文件泄露
+  type: info_disclosure
+  severity: medium
+  description: JavaScript Source Map 文件可访问，泄露源码
+  paths:
+    - /app.js.map
+    - /main.js.map
+    - /bundle.js.map
+    - /app.min.js.map
+  detection:
+    method: status_code
+    expected: 200
+    content_type: application/json
+  fix: 生产环境禁用 source map
+
+- name: 开发工具泄露
+  type: info_disclosure
+  severity: high
+  description: 检测可访问的开发和管理工具
+  paths:
+    - /console
+    - /h2-console
+    - /adminer.php
+    - /phpmyadmin/
+    - /pma/
+    - /druid/index.html
+    - /druid/login.html
+    - /phpinfo.php
+    - /info.php
+    - /test.php
+    - /server-status
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制开发工具的访问，生产环境关闭

@@ -1,0 +1,43 @@
+# ============================================================
+# XuanJian 一键启动
+# 用法: docker compose up
+# 首次启动后访问 http://localhost:7788 配置 LLM API Key
+# ============================================================
+services:
+  xuanjian:
+    # 镜像二选一：
+    #   1. 用 GitHub Actions 自动构建的镜像（推荐，多架构）
+    #   2. 本地构建: docker compose up --build
+    image: xuanjian/xuanjian:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xuanjian
+    restart: unless-stopped
+    ports:
+      - "7788:7788"     # Web UI
+      - "18080:18080"   # mitmproxy 代理（浏览器/抓包用）
+      - "18081:18081"   # mitmproxy web 界面
+    volumes:
+      # 持久化数据（扫描结果/报告/日志/流量/用户配置）
+      - xuanjian-data:/app/data
+      # LLM 配置（可选：宿主机编辑后容器内生效）
+      - ./.env:/app/.env:ro
+    environment:
+      - WEB_PORT=7788
+      - PROXY_PORT=18080
+      - PROXY_WEB_PORT=18081
+      - BROWSER_HEADLESS=true
+      - LOG_LEVEL=INFO
+      # Playwright 容器内必须 no-sandbox
+      - PLAYWRIGHT_LAUNCH_ARGS=--no-sandbox
+    shm_size: "2gb"      # chromium 需要较大共享内存
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7788/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  xuanjian-data:

@@ -1,0 +1,55 @@
+[project]
+name = "xuanjian"
+version = "0.1.0"
+description = "玄鉴 XuanJian — 智能化安全漏洞扫描器，AI驱动 + 本地规则双引擎"
+requires-python = ">=3.10"
+dependencies = [
+    # LLM
+    "openai>=1.30.0",
+    "anthropic>=0.30.0",
+    # MCP
+    "httpx>=0.27.0",
+    "mcp>=1.0.0",
+    "fastmcp>=0.5.0",
+    # 浏览器
+    "playwright>=1.40.0",
+    # 代理抓包
+    "mitmproxy>=10.0.0",
+    # Web 服务
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "python-multipart>=0.0.6",
+    # OCR / 验证码辅助
+    "ddddocr>=1.0.5",
+    "rapidocr-onnxruntime>=1.3.0",
+    # 基础
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+    "typer>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.5.0",
+]
+report-templates = [
+    "PyPDF2>=3.0.0",
+    "python-docx>=1.0.0",
+]
+
+[project.scripts]
+add-skill = "scripts.add_skill:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "web", "mcp_servers", "scripts"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"

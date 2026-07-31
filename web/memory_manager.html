@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" style="background:#ffffff;">
+<head>
+<meta charset="UTF-8">
+<title>记忆管理 - 游刃AISec</title>
+<script>
+  (function(){
+    var t = localStorage.getItem('pentest-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.background = t === 'light' ? '#ffffff' : '#1e1e2e';
+  })();
+</script>
+<style>
+  /* 明亮模式全局覆盖 */
+  [data-theme="light"] { background: #ffffff !important; }
+  [data-theme="light"] body { background: #ffffff !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar h1 { color: #1565c0 !important; }
+  [data-theme="light"] .topbar .back-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar .back-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar .reload-btn { background: #ff9800 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .new-btn { background: #4caf50 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .stat { color: #757575 !important; }
+  [data-theme="light"] .topbar .stat b { color: #212121 !important; }
+  [data-theme="light"] .filter-bar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .filter-bar label { color: #616161 !important; }
+  [data-theme="light"] .filter-bar select,
+  [data-theme="light"] .filter-bar input { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .left-pane { background: #f8f9fa !important; border-right-color: #e2e5e9 !important; }
+  [data-theme="light"] .lesson-card { border-bottom-color: #f0f1f3 !important; }
+  [data-theme="light"] .lesson-card:hover { background: #f0f4ff !important; }
+  [data-theme="light"] .lesson-card.active { background: #e3f2fd !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .lesson-card .lesson { color: #212121 !important; }
+  [data-theme="light"] .lesson-card .meta { color: #757575 !important; }
+  [data-theme="light"] .badge.scope-global { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .badge.scope-host { background: #e8f5e9 !important; color: #2e7d32 !important; }
+  [data-theme="light"] .badge.scope-path { background: #fff8e1 !important; color: #e65100 !important; }
+  [data-theme="light"] .badge.scope-vuln_type { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .badge.source-user_correction { background: #f3e5f5 !important; color: #7b1fa2 !important; }
+  [data-theme="light"] .badge.source-self_learn { background: #e0f7fa !important; color: #00695c !important; }
+  [data-theme="light"] .badge.source-manual { background: #f0f1f3 !important; color: #4a4a5a !important; }
+  [data-theme="light"] .badge.hits { background: #fff8e1 !important; color: #e65100 !important; border-color: #ffe0b2 !important; }
+  [data-theme="light"] .right-pane { background: #fff !important; }
+  [data-theme="light"] .right-pane h2 { color: #1565c0 !important; }
+  [data-theme="light"] .right-empty { color: #9e9e9e !important; }
+  [data-theme="light"] .form-row label { color: #616161 !important; }
+  [data-theme="light"] .form-row input,
+  [data-theme="light"] .form-row select,
+  [data-theme="light"] .form-row textarea { background: #f8f9fa !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .form-row .hint { color: #9e9e9e !important; }
+  [data-theme="light"] .btn-primary { background: #1565c0 !important; color: #fff !important; }
+  [data-theme="light"] .btn-secondary { background: #f0f1f3 !important; color: #4a4a5a !important; }
+  [data-theme="light"] .btn-danger { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .btn-warn { background: #ff9800 !important; color: #fff !important; }
+  [data-theme="light"] .toggle-slider { background: #e0e0e0 !important; }
+  [data-theme="light"] .toggle-slider:before { background: #fff !important; }
+  [data-theme="light"] input:checked + .toggle-slider { background: #4caf50 !important; }
+  [data-theme="light"] .stats-row { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .stat-box { background: #fff !important; color: #616161 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .stat-box b { color: #e65100 !important; }
+  [data-theme="light"] .toast { background: #fff !important; color: #212121 !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .toast.error { border-left-color: #c62828 !important; }
+  [data-theme="light"] .toast.success { border-left-color: #2e7d32 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8ccd0 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-track { background: #f5f5f5 !important; }
+</style>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1e1e2e; color: #cdd6f4; min-height: 100vh; overflow: hidden;
+  }
+  .topbar {
+    background: #181825; border-bottom: 1px solid #313244;
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .topbar h1 { font-size: 15px; color: #89b4fa; font-weight: 600; }
+  .topbar .back-btn {
+    background: #313244; color: #bac2de; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    text-decoration: none; font-weight: 400;
+  }
+  .topbar .back-btn:hover { background: #45475a; color: #cdd6f4; }
+  .topbar .reload-btn, .topbar .new-btn {
+    border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 12px; text-decoration: none; font-weight: 600;
+  }
+  .topbar .reload-btn { background: #f9e2af; color: #1e1e2e; }
+  .topbar .new-btn { background: #a6e3a1; color: #1e1e2e; }
+  .topbar .stat { color: #6c7086; font-size: 11px; margin-left: auto; }
+  .topbar .stat b { color: #cdd6f4; }
+
+  .filter-bar {
+    background: #181825; border-bottom: 1px solid #313244;
+    padding: 8px 24px; display: flex; gap: 10px; align-items: center;
+  }
+  .filter-bar select, .filter-bar input {
+    padding: 5px 10px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 5px; font-size: 12px;
+  }
+  .filter-bar input { width: 280px; }
+  .filter-bar label { color: #9399b2; font-size: 12px; }
+
+  .layout { display: flex; height: calc(100vh - 95px); }
+
+  .left-pane {
+    width: 520px; min-width: 360px; max-width: 50%;
+    background: #181825; border-right: 1px solid #313244; overflow-y: auto;
+  }
+  .lesson-card {
+    padding: 12px 16px; border-bottom: 1px solid #2a2a3e;
+    cursor: pointer; transition: background .1s;
+  }
+  .lesson-card:hover { background: #1f1f33; }
+  .lesson-card.active { background: #2a2a4a; border-left: 3px solid #89b4fa; padding-left: 13px; }
+  .lesson-card.disabled { opacity: 0.5; }
+  .lesson-card .lesson {
+    font-size: 13px; color: #cdd6f4; line-height: 1.55;
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+  .lesson-card .meta {
+    font-size: 11px; color: #6c7086; margin-top: 6px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .badge {
+    display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 4px;
+  }
+  .badge.scope-global { background: #1f3a5f; color: #89b4fa; }
+  .badge.scope-host { background: #1e3a2e; color: #a6e3a1; }
+  .badge.scope-path { background: #4a3818; color: #f9e2af; }
+  .badge.scope-vuln_type { background: #4a1e25; color: #f38ba8; }
+  .badge.source-user_correction { background: #2a2a4a; color: #cba6f7; }
+  .badge.source-self_learn { background: #1f3a3f; color: #94e2d5; }
+  .badge.source-manual { background: #313244; color: #bac2de; }
+  .badge.hits { background: #181825; color: #f9e2af; border: 1px solid #313244; }
+
+  .right-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 24px 32px; overflow-y: auto; }
+  .right-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #6c7086; font-size: 13px; flex-direction: column; gap: 12px;
+  }
+  .form-row { margin-bottom: 14px; }
+  .form-row label { display: block; font-size: 12px; color: #9399b2; margin-bottom: 5px; }
+  .form-row input, .form-row select, .form-row textarea {
+    width: 100%; padding: 8px 12px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 13px;
+    font-family: inherit;
+  }
+  .form-row textarea { min-height: 90px; resize: vertical; line-height: 1.5; }
+  .form-row textarea.evidence { min-height: 120px; font-family: 'SF Mono', monospace; font-size: 11px; }
+  .form-row .hint { color: #6c7086; font-size: 11px; margin-top: 4px; }
+
+  .form-actions { display: flex; gap: 10px; margin-top: 18px; }
+  .btn {
+    border: none; padding: 8px 18px; border-radius: 6px; cursor: pointer;
+    font-size: 13px; font-weight: 600;
+  }
+  .btn-primary { background: #89b4fa; color: #1e1e2e; }
+  .btn-secondary { background: #313244; color: #cdd6f4; }
+  .btn-danger { background: #4a1e25; color: #f38ba8; }
+  .btn-warn { background: #f9e2af; color: #1e1e2e; }
+
+  .toast {
+    position: fixed; top: 16px; right: 16px; background: #2a2a4a;
+    color: #cdd6f4; padding: 10px 18px; border-radius: 6px; font-size: 13px;
+    border-left: 4px solid #89b4fa; box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    z-index: 1000; opacity: 0; transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { border-left-color: #f38ba8; }
+  .toast.success { border-left-color: #a6e3a1; }
+
+  .stats-row {
+    display: flex; gap: 12px; padding: 14px 16px;
+    border-bottom: 1px solid #313244; background: #181825;
+  }
+  .stat-box {
+    background: #1e1e2e; padding: 8px 14px; border-radius: 6px;
+    font-size: 11px; color: #9399b2; border: 1px solid #313244;
+  }
+  .stat-box b { color: #f9e2af; font-size: 14px; display: block; }
+
+  .toggle-switch {
+    position: relative; display: inline-block; width: 32px; height: 18px;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background: #45475a; border-radius: 18px; transition: .2s;
+  }
+  .toggle-slider:before {
+    position: absolute; content: ""; height: 14px; width: 14px;
+    left: 2px; bottom: 2px; background: #cdd6f4; border-radius: 50%; transition: .2s;
+  }
+  input:checked + .toggle-slider { background: #a6e3a1; }
+  input:checked + .toggle-slider:before { transform: translateX(14px); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+<h1>📚 经验记忆</h1>
+    <a href="/" class="back-btn">← 返回</a>
+  <button class="new-btn" id="btn-new">+ 新增经验</button>
+  <button class="reload-btn" id="btn-reload">⟳ 重新加载</button>
+  <span class="stat">总数 <b id="stat-total">0</b> · 启用 <b id="stat-enabled">0</b> · 命中 <b id="stat-hits">0</b></span>
+</div>
+
+<div class="filter-bar">
+  <label>作用域</label>
+  <select id="f-scope">
+    <option value="">全部</option>
+    <option value="global">global</option>
+    <option value="host">host</option>
+    <option value="path">path</option>
+    <option value="vuln_type">vuln_type</option>
+  </select>
+  <label>状态</label>
+  <select id="f-enabled">
+    <option value="all">全部</option>
+    <option value="true">启用</option>
+    <option value="false">禁用</option>
+  </select>
+  <input type="text" id="f-search" placeholder="搜索经验内容…">
+</div>
+
+<div class="layout">
+  <div class="left-pane" id="list">
+    <div class="right-empty" style="padding: 40px;">加载中…</div>
+  </div>
+  <div class="right-pane" id="detail">
+    <div class="right-empty">
+      <div>👈 选择一条经验查看详情</div>
+      <div style="font-size:11px;">或点击右上角"+ 新增经验"</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let _items = [];
+let _stats = {};
+let _activeId = null;
+
+// ---- 工具 ----
+function toast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (type ? ' ' + type : '');
+  setTimeout(()=>{ t.className = 'toast'; }, 2200);
+}
+function escapeHtml(s) {
+  return (s||'').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+// ---- 加载 ----
+async function load() {
+  const scope = document.getElementById('f-scope').value;
+  const enabled = document.getElementById('f-enabled').value;
+  const url = `/api/memory/list?scope=${encodeURIComponent(scope)}&enabled=${encodeURIComponent(enabled)}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    _items = data.items || [];
+    _stats = data.stats || {};
+    render();
+  } catch (e) {
+    toast('加载失败: '+e, 'error');
+  }
+}
+
+function render() {
+  document.getElementById('stat-total').textContent = _stats.total || 0;
+  document.getElementById('stat-enabled').textContent = _stats.enabled || 0;
+  document.getElementById('stat-hits').textContent = _stats.total_hits || 0;
+  const search = document.getElementById('f-search').value.trim().toLowerCase();
+  const list = document.getElementById('list');
+  const filtered = _items.filter(it => {
+    if (!search) return true;
+    return (it.lesson||'').toLowerCase().includes(search)
+        || (it.scope_value||'').toLowerCase().includes(search)
+        || (it.trigger||'').toLowerCase().includes(search);
+  });
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="right-empty" style="padding:40px;">暂无记录</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(it => {
+    const scope = it.scope || 'global';
+    const sv = it.scope_value ? `=${escapeHtml(it.scope_value)}` : '';
+    const src = it.source || 'manual';
+    const cls = ['lesson-card'];
+    if (it.id === _activeId) cls.push('active');
+    if (!it.enabled) cls.push('disabled');
+    return `<div class="${cls.join(' ')}" data-id="${it.id}" onclick="select('${it.id}')">
+      <div class="lesson">${escapeHtml(it.lesson)}</div>
+      <div class="meta">
+        <span class="badge scope-${scope}">${scope}${sv}</span>
+        <span class="badge source-${src}">${src}</span>
+        <span class="badge hits">命中 ${it.hits||0}</span>
+        <span style="margin-left:auto;color:#6c7086;">${escapeHtml(it.created_at||'')}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ---- 选中 ----
+function select(id) {
+  _activeId = id;
+  const it = _items.find(x => x.id === id);
+  if (!it) return;
+  render();
+  showEditForm(it);
+}
+
+// ---- 表单 ----
+function showEditForm(it) {
+  const isNew = !it || !it.id;
+  const data = it || { scope:'global', scope_value:'', trigger:'', lesson:'', evidence:'', enabled:true };
+  document.getElementById('detail').innerHTML = `
+    <h2 style="color:#89b4fa;font-size:18px;margin-bottom:14px;">
+      ${isNew ? '新增经验' : '编辑经验'}
+      ${isNew ? '' : `<span style="font-size:11px;color:#6c7086;font-weight:400;margin-left:8px;font-family:monospace;">${data.id}</span>`}
+    </h2>
+    <div class="form-row">
+      <label>作用域</label>
+      <select id="ed-scope">
+        <option value="global" ${data.scope==='global'?'selected':''}>global — 所有目标都适用</option>
+        <option value="host" ${data.scope==='host'?'selected':''}>host — 只对某个域名</option>
+        <option value="path" ${data.scope==='path'?'selected':''}>path — 只对某个 URL 路径(支持 *)</option>
+        <option value="vuln_type" ${data.scope==='vuln_type'?'selected':''}>vuln_type — 只对某种漏洞</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>作用域值（scope=global 留空）</label>
+      <input type="text" id="ed-scope-value" value="${escapeHtml(data.scope_value)}" placeholder="如 example.com / /api/user/* / sql_injection">
+    </div>
+    <div class="form-row">
+      <label>触发关键词（空格分隔，2-5 个）</label>
+      <input type="text" id="ed-trigger" value="${escapeHtml(data.trigger)}" placeholder="login 验证码 brute_force">
+      <div class="hint">用于检索匹配。当 LLM 看到包含这些词的 query 时会优先召回此经验。</div>
+    </div>
+    <div class="form-row">
+      <label>经验内容（一句话）</label>
+      <textarea id="ed-lesson" placeholder="先说陷阱/误区，再说正确做法。例：登录接口返回 200 + success:false 不等于成功，必须看后续 /me 接口才能判定…">${escapeHtml(data.lesson)}</textarea>
+    </div>
+    <div class="form-row">
+      <label>证据片段（可选，<2KB）</label>
+      <textarea id="ed-evidence" class="evidence" placeholder="贴一段误判的原始证据（请求/响应/工具输出）">${escapeHtml(data.evidence)}</textarea>
+    </div>
+    <div class="form-row">
+      <label>启用 <label class="toggle-switch" style="vertical-align:middle;margin-left:6px;">
+        <input type="checkbox" id="ed-enabled" ${data.enabled!==false?'checked':''}>
+        <span class="toggle-slider"></span>
+      </label></label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="save('${isNew?'':data.id}')">${isNew?'保存新增':'保存修改'}</button>
+      ${isNew ? '' : `<button class="btn btn-warn" onclick="testRecall()">🔍 测试召回</button>`}
+      ${isNew ? '' : `<button class="btn btn-danger" onclick="del('${data.id}')">删除</button>`}
+      <button class="btn btn-secondary" onclick="document.getElementById('detail').innerHTML=''; _activeId=null; render();">取消</button>
+    </div>
+    <div id="recall-result" style="margin-top:14px;"></div>
+  `;
+}
+
+// ---- 保存 ----
+async function save(id) {
+  const body = {
+    id: id || '',
+    scope: document.getElementById('ed-scope').value,
+    scope_value: document.getElementById('ed-scope-value').value.trim(),
+    trigger: document.getElementById('ed-trigger').value.trim(),
+    lesson: document.getElementById('ed-lesson').value.trim(),
+    evidence: document.getElementById('ed-evidence').value,
+    enabled: document.getElementById('ed-enabled').checked,
+  };
+  if (!body.lesson) { toast('lesson 不能为空', 'error'); return; }
+  try {
+    const res = await fetch('/api/memory/save', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) { toast(data.error, 'error'); return; }
+    toast(data.action === 'created' ? '已新增' : '已更新', 'success');
+    _activeId = data.id;
+    await load();
+    const it = _items.find(x => x.id === _activeId);
+    if (it) showEditForm(it);
+  } catch (e) {
+    toast('保存失败: '+e, 'error');
+  }
+}
+
+async function del(id) {
+  if (!confirm('确定删除此经验？此操作不可撤销。')) return;
+  try {
+    const res = await fetch('/api/memory/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    });
+    const data = await res.json();
+    if (!data.ok) { toast('删除失败', 'error'); return; }
+    toast('已删除', 'success');
+    _activeId = null;
+    document.getElementById('detail').innerHTML = '<div class="right-empty">已删除</div>';
+    await load();
+  } catch (e) {
+    toast('删除失败: '+e, 'error');
+  }
+}
+
+async function testRecall() {
+  // 没有专门的 recall API（_internal），这里用 list + 本地逻辑模拟提示信息即可
+  const it = _items.find(x => x.id === _activeId);
+  if (!it) return;
+  const box = document.getElementById('recall-result');
+  box.innerHTML = `<div style="background:#1f1f33;padding:10px 14px;border-radius:6px;font-size:12px;line-height:1.6;">
+    <div style="color:#a6e3a1;font-weight:600;">召回示例：</div>
+    <div style="color:#9399b2;margin-top:4px;">当 phase=test 且目标 host 匹配此条 scope 时，将注入到 LLM system prompt：</div>
+    <pre style="background:#11111b;padding:8px;border-radius:4px;color:#f9e2af;margin-top:6px;white-space:pre-wrap;">[${escapeHtml(it.scope)}${it.scope_value?'='+escapeHtml(it.scope_value):''}] ${escapeHtml(it.lesson)}</pre>
+  </div>`;
+}
+
+// ---- 事件 ----
+document.getElementById('btn-new').addEventListener('click', () => {
+  _activeId = null;
+  render();
+  showEditForm(null);
+});
+document.getElementById('btn-reload').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/memory/reload', {method:'POST'});
+    const d = await r.json();
+    toast(`已重载 (共 ${d.total||0} 条)`, 'success');
+    await load();
+  } catch (e) { toast('重载失败', 'error'); }
+});
+document.getElementById('f-scope').addEventListener('change', load);
+document.getElementById('f-enabled').addEventListener('change', load);
+document.getElementById('f-search').addEventListener('input', render);
+
+load();
+</script>
+</body>
+</html>

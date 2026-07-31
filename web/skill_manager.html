@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" style="background:#ffffff;">
+<head>
+<meta charset="UTF-8">
+<title>SKILL 管理 - 游刃AISec</title>
+<script>
+  (function(){
+    var t = localStorage.getItem('pentest-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.background = t === 'light' ? '#ffffff' : '#1e1e2e';
+  })();
+</script>
+<style>
+  /* 明亮模式全局覆盖 */
+  [data-theme="light"] { background: #ffffff !important; }
+  [data-theme="light"] body { background: #ffffff !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar h1 { color: #1565c0 !important; }
+[data-theme="light"] .topbar .back-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; box-shadow: none !important; }
+[data-theme="light"] .topbar .back-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; border-color: #d0d7de !important; }
+[data-theme="light"] .topbar .action-btn { background: #fff !important; color: #1a1a2e !important; border-color: #d0d7de !important; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+[data-theme="light"] .topbar .action-btn:hover { background: #f6f8fa !important; color: #0969da !important; border-color: #0969da !important; }
+[data-theme="light"] .topbar .action-btn.highlight { background: linear-gradient(135deg, #fff7e6, #ffe7ba) !important; color: #d46b08 !important; border-color: #ffd591 !important; font-weight: 600 !important; }
+  [data-theme="light"] .topbar .reload-btn { background: #ff9800 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .new-btn { background: #4caf50 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .stat { color: #757575 !important; }
+  [data-theme="light"] .topbar .stat b { color: #212121 !important; }
+  [data-theme="light"] .left-pane { background: #f8f9fa !important; border-right-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar input { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar input:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .category-group { color: #757575 !important; border-top-color: #f0f1f3 !important; }
+  [data-theme="light"] .skill-item { border-left-color: transparent !important; }
+  [data-theme="light"] .skill-item:hover { background: #f0f4ff !important; }
+  [data-theme="light"] .skill-item.active { background: #e3f2fd !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .skill-item .name { color: #212121 !important; }
+  [data-theme="light"] .skill-item .desc { color: #757575 !important; }
+  [data-theme="light"] .badge.vt { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .badge.tg { background: #fff8e1 !important; color: #e65100 !important; }
+  [data-theme="light"] .badge.disabled { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .toggle-switch.on { background: #c8e6c9 !important; }
+  [data-theme="light"] .toggle-switch.off { background: #ffcdd2 !important; }
+  [data-theme="light"] .toggle-switch.on .dot { background: #2e7d32 !important; }
+  [data-theme="light"] .toggle-switch.off .dot { background: #c62828 !important; }
+  [data-theme="light"] .right-pane { background: #fff !important; }
+  [data-theme="light"] .right-empty { color: #9e9e9e !important; }
+  [data-theme="light"] .edit-header { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .edit-header .name { color: #e65100 !important; }
+  [data-theme="light"] .edit-header .path { color: #9e9e9e !important; }
+  [data-theme="light"] .edit-header .tab-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .edit-header .tab-btn.active { background: #1565c0 !important; color: #fff !important; border-color: #1565c0 !important; }
+  [data-theme="light"] .edit-header .save-btn { background: #4caf50 !important; color: #fff !important; }
+  [data-theme="light"] .edit-header .save-btn:disabled { background: #e0e0e0 !important; color: #9e9e9e !important; }
+  [data-theme="light"] .edit-header .delete-btn { background: #f0f1f3 !important; color: #c62828 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .edit-header .delete-btn:hover { background: #fce4ec !important; }
+  [data-theme="light"] textarea#editor { background: #f8f9fa !important; color: #37474f !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] textarea#editor:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .markdown-preview { color: #212121 !important; }
+  [data-theme="light"] .markdown-preview h1,
+  [data-theme="light"] .markdown-preview h2 { color: #1565c0 !important; }
+  [data-theme="light"] .markdown-preview h1 { border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown-preview h3 { color: #e65100 !important; }
+  [data-theme="light"] .markdown-preview p { color: #424242 !important; }
+  [data-theme="light"] .markdown-preview code { background: #f5f5f5 !important; color: #e65100 !important; }
+  [data-theme="light"] .markdown-preview pre { background: #f5f5f5 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown-preview pre code { color: #37474f !important; }
+  [data-theme="light"] .markdown-preview ul,
+  [data-theme="light"] .markdown-preview ol { color: #424242 !important; }
+  [data-theme="light"] .markdown-preview blockquote { border-left-color: #e2e5e9 !important; color: #757575 !important; background: #f8f9fa !important; }
+  [data-theme="light"] .markdown-preview th { background: #f8f9fa !important; color: #1565c0 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown-preview td { border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown-preview hr { border-top-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown-preview a { color: #1565c0 !important; }
+  [data-theme="light"] .meta-card { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .meta-card h4 { color: #e65100 !important; }
+  [data-theme="light"] .meta-row label { color: #757575 !important; }
+  [data-theme="light"] .meta-row .val { color: #212121 !important; }
+  [data-theme="light"] .meta-row .val .chip { background: #f0f1f3 !important; color: #4a4a5a !important; }
+  [data-theme="light"] .meta-row .val .chip.vt { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .meta-row .val .chip.tg { background: #fff8e1 !important; color: #e65100 !important; }
+  [data-theme="light"] .meta-row .val .chip.syn { background: #f3e5f5 !important; color: #7b1fa2 !important; }
+  [data-theme="light"] .modal-overlay { background: rgba(0,0,0,0.3) !important; }
+  [data-theme="light"] .modal { background: #fff !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .modal h3 { color: #e65100 !important; }
+  [data-theme="light"] .modal label { color: #616161 !important; }
+  [data-theme="light"] .modal input,
+  [data-theme="light"] .modal textarea,
+  [data-theme="light"] .modal select { background: #f8f9fa !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .modal input:focus,
+  [data-theme="light"] .modal textarea:focus,
+  [data-theme="light"] .modal select:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .modal .btn-cancel { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .modal .btn-ok { background: #4caf50 !important; color: #fff !important; }
+  [data-theme="light"] .toast { background: #fff !important; color: #212121 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .toast.ok { background: #e8f5e9 !important; color: #2e7d32 !important; border-color: #c8e6c9 !important; }
+  [data-theme="light"] .toast.err { background: #fce4ec !important; color: #c62828 !important; border-color: #ffcdd2 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8ccd0 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-track { background: #f5f5f5 !important; }
+</style>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1e1e2e; color: #cdd6f4; min-height: 100vh; overflow: hidden;
+  }
+  /* 顶部 */
+  .topbar {
+    background: #181825; border-bottom: 1px solid #313244;
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .topbar h1 { font-size: 15px; color: #89b4fa; font-weight: 600; }
+  .topbar .back-btn {
+    background: #313244; color: #bac2de; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    transition: all 0.15s ease;
+  }
+  .topbar .back-btn:hover { background: #45475a; color: #cdd6f4; }
+  .topbar .action-btn {
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    transition: all 0.15s ease;
+  }
+  .topbar .action-btn:hover { background: #45475a; color: #fff; }
+  .topbar .action-btn.highlight {
+    background: linear-gradient(135deg, #74c7ec, #89b4fa); color: #1e1e2e; border-color: transparent; font-weight: 600;
+  }
+  .topbar .reload-btn {
+    background: #f9e2af; color: #1e1e2e; border: none;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .topbar .reload-btn:hover { background: #fad898; }
+  .topbar .new-btn {
+    background: linear-gradient(135deg, #a6e3a1, #94d88e); color: #1e1e2e; border: none;
+    padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .topbar .new-btn:hover { background: linear-gradient(135deg, #b6e8b1, #a4dc9e); }
+  .topbar .stat { color: #6c7086; font-size: 12px; margin-left: auto; }
+  .topbar .stat b { color: #cdd6f4; }
+
+  /* 主布局：左侧列表 + 右侧编辑/预览 */
+  .layout {
+    display: flex; height: calc(100vh - 55px);
+  }
+  .left-pane {
+    width: 380px; min-width: 280px; max-width: 50%;
+    background: #181825; border-right: 1px solid #313244;
+    overflow-y: auto;
+  }
+  .search-bar {
+    padding: 10px 14px; border-bottom: 1px solid #313244;
+    position: sticky; top: 0; background: #181825; z-index: 5;
+  }
+  .search-bar input {
+    width: 100%; padding: 7px 10px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 12px;
+  }
+  .search-bar input:focus { outline: none; border-color: #89b4fa; }
+
+  /* Tab 切换栏 */
+  .skill-tabs {
+    display: flex; border-bottom: 2px solid #313244;
+    position: sticky; top: 0; background: #181825; z-index: 6;
+  }
+  .skill-tab {
+    flex: 1; padding: 11px 12px; text-align: center;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    color: #6c7086; border-bottom: 3px solid transparent;
+    transition: all .15s; position: relative;
+  }
+  /* 两个 tab 之间的竖直分隔线 */
+  .skill-tab + .skill-tab::before {
+    content: ''; position: absolute; left: 0; top: 20%; bottom: 20%;
+    width: 1px; background: #313244;
+  }
+  .skill-tab:hover { color: #bac2de; background: #1f1f33; }
+  .skill-tab.active {
+    color: #89b4fa; border-bottom-color: #89b4fa;
+    background: #1a2238;
+  }
+  .skill-tab.active.exploit-tab {
+    color: #f38ba8; border-bottom-color: #f38ba8;
+    background: #2a1820;
+  }
+  .skill-tab .tab-count {
+    display: inline-block; background: #313244; color: #bac2de;
+    font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px;
+  }
+  .skill-tab.active .tab-count { background: #1f3a5f; color: #89b4fa; }
+  .skill-tab.active.exploit-tab .tab-count { background: #3a1e25; color: #f38ba8; }
+  [data-theme="light"] .skill-tabs { background: #f8f9fa !important; border-bottom: 2px solid #d6dbe0 !important; }
+  [data-theme="light"] .skill-tab { color: #6b7785 !important; }
+  [data-theme="light"] .skill-tab + .skill-tab::before { background: #d6dbe0 !important; }
+  [data-theme="light"] .skill-tab:hover { color: #1565c0 !important; background: #eaf2fd !important; }
+  [data-theme="light"] .skill-tab.active {
+    color: #1565c0 !important; border-bottom-color: #1565c0 !important;
+    background: #e3f2fd !important;
+  }
+  [data-theme="light"] .skill-tab.active.exploit-tab {
+    color: #c62828 !important; border-bottom-color: #c62828 !important;
+    background: #fce4ec !important;
+  }
+  [data-theme="light"] .skill-tab .tab-count { background: #e2e5e9 !important; color: #5a6573 !important; }
+  [data-theme="light"] .skill-tab.active .tab-count { background: #ffffff !important; color: #1565c0 !important; box-shadow: 0 0 0 1px #bbdefb inset; }
+  [data-theme="light"] .skill-tab.active.exploit-tab .tab-count { background: #ffffff !important; color: #c62828 !important; box-shadow: 0 0 0 1px #f8bbd0 inset; }
+  .category-group {
+    padding: 8px 0 4px 14px; font-size: 11px; color: #6c7086;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    border-top: 1px solid #2a2a3e;
+  }
+  .skill-item {
+    padding: 10px 14px; cursor: pointer; border-left: 3px solid transparent;
+    transition: all .12s; display: flex; align-items: center; gap: 8px;
+  }
+  .skill-item:hover { background: #1f1f33; }
+  .skill-item.active { background: #2a2a4a; border-left-color: #89b4fa; }
+  .skill-item.disabled { opacity: 0.5; }
+  .skill-item .name {
+    font-size: 13px; color: #cdd6f4; font-weight: 500; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .skill-item .desc {
+    font-size: 11px; color: #6c7086; margin-top: 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .skill-item .badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0;
+  }
+  .badge.vt { background: #1f3a5f; color: #89b4fa; }
+  .badge.tg { background: #3f2f10; color: #f9e2af; }
+  .badge.disabled { background: #4a1e25; color: #f38ba8; }
+
+  /* 启用/禁用开关 — iOS 风格 toggle */
+  .toggle-switch {
+    display: inline-block; position: relative; flex-shrink: 0;
+    width: 30px; height: 16px; border-radius: 8px;
+    cursor: pointer; transition: background-color .2s;
+    margin-left: 4px;
+  }
+  .toggle-switch.on { background: #2a5a3e; }
+  .toggle-switch.off { background: #4a1e25; }
+  .toggle-switch:hover.on { background: #357850; }
+  .toggle-switch:hover.off { background: #5a2535; }
+  .toggle-switch .dot {
+    position: absolute; top: 2px; left: 2px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #cdd6f4; transition: transform .2s;
+  }
+  .toggle-switch.on .dot { transform: translateX(14px); background: #a6e3a1; }
+  .toggle-switch.off .dot { transform: translateX(0); background: #f38ba8; }
+
+  /* 右侧编辑区 */
+  .right-pane {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+  }
+  .right-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #6c7086; font-size: 13px;
+  }
+  .edit-header {
+    padding: 12px 20px; border-bottom: 1px solid #313244;
+    background: #181825; display: flex; align-items: center; gap: 12px;
+  }
+  .edit-header .name { font-size: 15px; color: #f9e2af; font-weight: 600; }
+  .edit-header .path { font-size: 11px; color: #6c7086; }
+  .edit-header .right-actions { margin-left: auto; display: flex; gap: 8px; }
+  .edit-header .tab-btn {
+    padding: 5px 12px; background: #313244; color: #bac2de;
+    border: 1px solid #45475a; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .edit-header .tab-btn.active { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+  .edit-header .save-btn {
+    background: #a6e3a1; color: #1e1e2e; border: none;
+    padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .edit-header .save-btn:hover { background: #b8f0b4; }
+  .edit-header .save-btn:disabled { background: #45475a; color: #6c7086; cursor: not-allowed; }
+  .edit-header .delete-btn {
+    background: #313244; color: #f38ba8; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .edit-header .delete-btn:hover { background: #4a1e25; }
+
+  .edit-body { flex: 1; overflow: hidden; position: relative; }
+  .pane {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    overflow: auto; padding: 18px 24px; display: none;
+  }
+  .pane.active { display: block; }
+
+  textarea#editor {
+    width: 100%; height: 100%; background: #11111b; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 8px; padding: 14px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px;
+    line-height: 1.55; resize: none; tab-size: 2;
+  }
+  textarea#editor:focus { outline: none; border-color: #89b4fa; }
+
+  .markdown-preview {
+    line-height: 1.7; color: #cdd6f4;
+  }
+  .markdown-preview h1, .markdown-preview h2, .markdown-preview h3 { color: #89b4fa; margin: 14px 0 8px; }
+  .markdown-preview h1 { font-size: 22px; border-bottom: 1px solid #313244; padding-bottom: 8px; }
+  .markdown-preview h2 { font-size: 18px; }
+  .markdown-preview h3 { font-size: 15px; color: #f9e2af; }
+  .markdown-preview p { margin: 6px 0; color: #bac2de; font-size: 13px; }
+  .markdown-preview code {
+    background: #11111b; color: #f9e2af; padding: 1px 6px;
+    border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 12px;
+  }
+  .markdown-preview pre {
+    background: #11111b; padding: 10px 14px; border-radius: 6px;
+    overflow-x: auto; border: 1px solid #313244;
+  }
+  .markdown-preview pre code { padding: 0; background: transparent; font-size: 11px; }
+  .markdown-preview ul, .markdown-preview ol { padding-left: 28px; color: #bac2de; font-size: 13px; }
+  .markdown-preview li { margin: 3px 0; }
+  .markdown-preview blockquote {
+    border-left: 3px solid #45475a; padding: 4px 14px; color: #9399b2;
+    background: #181825; margin: 8px 0;
+  }
+  .markdown-preview table { border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+  .markdown-preview th, .markdown-preview td { border: 1px solid #313244; padding: 6px 10px; }
+  .markdown-preview th { background: #181825; color: #89b4fa; }
+  .markdown-preview hr { border: none; border-top: 1px solid #313244; margin: 16px 0; }
+  .markdown-preview a { color: #89b4fa; }
+
+  .meta-card {
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+    padding: 14px 18px; margin-bottom: 14px;
+  }
+  .meta-card h4 { color: #f9e2af; font-size: 13px; margin-bottom: 8px; }
+  .meta-row { display: flex; gap: 12px; font-size: 12px; flex-wrap: wrap; margin: 4px 0; }
+  .meta-row label { color: #6c7086; min-width: 80px; }
+  .meta-row .val { color: #cdd6f4; }
+  .meta-row .val .chip {
+    display: inline-block; padding: 2px 8px; background: #313244;
+    border-radius: 4px; margin: 2px 4px 2px 0; font-size: 11px;
+  }
+  .meta-row .val .chip.vt { background: #1f3a5f; color: #89b4fa; }
+  .meta-row .val .chip.tg { background: #3f2f10; color: #f9e2af; }
+  .meta-row .val .chip.syn { background: #2a2a4a; color: #cba6f7; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    padding: 10px 18px; border-radius: 8px; font-size: 13px;
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 999;
+    opacity: 0; transition: opacity .2s, transform .2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(-8px); }
+  .toast.ok { background: #1e3a2e; color: #a6e3a1; border-color: #2a5a3e; }
+  .toast.err { background: #3a1e25; color: #f38ba8; border-color: #5a2a35; }
+
+  /* 新建 SKILL 模态框 */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 998;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: #1e1e2e; border: 1px solid #45475a; border-radius: 12px;
+    width: 480px; max-width: 90vw; padding: 22px 24px;
+  }
+  .modal h3 { color: #f9e2af; font-size: 16px; margin-bottom: 14px; }
+  .modal .field { margin-bottom: 12px; }
+  .modal label { display: block; font-size: 11px; color: #a6adc8; margin-bottom: 4px; }
+  .modal input, .modal textarea, .modal select {
+    width: 100%; padding: 7px 10px; background: #11111b; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 12px;
+    font-family: inherit;
+  }
+  .modal textarea { min-height: 60px; resize: vertical; font-family: 'SF Mono', monospace; }
+  .modal input:focus, .modal textarea:focus, .modal select:focus { outline: none; border-color: #89b4fa; }
+  .modal .actions {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+  }
+  .modal .btn-cancel {
+    background: #313244; color: #bac2de; border: 1px solid #45475a;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .modal .btn-ok {
+    background: #a6e3a1; color: #1e1e2e; border: none;
+    padding: 6px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/" class="back-btn">← 返回</a>
+  <h1>📚 SKILL 管理</h1>
+  <button class="action-btn" onclick="reloadFromDisk()" title="从磁盘重新扫描所有 SKILL.md">🔄 重新扫描</button>
+  <button class="action-btn" onclick="openTriggers()" title="编辑「关键词→漏洞类型」自动触发规则">🔗 触发规则</button>
+  <button class="action-btn highlight" onclick="openCryptoTpl()" title="加密接口模板管理（学习一次，自动套用，省得每次手写加解密代码）">🔐 加密模板</button>
+  <button class="new-btn" onclick="openNewSkill()">➕ 新建 SKILL</button>
+  <span class="stat" id="topStat">加载中...</span>
+</div>
+
+<div class="layout">
+  <!-- 左侧列表 -->
+  <div class="left-pane">
+    <div class="skill-tabs">
+      <div class="skill-tab active" id="tabDiscovery" onclick="switchSkillTab('discovery')">
+        🔍 漏洞挖掘 <span class="tab-count" id="countDiscovery">0</span>
+      </div>
+      <div class="skill-tab exploit-tab" id="tabExploit" onclick="switchSkillTab('exploit')">
+        💥 危害证明 <span class="tab-count" id="countExploit">0</span>
+      </div>
+    </div>
+    <div class="search-bar">
+      <input id="searchInput" placeholder="搜索 SKILL（名称/描述/标签）..." oninput="renderList()" />
+    </div>
+    <div id="skillList"></div>
+  </div>
+
+  <!-- 右侧编辑区 -->
+  <div class="right-pane">
+    <div id="rightEmpty" class="right-empty">
+      ← 从左侧选择一个 SKILL 查看 / 编辑<br/><br/>
+      <small style="color:#6c7086;">或点击「➕ 新建 SKILL」从模板创建</small>
+    </div>
+
+    <div id="rightEdit" style="display:none; height:100%; flex-direction:column;">
+      <div class="edit-header">
+        <div>
+          <div class="name" id="curName">-</div>
+          <div class="path" id="curPath"></div>
+        </div>
+        <div class="right-actions">
+          <button class="tab-btn active" id="tabEditor" onclick="switchTab('editor')">📝 编辑</button>
+          <button class="tab-btn" id="tabMeta" onclick="switchTab('meta')">🏷️ 元数据</button>
+          <button class="tab-btn" id="tabPreview" onclick="switchTab('preview')">👁️ 预览</button>
+          <button class="save-btn" id="saveBtn" onclick="saveSkill()" disabled>💾 保存</button>
+          <button class="delete-btn" onclick="deleteSkill()">🗑️ 删除</button>
+        </div>
+      </div>
+      <div class="edit-body">
+        <div class="pane active" id="paneEditor">
+          <textarea id="editor" placeholder="加载中..." oninput="onEditorChange()" spellcheck="false"></textarea>
+        </div>
+        <div class="pane" id="paneMeta"></div>
+        <div class="pane" id="panePreview">
+          <div class="markdown-preview" id="previewBody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 新建 SKILL 模态框 -->
+<div class="modal-overlay" id="newModal" onclick="if(event.target===this)closeNewSkill()">
+  <div class="modal">
+    <h3>➕ 新建 SKILL</h3>
+    <div class="field">
+      <label>name（唯一目录名，字母/数字/下划线/短横线）</label>
+      <input id="newName" placeholder="my-secret-bypass" />
+    </div>
+    <div class="field">
+      <label>category（分类目录，会创建 skills_my/&lt;category&gt;/&lt;name&gt;/SKILL.md）</label>
+      <select id="newCategory">
+        <option value="discovery/personal">🔍 漏洞发现（个人经验 — skills_my/discovery/personal/）</option>
+        <option value="exploit">💥 漏洞利用（危害证明 — skills_my/exploit/）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>description（一句话，描述何时触发此 SKILL）</label>
+      <input id="newDesc" placeholder="描述 SKILL 的核心场景" />
+    </div>
+    <div class="actions">
+      <button class="btn-cancel" onclick="closeNewSkill()">取消</button>
+      <button class="btn-ok" onclick="createNewSkill()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 触发规则编辑器（关键词→漏洞类型） -->
+<div class="modal-overlay" id="triggersModal" onclick="if(event.target===this)closeTriggers()">
+  <div class="modal" style="max-width: 1100px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <h3 style="margin:0;">🔗 触发规则编辑器</h3>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-cancel" onclick="addTrigRule()">➕ 新增规则</button>
+        <button class="btn-cancel" onclick="closeTriggers()">关闭</button>
+        <button class="btn-ok" onclick="saveTriggers()">💾 保存</button>
+      </div>
+    </div>
+    <div style="font-size:11px; color:#9e9e9e; margin-bottom:10px; line-height:1.6;">
+      规则用于自动给"匹配某些关键词的功能点"追加漏洞测试项（即 <code>FEATURE_VULN_MAPPING</code>）。
+      <b>默认规则</b>来自 <code>core/config.py</code>（只读）；<b>自定义规则</b>持久化到
+      <code>skills_my/_user_triggers.yaml</code>，保存后立即热重载生效。
+      <br/>每条规则保存前会自动统计"有多少现有功能点会被这条规则增加 checklist"，避免规则过宽导致 checklist 爆炸。
+    </div>
+    <div id="trigStat" style="font-size:11px; color:#9e9e9e; margin-bottom:8px;"></div>
+    <div id="trigList" style="overflow:auto; flex:1; padding-right:6px;"></div>
+  </div>
+</div>
+
+<!-- 加密模板管理抽屉（嵌入 /crypto-templates 页面，保留独立页面作为后备） -->
+<div class="modal-overlay" id="cryptoTplModal" onclick="if(event.target===this)closeCryptoTpl()">
+  <div class="modal" style="width: 96vw; max-width: 1400px; height: 90vh; max-height: 90vh; padding: 0; display: flex; flex-direction: column; overflow: hidden;">
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid #e2e5e9; flex-shrink:0; background:#f8f9fa;">
+      <h3 style="margin:0; color:#1565c0; font-size:16px;">🔐 加密接口模板管理 <span style="font-size:12px; color:#757575; font-weight:400; margin-left:8px;">学习一次，自动套用</span></h3>
+      <div style="display:flex; gap:8px;">
+        <a href="/crypto-templates" target="_blank" style="text-decoration:none; display:inline-flex; align-items:center; padding:7px 14px; background:#fff; color:#1565c0; border:1px solid #c8d3e0; border-radius:6px; font-size:12px;" title="在新页打开完整页面">⧉ 新页打开</a>
+        <button onclick="closeCryptoTpl()" style="padding:7px 14px; background:#fff; color:#424242; border:1px solid #c8d3e0; border-radius:6px; font-size:12px; cursor:pointer;">关闭</button>
+      </div>
+    </div>
+    <div style="flex:1 1 auto; overflow:hidden; min-height:0;">
+      <iframe id="cryptoTplFrame" src="about:blank"
+              style="width:100%; height:100%; border:0; background:#fff; display:block;"></iframe>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>if(typeof DOMPurify==='undefined')document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"><\/script>')</script>
+<script>
+let allSkills = [];
+let currentSkill = null;
+let editorDirty = false;
+let originalContent = "";
+let currentTab = 'discovery'; // 'discovery' | 'exploit'
+
+function toast(msg, kind) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + (kind || '');
+  setTimeout(() => { el.className = 'toast ' + (kind || ''); }, 2400);
+}
+
+async function loadList(autoSelectFirst) {
+  try {
+    const resp = await fetch('/api/skills/list');
+    const data = await resp.json();
+    allSkills = data.skills || [];
+    document.getElementById('topStat').innerHTML =
+      `共 <b>${data.count}</b> 个 SKILL（启用 <b>${data.enabled_count}</b>） · 漏洞映射 <b>${data.vuln_to_skill_total}</b> · 触发规则 <b>${data.triggers_total}</b> · 同义词 <b>${data.synonyms_total}</b>`;
+    updateTabCounts();
+    renderList();
+    if (autoSelectFirst && allSkills.length > 0 && !currentSkill) {
+      selectSkill(allSkills[0].name);
+    }
+  } catch (e) { toast('加载失败: ' + e.message, 'err'); }
+}
+
+function isExploitSkill(s) {
+  // 判断是否为「危害证明」类 SKILL：名称以 exploit- 开头
+  return s.name.startsWith('exploit-');
+}
+
+function switchSkillTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabDiscovery').classList.toggle('active', tab === 'discovery');
+  document.getElementById('tabExploit').classList.toggle('active', tab === 'exploit');
+  renderList();
+}
+
+function updateTabCounts() {
+  const discoveryCount = allSkills.filter(s => !isExploitSkill(s)).length;
+  const exploitCount = allSkills.filter(s => isExploitSkill(s)).length;
+  document.getElementById('countDiscovery').textContent = discoveryCount;
+  document.getElementById('countExploit').textContent = exploitCount;
+}
+
+function renderList() {
+  const kw = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  // 先按 Tab 过滤
+  let tabFiltered = allSkills.filter(s => {
+    if (currentTab === 'exploit') return isExploitSkill(s);
+    return !isExploitSkill(s);
+  });
+  // 再按关键词过滤
+  const filtered = !kw ? tabFiltered : tabFiltered.filter(s =>
+    s.name.toLowerCase().includes(kw)
+    || (s.description || '').toLowerCase().includes(kw)
+    || (s.vuln_types || []).some(v => v.toLowerCase().includes(kw))
+    || (s.tags || []).some(t => t.toLowerCase().includes(kw))
+  );
+  // 按 category 分组
+  const groups = {};
+  for (const s of filtered) {
+    const cat = s.category || s.path.split('/')[0] || 'misc';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(s);
+  }
+  const listEl = document.getElementById('skillList');
+  let html = '';
+  if (filtered.length === 0) {
+    html = '<div style="padding:20px;text-align:center;color:#6c7086;font-size:12px;">无匹配 SKILL</div>';
+  } else {
+    for (const cat of Object.keys(groups).sort()) {
+      html += `<div class="category-group">${escapeHtml(cat)} (${groups[cat].length})</div>`;
+      for (const s of groups[cat]) {
+        const active = (currentSkill === s.name) ? 'active' : '';
+        const disabled = s.enabled ? '' : 'disabled';
+        const badgeVT = s.vuln_types && s.vuln_types.length > 0
+          ? `<span class="badge vt" title="${escapeHtml(s.vuln_types.join(', '))}">${s.vuln_types.length}vt</span>` : '';
+        const badgeTG = s.triggers && s.triggers.length > 0
+          ? `<span class="badge tg" title="${escapeHtml(s.triggers.join(', '))}">${s.triggers.length}tg</span>` : '';
+        // ★ 启用/禁用开关（取代旧的"禁用"badge，可点击切换）
+        const toggle = `<span class="toggle-switch ${s.enabled ? 'on' : 'off'}"
+          title="${s.enabled ? '已启用 - 点击禁用此 SKILL' : '已禁用 - 点击启用此 SKILL'}"
+          onclick="event.stopPropagation(); toggleSkill('${escapeAttr(s.name)}', ${!s.enabled})"
+        ><span class="dot"></span></span>`;
+        html += `<div class="skill-item ${active} ${disabled}" onclick="selectSkill('${escapeAttr(s.name)}')">
+          <div style="flex:1;min-width:0;">
+            <div class="name">${escapeHtml(s.name)}</div>
+            <div class="desc">${escapeHtml((s.description || '(无描述)').slice(0, 80))}</div>
+          </div>
+          ${badgeVT}${badgeTG}${toggle}
+        </div>`;
+      }
+    }
+  }
+  listEl.innerHTML = html;
+}
+
+async function selectSkill(name) {
+  if (editorDirty) {
+    if (!confirm('当前 SKILL 有未保存的修改，确定切换？')) return;
+  }
+  currentSkill = name;
+  editorDirty = false;
+  document.getElementById('saveBtn').disabled = true;
+  document.getElementById('rightEmpty').style.display = 'none';
+  document.getElementById('rightEdit').style.display = 'flex';
+  renderList();
+  // 拉详情
+  try {
+    const resp = await fetch('/api/skills/get?name=' + encodeURIComponent(name));
+    const data = await resp.json();
+    if (data.status !== 'ok') { toast(data.message || '加载失败', 'err'); return; }
+    document.getElementById('curName').textContent = data.name;
+    document.getElementById('curPath').textContent = 'skills_my/' + data.path;
+    document.getElementById('editor').value = data.content;
+    originalContent = data.content;
+    renderMeta();
+    renderPreview();
+  } catch (e) { toast('加载失败: ' + e.message, 'err'); }
+}
+
+function renderMeta() {
+  const s = allSkills.find(x => x.name === currentSkill);
+  if (!s) { document.getElementById('paneMeta').innerHTML = ''; return; }
+  const enabledTxt = s.enabled
+    ? '<span style="color:#a6e3a1;">✓ 启用</span>'
+    : '<span style="color:#f38ba8;">✗ 禁用</span>';
+  // ★ 元数据面板里也放一个 toggle 开关（与列表里的对应）
+  const enabledToggle = `<span class="toggle-switch ${s.enabled ? 'on' : 'off'}"
+    style="vertical-align:middle;margin-left:10px;"
+    title="点击${s.enabled ? '禁用' : '启用'}"
+    onclick="toggleSkill('${escapeAttr(s.name)}', ${!s.enabled})"
+  ><span class="dot"></span></span>
+  <span style="font-size:11px;color:#6c7086;margin-left:8px;">点击切换</span>`;
+  const enabled = enabledTxt + enabledToggle;
+  const vts = (s.vuln_types || []).map(v => `<span class="chip vt">${escapeHtml(v)}</span>`).join('') || '<span style="color:#6c7086;">(无 — 走 config.py 默认映射)</span>';
+  const tgs = (s.triggers || []).map(t => `<span class="chip tg">${escapeHtml(t)}</span>`).join('') || '<span style="color:#6c7086;">(无)</span>';
+  const syns = (s.synonyms || []).map(t => `<span class="chip syn">${escapeHtml(t)}</span>`).join('') || '<span style="color:#6c7086;">(无)</span>';
+  const tags = (s.tags || []).map(t => `<span class="chip">${escapeHtml(t)}</span>`).join('') || '<span style="color:#6c7086;">(无)</span>';
+  document.getElementById('paneMeta').innerHTML = `
+    <div class="meta-card">
+      <h4>基本信息</h4>
+      <div class="meta-row"><label>启用状态</label><div class="val">${enabled}</div></div>
+      <div class="meta-row"><label>分类</label><div class="val">${escapeHtml(s.category || '(未指定)')}</div></div>
+      <div class="meta-row"><label>优先级</label><div class="val">${s.priority}</div></div>
+      <div class="meta-row"><label>描述</label><div class="val">${escapeHtml(s.description || '(无)')}</div></div>
+    </div>
+    <div class="meta-card">
+      <h4>自注册映射（来自 SKILL.md frontmatter）</h4>
+      <div class="meta-row"><label>vuln_types</label><div class="val">${vts}</div></div>
+      <div class="meta-row"><label>triggers</label><div class="val">${tgs}</div></div>
+      <div class="meta-row"><label>synonyms</label><div class="val">${syns}</div></div>
+      <div class="meta-row"><label>tags</label><div class="val">${tags}</div></div>
+    </div>
+    <div class="meta-card">
+      <h4>文件信息</h4>
+      <div class="meta-row"><label>文件大小</label><div class="val">${(s.file_size/1024).toFixed(1)} KB</div></div>
+      <div class="meta-row"><label>正文长度</label><div class="val">${s.body_size} 字符</div></div>
+      <div class="meta-row"><label>最近修改</label><div class="val">${new Date(s.mtime*1000).toLocaleString()}</div></div>
+      <div class="meta-row"><label>路径</label><div class="val" style="font-family:monospace;font-size:11px;">skills_my/${escapeHtml(s.path)}</div></div>
+    </div>
+    <div class="meta-card" style="border-color:#3f2f10;">
+      <h4 style="color:#f9e2af;">📖 如何让 SKILL 被自动加载？</h4>
+      <p style="font-size:12px;color:#bac2de;line-height:1.6;">
+        在 SKILL.md 顶部的 <code style="color:#f9e2af;">---</code> frontmatter 中加入以下字段（任选）：<br>
+        <code style="display:block;background:#11111b;padding:10px;border-radius:6px;margin:8px 0;color:#cdd6f4;white-space:pre;font-size:11px;">vuln_types:
+  - SQL注入
+  - 注入漏洞
+triggers:    # 功能点关键词命中后自动给 checklist 加上面的 vuln_types
+  - 搜索
+  - search
+synonyms:    # LLM 别名 → 第一个 vuln_type
+  - sqli
+  - sql-injection
+priority: 5  # 优先级 1-10
+enabled: true</code>
+      </p>
+    </div>
+  `;
+}
+
+function renderPreview() {
+  const md = document.getElementById('editor').value;
+  try {
+    document.getElementById('previewBody').innerHTML = safeRenderMd(md);
+  } catch (e) {
+    document.getElementById('previewBody').innerHTML = '<pre style="color:#f38ba8;">预览渲染失败: ' + escapeHtml(e.message) + '</pre>';
+  }
+}
+
+function switchTab(name) {
+  for (const t of ['editor','meta','preview']) {
+    document.getElementById('tab' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
+    document.getElementById('pane' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', t === name);
+  }
+  if (name === 'preview') renderPreview();
+}
+
+function onEditorChange() {
+  const dirty = document.getElementById('editor').value !== originalContent;
+  editorDirty = dirty;
+  document.getElementById('saveBtn').disabled = !dirty;
+}
+
+async function saveSkill() {
+  if (!currentSkill) return;
+  const content = document.getElementById('editor').value;
+  try {
+    const resp = await fetch('/api/skills/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: currentSkill, content}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('✓ 已保存并热重载', 'ok');
+      originalContent = content;
+      editorDirty = false;
+      document.getElementById('saveBtn').disabled = true;
+      await loadList();
+      // 重新读 frontmatter 渲染元数据
+      const r2 = await fetch('/api/skills/get?name=' + encodeURIComponent(currentSkill));
+      const d2 = await r2.json();
+      if (d2.status === 'ok') { originalContent = d2.content; }
+      renderMeta();
+    } else {
+      toast('✗ ' + (data.message || '保存失败'), 'err');
+    }
+  } catch (e) { toast('保存失败: ' + e.message, 'err'); }
+}
+
+async function deleteSkill() {
+  if (!currentSkill) return;
+  if (!confirm(`确定删除 SKILL「${currentSkill}」？\n此操作会移除 skills_my/.../${currentSkill}/ 整个目录，不可恢复！`)) return;
+  try {
+    const resp = await fetch('/api/skills/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: currentSkill}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('✓ 已删除', 'ok');
+      currentSkill = null;
+      document.getElementById('rightEmpty').style.display = 'flex';
+      document.getElementById('rightEdit').style.display = 'none';
+      await loadList();
+    } else {
+      toast('✗ ' + (data.message || '删除失败'), 'err');
+    }
+  } catch (e) { toast('删除失败: ' + e.message, 'err'); }
+}
+
+async function toggleSkill(name, newEnabled) {
+  try {
+    const resp = await fetch('/api/skills/toggle', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, enabled: newEnabled}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ ${data.message}（启用中: ${data.enabled_count != null ? data.enabled_count : '?'}）`, 'ok');
+      // 局部更新 allSkills 中该项的 enabled，避免整页 flash
+      const it = allSkills.find(x => x.name === name);
+      if (it) it.enabled = newEnabled;
+      renderList();
+      // 如果当前选中的是这个 SKILL，刷新元数据 + 重新拉一次内容（frontmatter 已变）
+      if (currentSkill === name) {
+        const r2 = await fetch('/api/skills/get?name=' + encodeURIComponent(name));
+        const d2 = await r2.json();
+        if (d2.status === 'ok') {
+          document.getElementById('editor').value = d2.content;
+          originalContent = d2.content;
+          editorDirty = false;
+          document.getElementById('saveBtn').disabled = true;
+          renderMeta();
+        }
+      }
+    } else {
+      toast('✗ ' + (data.message || '切换失败'), 'err');
+    }
+  } catch (e) { toast('切换失败: ' + e.message, 'err'); }
+}
+
+async function reloadFromDisk() {
+  try {
+    const resp = await fetch('/api/skills/reload', {method: 'POST'});
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已重新扫描: ${data.count} 个 SKILL（启用 ${data.enabled_count}）`, 'ok');
+      await loadList();
+    } else {
+      toast('✗ ' + (data.message || '失败'), 'err');
+    }
+  } catch (e) { toast('失败: ' + e.message, 'err'); }
+}
+
+// ========== 新建 SKILL ==========
+function openNewSkill() {
+  document.getElementById('newName').value = '';
+  document.getElementById('newDesc').value = '';
+document.getElementById('newCategory').value = 'discovery/personal';
+  document.getElementById('newModal').classList.add('show');
+  setTimeout(() => document.getElementById('newName').focus(), 100);
+}
+function closeNewSkill() { document.getElementById('newModal').classList.remove('show'); }
+
+const SKILL_TEMPLATE = `---
+name: __NAME__
+description: "__DESC__"
+enabled: true
+vuln_types:
+  - 你的漏洞类型
+triggers:
+  - 关键词1
+  - 关键词2
+synonyms:
+  - alias-1
+priority: 5
+metadata:
+  tags: "tag1,tag2"
+  category: "__CAT__"
+---
+
+# 方法论标题
+
+## ⚠️ 关键认知
+（这里写本类漏洞的核心判定逻辑、易错点）
+
+## Phase 1: 信息收集
+1. ...
+
+## Phase 2: 漏洞测试
+1. ...
+
+## Phase 3: 验证确认
+
+## ⛔ 最低必测自检清单
+- [ ] 自检项 1
+- [ ] 自检项 2
+- [ ] 自检项 3
+
+## 附录 A：工具调用速查
+| 操作 | Agent 工具 | 示例 |
+|------|----------|------|
+| 发请求 | proxy_send_request | proxy_send_request("GET", url) |
+`;
+
+async function createNewSkill() {
+  const name = document.getElementById('newName').value.trim();
+  const cat = document.getElementById('newCategory').value;
+  const desc = document.getElementById('newDesc').value.trim();
+  if (!name) { alert('请填写 name'); return; }
+  if (!/^[A-Za-z0-9][\w\-]{0,60}$/.test(name)) { alert('name 格式不合法'); return; }
+  const template = SKILL_TEMPLATE.replace('__NAME__', name).replace('__DESC__', desc || '描述何时触发此 SKILL').replace('__CAT__', cat);
+  try {
+    const resp = await fetch('/api/skills/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, content: template, category: cat}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('✓ 已创建', 'ok');
+      closeNewSkill();
+      await loadList();
+      selectSkill(name);
+    } else {
+      toast('✗ ' + (data.message || '创建失败'), 'err');
+    }
+  } catch (e) { toast('创建失败: ' + e.message, 'err'); }
+}
+
+// 工具
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return String(s).replace(/'/g, "\\'"); }
+
+// ★ 安全渲染 Markdown：marked 解析 + DOMPurify 清洗，避免 skill 内容中的 XSS payload 在本页执行。
+function safeRenderMd(text) {
+  const src = text == null ? '' : String(text);
+  if (typeof marked === 'undefined') {
+    return escapeHtml(src).replace(/\n/g, '<br>');
+  }
+  let raw;
+  try {
+    raw = marked.parse(src, {breaks: true});
+  } catch (e) {
+    return '<pre style="color:#f38ba8;">渲染失败: ' + escapeHtml(e.message) + '</pre>';
+  }
+  if (typeof DOMPurify === 'undefined') {
+    console.warn('[security] DOMPurify 未加载，已降级为纯文本渲染');
+    return escapeHtml(src).replace(/\n/g, '<br>');
+  }
+  return DOMPurify.sanitize(raw, {
+    ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li',
+                   'strong','em','code','pre','blockquote','a','table','thead',
+                   'tbody','tr','th','td','span','div','img','del','sup','sub'],
+    ALLOWED_ATTR: ['href','target','class','style','src','alt','colspan','rowspan','title'],
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: ['script','style','iframe','object','embed','form','input','button','link','meta','base'],
+    FORBID_ATTR: ['onerror','onload','onclick','onmouseover','onfocus','onblur','onchange','onsubmit'],
+  });
+}
+
+// ESC 关模态框
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('newModal').classList.contains('show')) {
+    closeNewSkill();
+  }
+  if (e.key === 'Escape' && document.getElementById('triggersModal').classList.contains('show')) {
+    closeTriggers();
+  }
+  if (e.key === 'Escape' && document.getElementById('cryptoTplModal').classList.contains('show')) {
+    closeCryptoTpl();
+  }
+});
+
+// ========== 🔐 加密模板抽屉（iframe 嵌入） ==========
+function openCryptoTpl() {
+  const m = document.getElementById('cryptoTplModal');
+  const frame = document.getElementById('cryptoTplFrame');
+  // 首次打开才加载，避免冷启动拖慢页面
+  if (frame.src === 'about:blank' || !frame.src) {
+    frame.src = '/crypto-templates?embed=1';
+  }
+  m.classList.add('show');
+}
+function closeCryptoTpl() {
+  document.getElementById('cryptoTplModal').classList.remove('show');
+}
+
+// ========== 触发规则编辑器 ==========
+let trigRules = [];          // [{keywords, vuln_types, source, note, _matched}, ...]
+let trigKnownVts = [];       // 已注册漏洞类型（用于自动补全提示）
+let trigPreviewTimers = {};  // 防抖
+
+function openTriggers() {
+  document.getElementById('triggersModal').classList.add('show');
+  loadTriggers();
+}
+function closeTriggers() {
+  document.getElementById('triggersModal').classList.remove('show');
+}
+
+async function loadTriggers() {
+  document.getElementById('trigList').innerHTML = '<div style="color:#9e9e9e;padding:20px;">加载中...</div>';
+  try {
+    const r = await fetch('/api/triggers/list');
+    const d = await r.json();
+    if (d.status !== 'ok') {
+      document.getElementById('trigList').innerHTML = '<div style="color:#f38ba8;padding:20px;">加载失败: ' + escapeHtml(d.message || '') + '</div>';
+      return;
+    }
+    trigRules = (d.rules || []).map(r => ({...r, _matched: null}));
+    trigKnownVts = d.known_vuln_types || [];
+    document.getElementById('trigStat').innerHTML =
+      `共 <b>${trigRules.length}</b> 条规则（默认 ${d.default_count} · 自定义 ${d.user_count}）`;
+    renderTrigList();
+  } catch (e) {
+    toast('加载失败: ' + e.message, 'err');
+  }
+}
+
+function renderTrigList() {
+  const root = document.getElementById('trigList');
+  if (trigRules.length === 0) {
+    root.innerHTML = '<div style="color:#9e9e9e;padding:20px;text-align:center;">暂无规则，点击「➕ 新增规则」创建</div>';
+    return;
+  }
+  root.innerHTML = trigRules.map((r, i) => {
+    const isUser = r.source === 'user';
+    const badgeBg = isUser ? '#fff8e1' : '#e3f2fd';
+    const badgeColor = isUser ? '#e65100' : '#1565c0';
+    const badgeText = isUser ? '✏️ 自定义' : '🔒 默认（只读）';
+    const matchedTxt = r._matched != null
+      ? `<span style="color:${r._matched > 30 ? '#c62828' : (r._matched > 10 ? '#e65100' : '#2e7d32')};font-weight:600;">影响 ${r._matched} 个功能点</span>`
+      : '';
+    const disabled = !isUser ? 'disabled' : '';
+    return `
+      <div style="border:1px solid #e2e5e9;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:${isUser ? '#fffdf6' : '#fafbfc'};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
+          <span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${badgeBg};color:${badgeColor};">${badgeText}</span>
+          <span style="font-size:11px;color:#9e9e9e;">#${i + 1}</span>
+          <span style="font-size:11px;flex:1;text-align:center;">${matchedTxt}</span>
+          ${isUser ? `<button onclick="delTrigRule(${i})" style="background:#fce4ec;color:#c62828;border:1px solid #f8bbd0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;">🗑️ 删除</button>` : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div>
+            <label style="font-size:10px;color:#757575;display:block;margin-bottom:2px;">关键词（命中其一即触发，逗号分隔）</label>
+            <input ${disabled} value="${escapeAttr((r.keywords || []).join(', '))}"
+              oninput="updTrigRule(${i}, 'keywords', this.value)"
+              style="width:100%;padding:5px 8px;background:${isUser ? '#fff' : '#f5f5f5'};border:1px solid #e2e5e9;border-radius:4px;font-size:11px;font-family:inherit;" />
+          </div>
+          <div>
+            <label style="font-size:10px;color:#757575;display:block;margin-bottom:2px;">漏洞类型（追加到 checklist，逗号分隔）</label>
+            <input ${disabled} value="${escapeAttr((r.vuln_types || []).join(', '))}"
+              oninput="updTrigRule(${i}, 'vuln_types', this.value)"
+              list="trigKnownVts"
+              style="width:100%;padding:5px 8px;background:${isUser ? '#fff' : '#f5f5f5'};border:1px solid #e2e5e9;border-radius:4px;font-size:11px;font-family:inherit;" />
+          </div>
+        </div>
+        ${isUser ? `<input value="${escapeAttr(r.note || '')}" placeholder="备注（可选）：为什么加这条规则？"
+          oninput="updTrigRule(${i}, 'note', this.value)"
+          style="width:100%;margin-top:6px;padding:4px 8px;background:#fff;border:1px solid #e2e5e9;border-radius:4px;font-size:11px;font-family:inherit;color:#757575;" />` : ''}
+      </div>`;
+  }).join('') +
+  `<datalist id="trigKnownVts">${trigKnownVts.map(v => `<option value="${escapeAttr(v)}">`).join('')}</datalist>`;
+}
+
+function updTrigRule(idx, field, value) {
+  if (!trigRules[idx] || trigRules[idx].source !== 'user') return;
+  if (field === 'keywords' || field === 'vuln_types') {
+    trigRules[idx][field] = value.split(/[,，;；]/).map(s => s.trim()).filter(Boolean);
+    // 防抖触发预览
+    if (field === 'keywords') {
+      clearTimeout(trigPreviewTimers[idx]);
+      trigPreviewTimers[idx] = setTimeout(() => previewTrigRule(idx), 600);
+    }
+  } else {
+    trigRules[idx][field] = value;
+  }
+}
+
+async function previewTrigRule(idx) {
+  const r = trigRules[idx];
+  if (!r || !r.keywords || r.keywords.length === 0) return;
+  try {
+    const resp = await fetch('/api/triggers/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({keywords: r.keywords}),
+    });
+    const d = await resp.json();
+    if (d.status === 'ok') {
+      r._matched = d.matched;
+      renderTrigList();
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+function addTrigRule() {
+  trigRules.push({keywords: [], vuln_types: [], source: 'user', note: '', _matched: null});
+  renderTrigList();
+  // 滚到底部并 focus 新加的关键词输入框
+  setTimeout(() => {
+    const root = document.getElementById('trigList');
+    root.scrollTop = root.scrollHeight;
+    const inputs = root.querySelectorAll('input');
+    if (inputs.length) inputs[inputs.length - 2 || inputs.length - 1].focus();
+  }, 50);
+}
+
+function delTrigRule(idx) {
+  if (!trigRules[idx] || trigRules[idx].source !== 'user') return;
+  if (!confirm('删除这条规则？保存后生效。')) return;
+  trigRules.splice(idx, 1);
+  renderTrigList();
+}
+
+async function saveTriggers() {
+  // 只提交 source=user 的规则；剔除空条目
+  const userRules = trigRules
+    .filter(r => r.source === 'user')
+    .map(r => ({
+      keywords: (r.keywords || []).map(s => String(s).trim()).filter(Boolean),
+      vuln_types: (r.vuln_types || []).map(s => String(s).trim()).filter(Boolean),
+      note: r.note || '',
+    }))
+    .filter(r => r.keywords.length > 0 && r.vuln_types.length > 0);
+
+  // 提示用户：高影响规则
+  const highImpact = trigRules.filter(r => r.source === 'user' && r._matched != null && r._matched > 30);
+  if (highImpact.length > 0) {
+    if (!confirm(`⚠️ 有 ${highImpact.length} 条规则将影响超过 30 个功能点，可能导致 checklist 膨胀。是否仍要保存？`)) {
+      return;
+    }
+  }
+
+  try {
+    const resp = await fetch('/api/triggers/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rules: userRules}),
+    });
+    const d = await resp.json();
+    if (d.status === 'ok') {
+      toast(`✓ 已保存 ${d.saved} 条规则（总规则 ${d.feature_triggers}）`, 'ok');
+      await loadTriggers();
+    } else {
+      toast('✗ ' + (d.message || '保存失败'), 'err');
+    }
+  } catch (e) { toast('保存失败: ' + e.message, 'err'); }
+}
+
+// 启动
+loadList(true);
+</script>
+</body>
+</html>

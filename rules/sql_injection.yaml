@@ -1,0 +1,54 @@
+# SQL 注入检测规则
+- name: MySQL 报错注入
+  type: sql_injection
+  severity: critical
+  description: 通过单引号触发数据库报错，检测 SQL 注入
+  payloads:
+    - "'"
+    - "' OR '1'='1"
+    - "1' AND '1'='1"
+  match:
+    - pattern: "SQL syntax.*MySQL"
+      in: body
+      flags: IGNORECASE
+    - pattern: "Warning.*mysql_"
+      in: body
+      flags: IGNORECASE
+    - pattern: "ORA-\\d{5}"
+      in: body
+    - pattern: "Microsoft SQL Server.*\\d"
+      in: body
+      flags: IGNORECASE
+    - pattern: "PostgreSQL.*ERROR"
+      in: body
+      flags: IGNORECASE
+    - pattern: "SQLite3?::query"
+      in: body
+    - pattern: "SQLSTATE\\["
+      in: body
+  fix: 使用参数化查询/预编译语句，禁止拼接SQL
+
+- name: 布尔盲注
+  type: sql_injection
+  severity: critical
+  description: 通过布尔条件对比响应差异检测盲注
+  payloads:
+    true: "' OR '1'='1"
+    false: "' OR '1'='2"
+  detection:
+    method: response_length_diff
+    threshold: 200
+  fix: 使用参数化查询，对用户输入进行严格过滤
+
+- name: 时间盲注
+  type: sql_injection
+  severity: critical
+  description: 通过时间延迟检测盲注
+  payloads:
+    - "1; WAITFOR DELAY '0:0:3'--"
+    - "' AND SLEEP(3)--"
+    - "1; SELECT pg_sleep(3)--"
+  detection:
+    method: response_time
+    threshold_ms: 3000
+  fix: 使用参数化查询，禁止拼接SQL

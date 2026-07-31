@@ -1,0 +1,48 @@
+# XSS 跨站脚本检测规则
+- name: 反射型 XSS
+  type: xss
+  severity: high
+  description: 检测用户输入被原样反射到页面中，未做HTML编码
+  probe: 'xuanjianxss<>"'"'"''
+  detection:
+    method: reflection
+    check_encoding: true
+  match:
+    - pattern: "xuanjianxss<>"
+      in: body
+    - pattern: "xuanjianxss&lt;&gt;"
+      in: body
+      encoded: true
+  fix: 对用户输入进行HTML编码，使用CSP策略
+
+- name: DOM XSS
+  type: xss
+  severity: high
+  description: 检测 DOM 型 XSS，通过危险 sink 函数
+  payloads:
+    - "<img src=x onerror=alert(1)>"
+    - "<svg onload=alert(1)>"
+    - "javascript:alert(1)"
+    - "<script>alert(1)</script>"
+  match:
+    - pattern: "<script[^>]*>.*?</script>"
+      in: body
+      flags: IGNORECASE|DOTALL
+    - pattern: "onerror\\s*="
+      in: body
+    - pattern: "onload\\s*="
+      in: body
+    - pattern: "javascript:"
+      in: body
+  fix: 对用户输入进行HTML编码，使用CSP策略
+
+- name: 存储型 XSS
+  type: xss
+  severity: high
+  description: 检测输入被存储后在其他页面渲染时触发
+  payloads:
+    - "xuanjianstored<\"'>"
+  detection:
+    method: stored_reflection
+    check_pages: [profile, comment, message]
+  fix: 输入过滤 + 输出编码，使用CSP策略

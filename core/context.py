@@ -1,0 +1,199 @@
+"""
+Context — 上下文管理与压缩
+
+当对话轮数超过阈值时，将历史消息压缩为摘要，
+保持"高信号、低噪音"的上下文窗口。
+
+参考 BreachWeave 的 RTK 三层压缩机制。
+"""
+
+from __future__ import annotations
+
+import os
+from core.llm import LLMClient, Message
+
+
+COMPRESS_THRESHOLD = int(os.getenv("CONTEXT_COMPRESS_THRESHOLD", "30"))
+
+COMPRESS_PROMPT = """你是一个渗透测试过程记录压缩器。请将以下对话历史压缩为精简摘要，保留：
+1. 已发现的所有资产信息（URL、API端点、技术栈、Cookie/Token 结构）
+2. 已尝试的攻击方向及结果（成功/失败/待验证）
+3. 已确认的漏洞（含重放步骤）
+4. 当前正在推进的方向和下一步计划
+
+丢弃：
+- 工具的原始输出（只保留关键发现）
+- 重复的失败尝试
+- 闲聊和确认性回复
+
+输出格式为 Markdown，分为"资产"、"已测试"、"漏洞"、"当前方向"四个部分。"""
+
+# ★ 2026-05-28：BrowseWorker 专用压缩 prompt
+# 针对浏览器操作场景优化，重点保留 checklist 进度和 selector 失败记录
+BROWSE_COMPRESS_PROMPT = """你是一个浏览器操作过程记录压缩器。请将以下对话历史压缩为精简摘要，保留：
+1. 已完成的 ✅ 项目编号列表（如：已完成 ✅1、✅2、✅5、✅8）
+2. 当前正在操作的 ⬜ 编号和对应页面 URL
+3. 遇到的 selector 失败记录（哪些被跳过了，原因是什么）
+4. 已抓到的关键 API 端点摘要（方法 + 路径，不需要完整 URL）
+5. 发现的异常情况（如：某页面需要额外权限、某功能跳转到外部系统）
+
+丢弃：
+- proxy_get_traffic 的完整流量输出（只保留 API 端点列表）
+- browser_get_content 的完整 DOM 内容（只保留关键表单和按钮信息）
+- 重复的截图确认消息
+- browser_click/browser_fill 的成功确认（只保留失败的）
+
+输出格式为 Markdown，分为"已完成"、"进行中"、"跳过/失败"、"已抓API"四个部分。"""
+
+
+class ContextManager:
+    """管理对话上下文，支持自动压缩。"""
+
+    def __init__(self, llm: "LLMClient | None" = None, compress_mode: str = "default"):
+        """
+        Args:
+            llm: LLM 客户端实例；可为 None（fast/无 LLM 模式），仅在 compress() 时需要
+            compress_mode: 压缩模式，"default" 使用通用渗透测试压缩，
+                          "browse" 使用 BrowseWorker 专用压缩（保留 checklist 进度）
+        """
+        self.llm = llm
+        self.compress_mode = compress_mode
+        self.system_messages: list[Message] = []
+        self.history: list[Message] = []
+        self._compressed_summary: str = ""
+
+    def add_system(self, content: str) -> None:
+        self.system_messages.append(Message(role="system", content=content))
+
+    def add_user(self, content: str) -> None:
+        self.history.append(Message(role="user", content=content))
+
+    def add_assistant(self, msg: Message) -> None:
+        self.history.append(msg)
+
+    def add_tool_result(self, tool_call_id: str, content: str) -> None:
+        self.history.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
+
+    def get_messages(self) -> list[Message]:
+        """构建完整的消息列表，含系统提示 + 压缩摘要 + 近期历史。
+
+        自动修复 tool_calls/tool 不配对问题，防止 API 400 错误。
+        """
+        messages = list(self.system_messages)
+
+        if self._compressed_summary:
+            messages.append(Message(role="system", content=f"## 之前的渗透过程摘要\n\n{self._compressed_summary}"))
+
+        # 安全检查：确保 assistant(tool_calls) 后面跟着对应的 tool 消息
+        safe_history = self._ensure_tool_pairing(self.history)
+        messages.extend(safe_history)
+        return messages
+
+    @staticmethod
+    def _ensure_tool_pairing(history: list[Message]) -> list[Message]:
+        """确保 history 中 assistant(tool_calls) 和 tool(result) 正确配对。
+
+        如果发现不配对的情况，移除孤立的消息。
+        """
+        result: list[Message] = []
+        i = 0
+        while i < len(history):
+            msg = history[i]
+
+            if msg.role == "assistant" and msg.tool_calls:
+                # 收集这个 assistant 消息需要的所有 tool_call_id
+                expected_ids = {tc["id"] for tc in msg.tool_calls}
+
+                # 向后查找所有匹配的 tool 消息
+                tool_msgs = []
+                j = i + 1
+                found_ids = set()
+                while j < len(history) and history[j].role == "tool":
+                    if history[j].tool_call_id in expected_ids:
+                        tool_msgs.append(history[j])
+                        found_ids.add(history[j].tool_call_id)
+                    j += 1
+
+                if found_ids == expected_ids:
+                    # 完整配对，全部保留
+                    result.append(msg)
+                    result.extend(tool_msgs)
+                else:
+                    # 不完整 — 跳过这个 assistant 及其 tool 消息
+                    pass
+
+                i = j
+            elif msg.role == "tool":
+                # 孤立的 tool 消息（前面没有 assistant+tool_calls），跳过
+                i += 1
+            else:
+                result.append(msg)
+                i += 1
+
+        return result
+
+    @property
+    def turn_count(self) -> int:
+        return sum(1 for m in self.history if m.role == "assistant")
+
+    def should_compress(self) -> bool:
+        return self.turn_count >= COMPRESS_THRESHOLD
+
+    def compress(self) -> str:
+        """将历史压缩为摘要，保留最近的完整对话轮次。
+
+        确保 assistant(tool_calls) + tool(result) 配对不被拆散。
+        """
+        if len(self.history) < 8:
+            return self._compressed_summary
+
+        # 找安全的截断点：从后往前找，保留最近 N 条，
+        # 但截断点必须在 user 消息处（不能切在 tool_calls/tool 中间）
+        keep_count = 20
+        cut_idx = len(self.history) - keep_count
+
+        # 往前调整到安全位置：确保 cut_idx 处是 user/system，不是 tool
+        while cut_idx > 0 and self.history[cut_idx].role in ("tool", "assistant"):
+            cut_idx -= 1
+
+        if cut_idx <= 0:
+            return self._compressed_summary
+
+        to_compress = self.history[:cut_idx]
+        to_keep = self.history[cut_idx:]
+
+        # 构建压缩请求（只取 user/assistant 的文本内容，忽略 tool 细节）
+        history_parts = []
+        for m in to_compress:
+            if m.role in ("user", "assistant") and m.content:
+                history_parts.append(f"[{m.role}]: {m.content[:500]}")
+        history_text = "\n".join(history_parts)
+
+        if not history_text.strip():
+            return self._compressed_summary
+
+        # ★ 根据压缩模式选择对应的 prompt
+        active_prompt = BROWSE_COMPRESS_PROMPT if self.compress_mode == "browse" else COMPRESS_PROMPT
+
+        compress_messages = [
+            Message(role="system", content=active_prompt),
+            Message(role="user", content=f"请压缩以下对话历史：\n\n{history_text}"),
+        ]
+
+        if self._compressed_summary:
+            compress_messages.insert(
+                1, Message(role="system", content=f"上一轮压缩摘要（请合并）：\n{self._compressed_summary}")
+            )
+
+        # ★ llm 未配置时跳过压缩（fast/无 LLM 模式），直接保留近期历史
+        if self.llm is None:
+            self.history = to_keep
+            return self._compressed_summary
+
+        result = self.llm.chat(compress_messages, temperature=0.1, max_tokens=4096)
+        self._compressed_summary = result.content
+
+        # 替换历史，确保 to_keep 的第一条不是 tool
+        self.history = to_keep
+
+        return self._compressed_summary

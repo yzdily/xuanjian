@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>稻草人安全团队密钥获取工具</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 头部 -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🔐</span>
+        <span class="logo-text">稻草人安全</span>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="refreshBtn" title="刷新">🔄</button>
+        <span class="version">v1.0</span>
+      </div>
+    </header>
+
+    <!-- 统计卡片 -->
+    <div class="stats-row">
+      <div class="stat-item key">
+        <span class="stat-icon">🔑</span>
+        <span class="stat-value" id="keyCount">0</span>
+        <span class="stat-label">Key</span>
+      </div>
+      <div class="stat-item iv">
+        <span class="stat-icon">🔐</span>
+        <span class="stat-value" id="ivCount">0</span>
+        <span class="stat-label">IV</span>
+      </div>
+      <div class="stat-item secret">
+        <span class="stat-icon">🔒</span>
+        <span class="stat-value" id="secretCount">0</span>
+        <span class="stat-label">Secret</span>
+      </div>
+    </div>
+
+    <!-- 捕获列表 -->
+    <div class="capture-list" id="captureList">
+      <div class="empty-state">
+        <div class="empty-icon">🎯</div>
+        <p>等待捕获...</p>
+        <p class="empty-hint">触发页面加解密操作后自动显示</p>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="action-row">
+      <button class="btn btn-export" id="exportBtn">
+        <span>📥</span> 导出
+      </button>
+      <button class="btn btn-clear" id="clearBtn">
+        <span>🗑️</span> 清空
+      </button>
+    </div>
+
+    <!-- 快捷命令 -->
+    <div class="quick-cmds">
+      <span class="cmd-label">控制台:</span>
+      <code>getKeys()</code>
+      <code>getCryptoRecords()</code>
+      <code>help()</code>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

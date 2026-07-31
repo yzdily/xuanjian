@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<title>Replay Advanced — 高级可视化</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<!-- D3 v7：力导图 + 树布局 + 缩放 -->
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #ffffff;
+    color: #1a1a2e;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  .topbar {
+    height: 56px; padding: 0 24px;
+    background: #f8f9fa; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 { margin: 0; color: #1565c0; font-size: 18px; }
+  .topbar .subtitle { color: #757575; font-size: 13px; }
+  .spacer { flex: 1; }
+  .topbar a { color: #1565c0; text-decoration: none; font-size: 13px; }
+  .topbar a:hover { text-decoration: underline; }
+
+  .container {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    height: calc(100vh - 56px);
+  }
+  .sidebar {
+    background: #f8f9fa; border-right: 1px solid #e2e5e9;
+    overflow-y: auto; padding: 16px;
+  }
+  .sidebar h3 {
+    margin: 0 0 12px; font-size: 14px; color: #424242;
+    border-bottom: 1px solid #e2e5e9; padding-bottom: 8px;
+  }
+
+  .run-card {
+    background: #fff; border: 1px solid #e2e5e9; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+    transition: all .15s;
+  }
+  .run-card:hover { border-color: #1565c0; background: #f0f4ff; }
+  .run-card.active { border-color: #1565c0; background: #e3f2fd; }
+  .run-card .id { font-weight: 600; color: #1565c0; font-size: 13px; word-break: break-all; }
+  .run-card .target { color: #424242; font-size: 12px; margin-top: 2px; word-break: break-all; }
+  .run-card .meta { color: #757575; font-size: 11px; margin-top: 4px; }
+  .run-card .badge {
+    display: inline-block;
+    background: #f0f1f3; color: #4a4a5a;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; margin-right: 4px;
+  }
+  .multi-tip {
+    background: #fff8e1; border: 1px solid #ffe082; border-radius: 4px;
+    padding: 8px 10px; font-size: 11px; color: #6d4c00; margin-bottom: 8px;
+    line-height: 1.5;
+  }
+
+  .main { overflow: hidden; padding: 0; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar {
+    background: #fff; border-bottom: 1px solid #e2e5e9;
+    padding: 12px 24px; display: flex; align-items: center; gap: 12px;
+    flex-shrink: 0; flex-wrap: wrap;
+  }
+  .toolbar h2 { margin: 0; font-size: 16px; color: #1a1a2e; flex: 1; min-width: 200px; }
+
+  /* 视图切换 tabs */
+  .view-tabs {
+    display: flex; gap: 4px;
+    background: #f0f1f3; padding: 3px; border-radius: 6px;
+  }
+  .view-tabs button {
+    background: transparent; color: #4a4a5a; border: 0;
+    padding: 5px 12px; font-size: 12px;
+    border-radius: 4px; cursor: pointer;
+  }
+  .view-tabs button.active { background: #1565c0; color: #fff; }
+
+  .toolbar .btn {
+    background: #fff; color: #424242; border: 1px solid #d0d4d9;
+    padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  }
+  .toolbar .btn:hover { border-color: #1565c0; color: #1565c0; }
+  .toolbar .btn.primary { background: #1565c0; color: #fff; border-color: #1565c0; }
+  .toolbar .btn.primary:hover { background: #0d47a1; }
+  .toolbar .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* 视图区 */
+  .view-host {
+    flex: 1; position: relative; overflow: hidden;
+    background:
+      radial-gradient(circle, #e8eaed 1px, transparent 1px) 0 0 / 22px 22px,
+      #fafbfc;
+  }
+  .view-pane { position: absolute; inset: 0; }
+  .view-pane[hidden] { display: none; }
+  .view-pane svg { display: block; width: 100%; height: 100%; }
+
+  .empty-msg {
+    color: #9e9e9e; padding: 60px; text-align: center;
+    font-size: 14px;
+  }
+
+  /* 力导图节点样式 */
+  .node-circle { stroke: #fff; stroke-width: 2px; cursor: grab; }
+  .node-circle:active { cursor: grabbing; }
+  .node-label {
+    font-size: 11px; fill: #424242; pointer-events: none;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .node-label.bold { font-weight: 600; fill: #1a1a2e; }
+  .link { stroke: #b0bec5; stroke-opacity: .55; fill: none; }
+  .link.success { stroke: #4caf50; stroke-opacity: .7; }
+  .link.fail { stroke: #c62828; stroke-opacity: .85; }
+
+  /* 节点配色 */
+  .c-feature { fill: #ce93d8; }
+  .c-decision { fill: #64b5f6; }
+  .c-validated { fill: #81c784; }
+  .c-vuln { fill: #ef5350; }
+  .c-vuln-type { fill: #ff7043; }
+  .c-lesson { fill: #ffb74d; }
+  .c-skill { fill: #4dd0e1; }
+  .c-cve { fill: #f06292; }
+
+  @keyframes vuln-pulse {
+    0%,100% { filter: drop-shadow(0 0 0 rgba(239,83,80,0)); }
+    50%     { filter: drop-shadow(0 0 8px rgba(239,83,80,.85)); }
+  }
+  .node-circle.vuln { animation: vuln-pulse 1.6s ease-in-out infinite; }
+
+  /* 树布局节点 */
+  .tree-node rect {
+    fill: #fff; stroke: #1565c0; stroke-width: 1.5px;
+    rx: 6; ry: 6;
+  }
+  .tree-node.skill rect { stroke: #00838f; fill: #e0f7fa; }
+  .tree-node.vuln-type rect { stroke: #c62828; fill: #ffebee; }
+  .tree-node.payload rect { stroke: #e65100; fill: #fff3e0; }
+  .tree-node.feature rect { stroke: #6a1b9a; fill: #f3e5f5; }
+  .tree-node text {
+    font-size: 12px; fill: #1a1a2e;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    dominant-baseline: middle;
+    pointer-events: none;
+  }
+  .tree-link {
+    fill: none; stroke: #b0bec5; stroke-width: 1.5px;
+  }
+
+  /* 详情抽屉 */
+  .drawer {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: 360px; background: #fff;
+    border-left: 1px solid #e2e5e9;
+    box-shadow: -4px 0 12px rgba(0,0,0,.05);
+    transform: translateX(100%); transition: transform .25s ease;
+    overflow-y: auto; z-index: 10;
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer .drawer-head {
+    padding: 14px 16px; border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; background: #fff; z-index: 1;
+  }
+  .drawer .drawer-head h4 { margin: 0; color: #1565c0; font-size: 14px; }
+  .drawer .drawer-head .close {
+    background: none; border: 0; font-size: 22px; color: #757575; cursor: pointer;
+  }
+  .drawer .drawer-body { padding: 14px 16px; }
+  .drawer .field-row { margin-bottom: 8px; font-size: 13px; }
+  .drawer .field-row .lbl { color: #757575; display: inline-block; min-width: 70px; }
+  .drawer .field-row code {
+    background: #f5f5f5; padding: 2px 6px; border-radius: 3px;
+    color: #e65100; font-family: ui-monospace, monospace; font-size: 12px;
+    word-break: break-all;
+  }
+  .drawer pre {
+    background: #fafbfc; border: 1px solid #e2e5e9; border-radius: 4px;
+    padding: 8px 10px; font-size: 11px;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 200px; overflow-y: auto;
+  }
+
+  /* 浮动控制条（缩放/重置） */
+  .float-controls {
+    position: absolute; right: 16px; top: 16px; z-index: 5;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .float-controls button {
+    width: 34px; height: 34px;
+    background: #fff; border: 1px solid #d0d4d9; border-radius: 4px;
+    cursor: pointer; font-size: 14px; color: #424242;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .float-controls button:hover { border-color: #1565c0; color: #1565c0; }
+
+  /* 图例 */
+  .legend {
+    position: absolute; left: 16px; bottom: 16px; z-index: 5;
+    background: rgba(255,255,255,.92); border: 1px solid #e2e5e9;
+    border-radius: 6px; padding: 8px 12px;
+    font-size: 11px; color: #424242;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .legend .item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .legend .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid #fff; box-shadow: 0 0 0 1px #d0d4d9;
+  }
+
+  /* 多选 */
+  .run-card .pick {
+    float: right;
+    width: 18px; height: 18px;
+    accent-color: #1565c0;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: #2e7d32; color: #fff;
+    padding: 10px 20px; border-radius: 6px;
+    font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.2);
+    transition: transform .3s ease;
+    z-index: 9999;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #c62828; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🔬 高级可视化</h1>
+  <span class="subtitle">力导图 · 攻击树 · 一键导出</span>
+  <span class="spacer"></span>
+  <a href="/replay-theater">🎬 决策剧场</a>
+  <span style="color:#ccc">|</span>
+<a href="/">← 返回</a>
+</div>
+
+<div class="container">
+
+  <aside class="sidebar">
+    <h3>剧本（runs）</h3>
+    <div class="multi-tip">
+      💡 勾选多个剧本可以做<b>跨剧本聚合视图</b>，会把所有 run 的攻击链合并成一张大图。
+    </div>
+    <div id="runList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <h2 id="runTitle">选择左侧的剧本开始</h2>
+      <div class="view-tabs" id="viewTabs">
+        <button class="active" data-view="force" onclick="switchView('force')">🕸️ 力导图</button>
+        <button data-view="tree" onclick="switchView('tree')">🌳 攻击树</button>
+        <button data-view="radial" onclick="switchView('radial')">🎯 辐射图</button>
+      </div>
+      <button class="btn" id="refreshBtn" onclick="reloadCurrent()" disabled>🔄 刷新</button>
+      <button class="btn" id="fitBtn" onclick="fitView()" disabled>⤢ 适应窗口</button>
+      <button class="btn primary" id="exportBtn" onclick="toggleExportMenu()" disabled>⬇️ 导出</button>
+      <div id="exportMenu" style="position:absolute;display:none;background:#fff;border:1px solid #e2e5e9;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:1000;min-width:160px;">
+        <div class="export-item" onclick="exportAs('svg')" style="padding:8px 14px;cursor:pointer;font-size:13px;">📄 SVG (矢量)</div>
+        <div class="export-item" onclick="exportAs('png')" style="padding:8px 14px;cursor:pointer;font-size:13px;border-top:1px solid #f0f1f3;">🖼️ PNG (位图)</div>
+        <div class="export-item" onclick="exportAs('pdf')" style="padding:8px 14px;cursor:pointer;font-size:13px;border-top:1px solid #f0f1f3;">📑 PDF (打印质量)</div>
+        <div class="export-item" onclick="exportAs('json')" style="padding:8px 14px;cursor:pointer;font-size:13px;border-top:1px solid #f0f1f3;">📦 JSON (原始数据)</div>
+      </div>
+    </div>
+
+    <div class="view-host" id="viewHost">
+      <div class="view-pane" id="forcePane">
+        <div class="empty-msg" id="forceEmpty">在左侧选择剧本，开始构建力导图</div>
+        <svg id="forceSvg"></svg>
+      </div>
+      <div class="view-pane" id="treePane" hidden>
+        <div class="empty-msg" id="treeEmpty">在左侧选择剧本，开始构建攻击树</div>
+        <svg id="treeSvg"></svg>
+      </div>
+      <div class="view-pane" id="radialPane" hidden>
+        <div class="empty-msg" id="radialEmpty">在左侧选择剧本，开始构建辐射图</div>
+        <svg id="radialSvg"></svg>
+      </div>
+
+      <div class="float-controls">
+        <button title="放大" onclick="zoomBy(1.3)">＋</button>
+        <button title="缩小" onclick="zoomBy(0.77)">－</button>
+        <button title="重置" onclick="resetZoom()">⟲</button>
+      </div>
+
+      <div class="legend">
+        <div class="item"><span class="dot" style="background:#ce93d8"></span> 功能点</div>
+        <div class="item"><span class="dot" style="background:#4dd0e1"></span> SKILL</div>
+        <div class="item"><span class="dot" style="background:#ff7043"></span> 漏洞类型</div>
+        <div class="item"><span class="dot" style="background:#64b5f6"></span> 决策</div>
+        <div class="item"><span class="dot" style="background:#81c784"></span> 验证通过</div>
+        <div class="item"><span class="dot" style="background:#ef5350"></span> 漏洞确认</div>
+        <div class="item"><span class="dot" style="background:#ffb74d"></span> 经验沉淀</div>
+      </div>
+
+      <aside class="drawer" id="drawer">
+        <div class="drawer-head">
+          <h4 id="drawerTitle">详情</h4>
+          <button class="close" onclick="closeDrawer()">×</button>
+        </div>
+        <div class="drawer-body" id="drawerBody"></div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// =================================================================
+// 状态
+// =================================================================
+let allRuns = [];
+let selectedRunIds = new Set();
+let allFrames = [];      // 当前选中的所有 run 合并后的帧
+let currentView = 'force';
+let currentZoom = null;  // d3.zoom behavior，按当前视图存
+let currentRoot = null;  // 当前 svg 的 root g
+let currentSvgSel = null;
+let lastSimulation = null;
+
+// =================================================================
+// Toast
+// =================================================================
+function toast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (type === 'error' ? ' error' : '');
+  setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// =================================================================
+// 加载 runs 列表
+// =================================================================
+// 提取 URL 域名用于简洁展示
+function shortTarget(url) {
+  if (!url) return '';
+  try { return new URL(url).hostname; } catch (e) { return url; }
+}
+
+async function loadRuns() {
+  try {
+    const r = await fetch('/api/replay/runs');
+    const data = await r.json();
+    allRuns = data.runs || [];
+  } catch (e) {
+    toast('runs 加载失败：' + e.message, 'error');
+    return;
+  }
+  const box = document.getElementById('runList');
+  if (!allRuns.length) {
+    box.innerHTML = '<div class="empty-msg" style="padding:12px;font-size:12px;">暂无剧本</div>';
+    return;
+  }
+  box.innerHTML = allRuns.map(r => `
+    <div class="run-card" data-run="${escapeHtml(r.run_id)}">
+      <input type="checkbox" class="pick" data-run="${escapeHtml(r.run_id)}" />
+      <div class="id">${escapeHtml(r.run_id)}</div>
+      ${r.target ? `<div class="target">${escapeHtml(shortTarget(r.target))}</div>` : ''}
+      <div class="meta">
+        <span class="badge">${r.frame_count || 0} 帧</span>
+        ${escapeHtml(r.ended_at_human || '')}
+      </div>
+    </div>
+  `).join('');
+  document.querySelectorAll('.run-card .pick').forEach(cb => {
+    cb.onclick = (e) => {
+      e.stopPropagation();
+      const id = cb.dataset.run;
+      if (cb.checked) selectedRunIds.add(id);
+      else selectedRunIds.delete(id);
+      reloadCurrent();
+    };
+  });
+  document.querySelectorAll('.run-card').forEach(card => {
+    card.onclick = (e) => {
+      if (e.target.classList.contains('pick')) return;
+      // 单选模式：清空多选，选中当前
+      selectedRunIds = new Set([card.dataset.run]);
+      document.querySelectorAll('.run-card .pick').forEach(cb => {
+        cb.checked = (cb.dataset.run === card.dataset.run);
+      });
+      reloadCurrent();
+    };
+  });
+}
+
+// =================================================================
+// 拉取当前选中 runs 的 frames
+// =================================================================
+async function reloadCurrent() {
+  document.querySelectorAll('.run-card').forEach(c => {
+    c.classList.toggle('active', selectedRunIds.has(c.dataset.run));
+  });
+
+  if (selectedRunIds.size === 0) {
+    allFrames = [];
+    document.getElementById('runTitle').textContent = '选择左侧的剧本开始';
+    setEmpty(true);
+    setActions(false);
+    return;
+  }
+
+  const ids = [...selectedRunIds];
+  const arrays = await Promise.all(ids.map(async id => {
+    try {
+      const r = await fetch('/api/replay/script?run_id=' + encodeURIComponent(id));
+      if (!r.ok) return [];
+      const d = await r.json();
+      return (d.frames || []).map(f => ({...f, _run_id: id}));
+    } catch { return []; }
+  }));
+  allFrames = arrays.flat().sort((a,b) => (a.timestamp||0) - (b.timestamp||0));
+
+  const totalFrames = allFrames.length;
+  const runsLabel = ids.length === 1 ? ids[0] : `${ids.length} 个剧本聚合`;
+  document.getElementById('runTitle').textContent = `${runsLabel} · ${totalFrames} 帧`;
+
+  if (totalFrames === 0) { setEmpty(true); setActions(false); return; }
+  setEmpty(false);
+  setActions(true);
+  renderCurrent();
+}
+
+function setActions(enabled) {
+  ['refreshBtn','fitBtn','exportBtn'].forEach(id => {
+    document.getElementById(id).disabled = !enabled;
+  });
+}
+function setEmpty(empty) {
+  ['forceEmpty','treeEmpty','radialEmpty'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = empty ? '' : 'none';
+  });
+}
+
+// =================================================================
+// 视图切换
+// =================================================================
+function switchView(v) {
+  currentView = v;
+  document.querySelectorAll('#viewTabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === v);
+  });
+  document.getElementById('forcePane').hidden = (v !== 'force');
+  document.getElementById('treePane').hidden = (v !== 'tree');
+  document.getElementById('radialPane').hidden = (v !== 'radial');
+  if (allFrames.length) renderCurrent();
+}
+
+function renderCurrent() {
+  closeDrawer();
+  if (currentView === 'force') renderForce();
+  else if (currentView === 'tree') renderTree();
+  else if (currentView === 'radial') renderRadial();
+}
+
+// =================================================================
+// 🕸️ 力导图：构建图（节点 / 边）
+//   节点类型：feature / decision / validated / vuln / lesson / skill
+// =================================================================
+function buildGraph(frames) {
+  const nodes = new Map();
+  const links = [];
+  const addNode = (id, props) => {
+    if (!nodes.has(id)) nodes.set(id, {id, ...props});
+    else Object.assign(nodes.get(id), props);
+    return nodes.get(id);
+  };
+
+  frames.forEach((f, idx) => {
+    const featKey = 'feat::' + (f.feature_name || f.feature_id || '(全局)');
+    addNode(featKey, {
+      type: 'feature',
+      label: f.feature_name || f.feature_id || '(全局)',
+      raw: { feature_name: f.feature_name, feature_id: f.feature_id }
+    });
+
+    let frameType;
+    const isVuln = (f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+    if (f.kind === 'decision') frameType = 'decision';
+    else if (f.kind === 'harm_validated') frameType = isVuln ? 'vuln' : 'validated';
+    else if (f.kind === 'lesson') frameType = 'lesson';
+    else frameType = 'decision';
+
+    // label 兜底：按节点类型选最有信息量的字段
+    let label;
+    if (frameType === 'vuln') label = f.vuln_type || f.skill_used || '漏洞';
+    else if (frameType === 'validated') label = f.vuln_type || f.skill_used || '验证';
+    else if (frameType === 'lesson') label = '经验沉淀';
+    else label = f.skill_used || '决策';
+
+    const frameId = 'frame::' + (f._run_id || '') + '::' + idx;
+    addNode(frameId, { type: frameType, label, raw: f, isVuln });
+    links.push({ source: featKey, target: frameId, kind: frameType });
+
+    // skill 节点（聚合：相同 skill 复用同一节点，体现热度）
+    if (f.skill_used) {
+      const skillKey = 'skill::' + f.skill_used;
+      const sk = addNode(skillKey, { type: 'skill', label: f.skill_used });
+      sk.weight = (sk.weight || 0) + 1;
+      links.push({ source: skillKey, target: frameId, kind: 'skill' });
+    }
+
+    // vuln_type 节点：把"攻击类型"维度补进力导图
+    // —— 同类型漏洞会汇聚到同一节点，半径反映命中数，跨剧本时尤其有用
+    if (f.vuln_type && (frameType === 'vuln' || frameType === 'validated')) {
+      const vtKey = 'vtype::' + f.vuln_type;
+      const vt = addNode(vtKey, { type: 'vuln-type', label: f.vuln_type });
+      vt.weight = (vt.weight || 0) + 1;
+      links.push({ source: vtKey, target: frameId, kind: frameType });
+    }
+  });
+
+  return {
+    nodes: [...nodes.values()],
+    links
+  };
+}
+
+function renderForce() {
+  const svg = d3.select('#forceSvg');
+  svg.selectAll('*').remove();
+
+  const host = document.getElementById('forcePane');
+  const W = host.clientWidth, H = host.clientHeight;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  // defs：箭头
+  svg.append('defs').html(`
+    <marker id="arrow-fwd" viewBox="0 0 10 10" refX="20" refY="5"
+            markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#90a4ae"/>
+    </marker>
+  `);
+
+  const root = svg.append('g').attr('class', 'zoom-root');
+  currentRoot = root; currentSvgSel = svg;
+
+  // zoom
+  const zoom = d3.zoom().scaleExtent([0.15, 4]).on('zoom', ev => {
+    root.attr('transform', ev.transform);
+  });
+  svg.call(zoom);
+  currentZoom = zoom;
+
+  const { nodes, links } = buildGraph(allFrames);
+
+  if (lastSimulation) lastSimulation.stop();
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(d => d.kind === 'skill' ? 70 : 110))
+    .force('charge', d3.forceManyBody().strength(-260))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collide', d3.forceCollide().radius(d => radiusOf(d) + 6))
+    .alphaDecay(0.04);
+
+  lastSimulation = sim;
+
+  const link = root.append('g').selectAll('line')
+    .data(links).enter().append('line')
+    .attr('class', d => 'link' + (d.kind === 'vuln' ? ' fail' : (d.kind === 'validated' ? ' success' : '')))
+    .attr('marker-end', 'url(#arrow-fwd)');
+
+  const nodeG = root.append('g').selectAll('g.node')
+    .data(nodes).enter().append('g')
+    .attr('class', 'node')
+    .style('cursor', 'pointer')
+    .on('click', (ev, d) => showDetail(d))
+    .call(d3.drag()
+      .on('start', (ev, d) => { if (!ev.active) sim.alphaTarget(.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+      .on('end', (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+  nodeG.append('circle')
+    .attr('class', d => 'node-circle ' + classOf(d) + (d.isVuln ? ' vuln' : ''))
+    .attr('r', d => radiusOf(d));
+
+  nodeG.append('text')
+    .attr('class', d => 'node-label' + (d.type === 'feature' || d.type === 'vuln' ? ' bold' : ''))
+    .attr('dy', d => -(radiusOf(d) + 4))
+    .attr('text-anchor', 'middle')
+    .text(d => truncate(d.label, 18));
+
+  sim.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    nodeG.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+function radiusOf(d) {
+  if (d.type === 'feature') return 18;
+  if (d.type === 'vuln') return 14;
+  if (d.type === 'vuln-type') return 10 + Math.min(10, (d.weight || 1));
+  if (d.type === 'skill') return 8 + Math.min(10, (d.weight || 1));
+  return 9;
+}
+function classOf(d) {
+  return ({
+    feature: 'c-feature',
+    decision: 'c-decision',
+    validated: 'c-validated',
+    vuln: 'c-vuln',
+    'vuln-type': 'c-vuln-type',
+    lesson: 'c-lesson',
+    skill: 'c-skill'
+  })[d.type] || 'c-decision';
+}
+
+// =================================================================
+// 🌳 攻击树：feature → SKILL → vuln_type → payload
+// =================================================================
+function buildTreeData(frames) {
+  // 树结构：root -> feature -> skill -> vuln_type -> payload(漏洞)
+  const root = { name: '攻击全景', type: 'root', children: [] };
+  const featMap = new Map();
+
+  frames.forEach(f => {
+    const featName = f.feature_name || f.feature_id || '(全局)';
+    if (!featMap.has(featName)) {
+      const feat = { name: featName, type: 'feature', children: [], _skills: new Map() };
+      featMap.set(featName, feat);
+      root.children.push(feat);
+    }
+    const feat = featMap.get(featName);
+
+    if (!f.skill_used) return;
+    if (!feat._skills.has(f.skill_used)) {
+      const sk = { name: f.skill_used, type: 'skill', children: [], _vulns: new Map() };
+      feat._skills.set(f.skill_used, sk);
+      feat.children.push(sk);
+    }
+    const sk = feat._skills.get(f.skill_used);
+
+    if (f.vuln_type) {
+      if (!sk._vulns.has(f.vuln_type)) {
+        const vt = { name: f.vuln_type, type: 'vuln-type', children: [] };
+        sk._vulns.set(f.vuln_type, vt);
+        sk.children.push(vt);
+      }
+      const vt = sk._vulns.get(f.vuln_type);
+      const isVuln = (f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+      if (isVuln && f.payload) {
+        vt.children.push({
+          name: truncate(f.payload, 30),
+          type: 'payload',
+          raw: f,
+          children: undefined
+        });
+      }
+    }
+  });
+  return root;
+}
+
+function renderTree() {
+  const svg = d3.select('#treeSvg');
+  svg.selectAll('*').remove();
+
+  const host = document.getElementById('treePane');
+  const W = host.clientWidth, H = host.clientHeight;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  const root = svg.append('g').attr('class', 'zoom-root');
+  currentRoot = root; currentSvgSel = svg;
+
+  const zoom = d3.zoom().scaleExtent([0.2, 3]).on('zoom', ev => {
+    root.attr('transform', ev.transform);
+  });
+  svg.call(zoom);
+  currentZoom = zoom;
+
+  const data = buildTreeData(allFrames);
+  const hierarchy = d3.hierarchy(data);
+  const treeLayout = d3.tree().nodeSize([42, 240]);
+  treeLayout(hierarchy);
+
+  // 偏移：让根在左
+  const offsetX = 80, offsetY = H / 2;
+  hierarchy.descendants().forEach(d => {
+    const tmp = d.x; d.x = d.y + offsetX; d.y = tmp + offsetY;
+  });
+
+  // 边
+  root.append('g').selectAll('path.tree-link')
+    .data(hierarchy.links()).enter()
+    .append('path')
+    .attr('class', 'tree-link')
+    .attr('d', d3.linkHorizontal().x(d => d.x).y(d => d.y));
+
+  // 节点
+  const node = root.append('g').selectAll('g.tree-node')
+    .data(hierarchy.descendants()).enter()
+    .append('g')
+    .attr('class', d => 'tree-node ' + (d.data.type || ''))
+    .attr('transform', d => `translate(${d.x},${d.y})`)
+    .style('cursor', d => d.data.raw ? 'pointer' : 'default')
+    .on('click', (ev, d) => { if (d.data.raw) showDetail({ raw: d.data.raw, label: d.data.name, type: 'vuln' }); });
+
+  node.each(function(d) {
+    const txt = truncate(d.data.name, 26);
+    const w = Math.max(60, txt.length * 7 + 16);
+    const h = 26;
+    d3.select(this).append('rect')
+      .attr('x', -w/2).attr('y', -h/2).attr('width', w).attr('height', h);
+    d3.select(this).append('text')
+      .attr('text-anchor', 'middle').text(txt);
+  });
+}
+
+// =================================================================
+// 🎯 辐射图：以漏洞为中心的同心圆（漏洞→SKILL→功能点）
+// =================================================================
+function renderRadial() {
+  const svg = d3.select('#radialSvg');
+  svg.selectAll('*').remove();
+  const host = document.getElementById('radialPane');
+  const W = host.clientWidth, H = host.clientHeight;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  const root = svg.append('g').attr('class', 'zoom-root')
+    .attr('transform', `translate(${W/2},${H/2})`);
+  currentRoot = root; currentSvgSel = svg;
+
+  const zoom = d3.zoom().scaleExtent([0.3, 3]).on('zoom', ev => {
+    root.attr('transform', ev.transform);
+  });
+  svg.call(zoom);
+  currentZoom = zoom;
+
+  // 收集
+  const vulns = allFrames.filter(f => f.kind === 'harm_validated' && f.conclusion === 'vulnerable');
+  if (!vulns.length) {
+    svg.append('text').attr('x', W/2).attr('y', H/2).attr('text-anchor', 'middle')
+      .attr('fill', '#9e9e9e').text('该剧本未命中漏洞，辐射图无内容');
+    return;
+  }
+
+  const R1 = Math.min(W, H) * 0.18;
+  const R2 = Math.min(W, H) * 0.32;
+  const R3 = Math.min(W, H) * 0.45;
+
+  // 中心：漏洞类型聚合
+  const vulnTypes = {};
+  vulns.forEach(v => {
+    const t = v.vuln_type || 'unknown';
+    vulnTypes[t] = (vulnTypes[t] || 0) + 1;
+  });
+  const types = Object.entries(vulnTypes);
+
+  // 中心节点
+  root.append('circle').attr('r', 30).attr('class', 'node-circle c-vuln vuln');
+  root.append('text').attr('text-anchor','middle').attr('dy', 4)
+    .attr('class','node-label bold').attr('fill','#fff')
+    .text(`${vulns.length} 漏洞`);
+
+  // 第一圈：漏洞类型
+  const angle = 2 * Math.PI / Math.max(1, types.length);
+  const linkG = root.append('g'), nodeG = root.append('g');
+  types.forEach(([t, cnt], i) => {
+    const a = i * angle - Math.PI / 2;
+    const x = R1 * Math.cos(a), y = R1 * Math.sin(a);
+    linkG.append('line').attr('class','link fail')
+      .attr('x1',0).attr('y1',0).attr('x2',x).attr('y2',y);
+    const g = nodeG.append('g').attr('transform', `translate(${x},${y})`)
+      .style('cursor','pointer')
+      .on('click', () => {
+        const sample = vulns.find(v => (v.vuln_type || 'unknown') === t);
+        if (sample) showDetail({ raw: sample, label: t, type: 'vuln', isVuln: true });
+      });
+    g.append('circle').attr('class','node-circle c-vuln').attr('r', 8 + Math.min(12, cnt * 2));
+    g.append('text').attr('class','node-label bold')
+      .attr('y', -(8 + Math.min(12, cnt * 2)) - 5)
+      .attr('text-anchor','middle')
+      .text(`${truncate(t, 16)} (${cnt})`);
+
+    // 第二圈：相关 SKILL
+    const relatedSkills = {};
+    vulns.filter(v => (v.vuln_type || 'unknown') === t).forEach(v => {
+      if (v.skill_used) relatedSkills[v.skill_used] = (relatedSkills[v.skill_used] || 0) + 1;
+    });
+    const skills = Object.entries(relatedSkills);
+    const sAngleStep = angle / Math.max(1, skills.length + 1);
+    skills.forEach(([sk, c], j) => {
+      const sa = a - angle/2 + (j+1) * sAngleStep;
+      const sx = R2 * Math.cos(sa), sy = R2 * Math.sin(sa);
+      linkG.append('line').attr('class','link')
+        .attr('x1',x).attr('y1',y).attr('x2',sx).attr('y2',sy);
+      const sg = nodeG.append('g').attr('transform', `translate(${sx},${sy})`);
+      sg.append('circle').attr('class','node-circle c-skill').attr('r', 6 + Math.min(8, c));
+      sg.append('text').attr('class','node-label')
+        .attr('y', -(6 + Math.min(8, c)) - 4).attr('text-anchor','middle')
+        .text(truncate(sk, 14));
+
+      // 第三圈：feature
+      const relatedFeats = new Set();
+      vulns.filter(v => (v.vuln_type || 'unknown') === t && v.skill_used === sk)
+        .forEach(v => relatedFeats.add(v.feature_name || v.feature_id || '(全局)'));
+      const feats = [...relatedFeats];
+      const fAngleStep = sAngleStep / Math.max(1, feats.length + 1);
+      feats.forEach((fn, k) => {
+        const fa = sa - sAngleStep/2 + (k+1) * fAngleStep;
+        const fx = R3 * Math.cos(fa), fy = R3 * Math.sin(fa);
+        linkG.append('line').attr('class','link')
+          .attr('x1',sx).attr('y1',sy).attr('x2',fx).attr('y2',fy);
+        const fg = nodeG.append('g').attr('transform', `translate(${fx},${fy})`);
+        fg.append('circle').attr('class','node-circle c-feature').attr('r', 5);
+        fg.append('text').attr('class','node-label')
+          .attr('y', 16).attr('text-anchor','middle')
+          .text(truncate(fn, 12));
+      });
+    });
+  });
+}
+
+// =================================================================
+// 详情抽屉
+// =================================================================
+function showDetail(node) {
+  const drawer = document.getElementById('drawer');
+  document.getElementById('drawerTitle').textContent = node.label || '详情';
+  const f = node.raw || {};
+  const rows = [];
+  if (node.type) rows.push(['类型', node.type]);
+  if (f.feature_name) rows.push(['功能点', f.feature_name]);
+  if (f.skill_used) rows.push(['SKILL', `<code>${escapeHtml(f.skill_used)}</code>`]);
+  if (f.vuln_type) rows.push(['漏洞类型', `<code>${escapeHtml(f.vuln_type)}</code>`]);
+  if (f.target_url) rows.push(['目标', `<code>${escapeHtml(f.target_url)}</code>`]);
+  if (f.severity) rows.push(['严重度', f.severity.toUpperCase()]);
+  if (f.conclusion) rows.push(['结论', f.conclusion]);
+  if (f.timestamp) {
+    rows.push(['时间', new Date(f.timestamp * 1000).toLocaleString()]);
+  }
+  if (f._run_id) rows.push(['Run', `<code>${escapeHtml(f._run_id)}</code>`]);
+
+  const summary = f.llm_summary
+    ? `<div class="field-row"><div class="lbl">LLM 总结：</div><pre>${escapeHtml(f.llm_summary)}</pre></div>`
+    : '';
+  const payload = f.payload
+    ? `<div class="field-row"><div class="lbl">Payload：</div><pre>${escapeHtml(f.payload)}</pre></div>`
+    : '';
+
+  document.getElementById('drawerBody').innerHTML =
+    rows.map(([k,v]) => `<div class="field-row"><span class="lbl">${k}：</span>${v}</div>`).join('')
+    + summary + payload;
+  drawer.classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+}
+
+// =================================================================
+// 缩放控制
+// =================================================================
+function zoomBy(k) {
+  if (!currentZoom || !currentSvgSel) return;
+  currentSvgSel.transition().duration(220).call(currentZoom.scaleBy, k);
+}
+function resetZoom() {
+  if (!currentZoom || !currentSvgSel) return;
+  currentSvgSel.transition().duration(280).call(currentZoom.transform, d3.zoomIdentity);
+}
+function fitView() {
+  if (!currentRoot || !currentSvgSel || !currentZoom) return;
+  try {
+    const bbox = currentRoot.node().getBBox();
+    const host = currentSvgSel.node().getBoundingClientRect();
+    if (bbox.width === 0) return;
+    const scale = Math.min(host.width / (bbox.width + 80), host.height / (bbox.height + 80), 2);
+    const tx = host.width/2 - (bbox.x + bbox.width/2) * scale;
+    const ty = host.height/2 - (bbox.y + bbox.height/2) * scale;
+    currentSvgSel.transition().duration(380).call(
+      currentZoom.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale)
+    );
+  } catch(e) { console.warn(e); }
+}
+
+// =================================================================
+// 一键导出
+// =================================================================
+function toggleExportMenu() {
+  const m = document.getElementById('exportMenu');
+  const btn = document.getElementById('exportBtn');
+  if (m.style.display === 'block') { m.style.display = 'none'; return; }
+  const r = btn.getBoundingClientRect();
+  m.style.top = (r.bottom + 4) + 'px';
+  m.style.left = (r.left) + 'px';
+  m.style.display = 'block';
+  setTimeout(() => {
+    document.addEventListener('click', closeMenuOnce, { once: true });
+  }, 0);
+}
+function closeMenuOnce() {
+  document.getElementById('exportMenu').style.display = 'none';
+}
+
+async function exportAs(fmt) {
+  document.getElementById('exportMenu').style.display = 'none';
+  if (fmt === 'json') return exportJson();
+  const svg = currentSvgSel ? currentSvgSel.node() : null;
+  if (!svg) { toast('当前视图无内容', 'error'); return; }
+
+  // 内联样式 + 序列化
+  const cloned = svg.cloneNode(true);
+  // 把 <body> 中已有的 <style> 内联进 svg 末尾，确保导出独立可看
+  const styleEls = document.querySelectorAll('style');
+  let styleText = '';
+  styleEls.forEach(s => { styleText += s.textContent + '\n'; });
+  const styleNode = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+  styleNode.textContent = styleText;
+  cloned.insertBefore(styleNode, cloned.firstChild);
+  // 保证有 viewBox
+  if (!cloned.getAttribute('viewBox')) {
+    const vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb) cloned.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.width} ${vb.height}`);
+  }
+  cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  cloned.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+  // 强制白底
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  const vb = cloned.getAttribute('viewBox') ? cloned.getAttribute('viewBox').split(/\s+/).map(Number) : [0,0,1200,800];
+  rect.setAttribute('x', vb[0]); rect.setAttribute('y', vb[1]);
+  rect.setAttribute('width', vb[2]); rect.setAttribute('height', vb[3]);
+  rect.setAttribute('fill', '#ffffff');
+  cloned.insertBefore(rect, cloned.firstChild);
+
+  const xml = new XMLSerializer().serializeToString(cloned);
+  const svgBlob = new Blob(['<?xml version="1.0" standalone="no"?>\n' + xml], { type: 'image/svg+xml;charset=utf-8' });
+
+  const filenameBase = `replay_${currentView}_${nowStamp()}`;
+  if (fmt === 'svg') {
+    download(svgBlob, filenameBase + '.svg');
+    toast('✅ SVG 导出成功');
+    return;
+  }
+  // PNG / PDF：先 SVG -> Image -> Canvas
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const scale = 2; // 高清
+    const w = vb[2] * scale, h = vb[3] * scale;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    if (fmt === 'png') {
+      canvas.toBlob(blob => {
+        download(blob, filenameBase + '.png');
+        toast('✅ PNG 导出成功');
+      }, 'image/png');
+    } else if (fmt === 'pdf') {
+      // 直接通过浏览器打印 → 用户保存为 PDF（无外部依赖）
+      const dataUrl = canvas.toDataURL('image/png');
+      const w2 = window.open('', '_blank');
+      w2.document.write(`
+        <html><head><title>${filenameBase}</title>
+        <style>body{margin:0;padding:0;background:#fff;}img{width:100%;display:block;}</style>
+        </head><body><img src="${dataUrl}"
+          onload="setTimeout(()=>window.print(),200)"/></body></html>
+      `);
+      w2.document.close();
+      toast('✅ 已打开打印窗口，保存为 PDF');
+    }
+  };
+  img.onerror = () => { toast('图片渲染失败', 'error'); URL.revokeObjectURL(url); };
+  img.src = url;
+}
+
+function exportJson() {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    runs: [...selectedRunIds],
+    frame_count: allFrames.length,
+    frames: allFrames
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  download(blob, `replay_${nowStamp()}.json`);
+  toast('✅ JSON 导出成功');
+}
+
+function download(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function nowStamp() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+// =================================================================
+// 工具
+// =================================================================
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'})[c]);
+}
+function truncate(s, n) {
+  if (s == null) return '';
+  s = String(s);
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+window.addEventListener('resize', () => { if (allFrames.length) renderCurrent(); });
+loadRuns();
+</script>
+</body>
+</html>

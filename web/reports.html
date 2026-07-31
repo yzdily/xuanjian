@@ -1,0 +1,2577 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" style="background:#ffffff;">
+<head>
+<meta charset="UTF-8">
+<title>报告管理 - 游刃AISec</title>
+<script>
+  (function(){
+    var t = localStorage.getItem('pentest-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.background = t === 'light' ? '#ffffff' : '#1e1e2e';
+  })();
+</script>
+<style>
+  /* 明亮模式全局覆盖 */
+  [data-theme="light"] { background: #ffffff !important; }
+  [data-theme="light"] body { background: #ffffff !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar h1 { color: #1565c0 !important; }
+  [data-theme="light"] .topbar .back-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar .back-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar .reload-btn { background: #ff9800 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .stat { color: #757575 !important; }
+  [data-theme="light"] .topbar .stat b { color: #212121 !important; }
+  [data-theme="light"] .left-pane { background: #f8f9fa !important; border-right-color: #e2e5e9 !important; }
+  [data-theme="light"] .resizer { background: #e2e5e9 !important; }
+  [data-theme="light"] .resizer:hover,
+  [data-theme="light"] .resizer.dragging { background: #1565c0 !important; }
+  [data-theme="light"] .resizer::before { background: #9e9e9e !important; }
+  [data-theme="light"] .search-bar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .search-bar input { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .report-card { border-bottom-color: #f0f1f3 !important; }
+  [data-theme="light"] .report-card:hover { background: #f0f4ff !important; }
+  [data-theme="light"] .report-card.active { background: #e3f2fd !important; border-left-color: #1565c0 !important; }
+  [data-theme="light"] .report-card .target { color: #212121 !important; }
+  [data-theme="light"] .report-card .meta { color: #757575 !important; }
+  [data-theme="light"] .badge.vuln { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .badge.feat { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .badge.size { background: #f5f5f5 !important; color: #757575 !important; }
+  [data-theme="light"] .kind-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .kind-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .kind-btn.proven { color: #2e7d32 !important; border-color: #c8e6c9 !important; }
+  [data-theme="light"] .kind-btn.proven:hover { background: #e8f5e9 !important; }
+  [data-theme="light"] .kind-btn.delete { color: #c62828 !important; }
+  [data-theme="light"] .kind-btn.delete:hover { background: #fce4ec !important; }
+  [data-theme="light"] .kind-btn.active { background: #1565c0 !important; color: #fff !important; border-color: #1565c0 !important; }
+  [data-theme="light"] .kind-btn.tab-btn.active { background: #1565c0 !important; color: #fff !important; border-color: #1565c0 !important; }
+  [data-theme="light"] .right-pane { background: #fff !important; }
+  [data-theme="light"] .right-empty { color: #9e9e9e !important; }
+  [data-theme="light"] .right-empty small { color: #9e9e9e !important; }
+  [data-theme="light"] .preview-header { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .preview-header .title { color: #e65100 !important; }
+  [data-theme="light"] .preview-header .file { color: #9e9e9e !important; }
+  [data-theme="light"] .preview-body { background: #fff !important; }
+  [data-theme="light"] .markdown { color: #212121 !important; }
+  [data-theme="light"] .markdown h1 { color: #1565c0 !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown h2 { color: #1565c0 !important; }
+  [data-theme="light"] .markdown h3 { color: #e65100 !important; }
+  [data-theme="light"] .markdown h4 { color: #7b1fa2 !important; }
+  [data-theme="light"] .markdown p { color: #424242 !important; }
+  [data-theme="light"] .markdown code { background: #f5f5f5 !important; color: #e65100 !important; }
+  [data-theme="light"] .markdown pre { background: #f5f5f5 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown pre code { color: #37474f !important; }
+  [data-theme="light"] .markdown ul,
+  [data-theme="light"] .markdown ol { color: #424242 !important; }
+  [data-theme="light"] .markdown blockquote { border-left-color: #ff9800 !important; color: #e65100 !important; background: #fff8e1 !important; }
+  [data-theme="light"] .markdown th { background: #f8f9fa !important; color: #1565c0 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown td { border-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown hr { border-top-color: #e2e5e9 !important; }
+  [data-theme="light"] .markdown a { color: #1565c0 !important; }
+  [data-theme="light"] .markdown strong { color: #e65100 !important; }
+  [data-theme="light"] textarea#rawEditor { background: #f8f9fa !important; color: #37474f !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .toast { background: #fff !important; color: #212121 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .toast.ok { background: #e8f5e9 !important; color: #2e7d32 !important; border-color: #c8e6c9 !important; }
+  [data-theme="light"] .toast.err { background: #fce4ec !important; color: #c62828 !important; border-color: #ffcdd2 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8ccd0 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-track { background: #f5f5f5 !important; }
+</style>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1e1e2e; color: #cdd6f4; min-height: 100vh; overflow: hidden;
+  }
+  .topbar {
+    background: #181825; border-bottom: 1px solid #313244;
+    padding: 10px 20px; display: flex; align-items: center; gap: 12px;
+  }
+  .topbar h1 { font-size: 15px; color: #89b4fa; font-weight: 600; }
+  .topbar .back-btn {
+    background: #313244; color: #bac2de; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    text-decoration: none;
+  }
+  .topbar .back-btn:hover { background: #45475a; color: #cdd6f4; }
+  .topbar .reload-btn {
+    background: #f9e2af; color: #1e1e2e; border: none;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .topbar .stat { color: #6c7086; font-size: 11px; margin-left: auto; }
+  .topbar .stat b { color: #cdd6f4; }
+
+  .layout { display: flex; height: calc(100vh - 55px); }
+
+  .left-pane {
+    width: 320px; min-width: 240px; max-width: 50%;
+    background: #181825; overflow-y: auto;
+    flex-shrink: 0;
+  }
+  /* 拖拽分隔条：把鼠标放到中间细条上可拖动调整左侧宽度 */
+  .resizer {
+    width: 5px; cursor: col-resize; background: #313244;
+    transition: background .15s; flex-shrink: 0;
+    position: relative;
+  }
+  .resizer:hover, .resizer.dragging { background: #89b4fa; }
+  .resizer::before {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%); width: 1px; height: 24px;
+    background: #6c7086;
+  }
+  .search-bar {
+    padding: 10px 12px; border-bottom: 1px solid #313244;
+    position: sticky; top: 0; background: #181825; z-index: 5;
+  }
+  .search-bar input {
+    width: 100%; padding: 6px 10px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 12px;
+  }
+  .report-card {
+    padding: 7px 10px 7px 12px; border-bottom: 1px solid #2a2a3e;
+    cursor: default; transition: background .1s;
+  }
+  .report-card:hover { background: #1f1f33; }
+  .report-card.active { background: #2a2a4a; border-left: 3px solid #89b4fa; padding-left: 9px; }
+  .report-card .target {
+    font-size: 12px; color: #cdd6f4; font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding-right: 22px; /* 给右上角 checkbox 留位 */
+  }
+  .report-card .meta {
+    font-size: 10px; color: #6c7086; margin-top: 2px;
+    display: flex; gap: 5px; flex-wrap: wrap; align-items: center;
+  }
+  .report-card .badge {
+    display: inline-block; font-size: 9px; padding: 0 5px; border-radius: 3px;
+    line-height: 14px; height: 14px;
+  }
+  .badge.vuln { background: #4a1e25; color: #f38ba8; font-weight: 600; }
+  .badge.feat { background: #1f3a5f; color: #89b4fa; }
+  .badge.size { background: #2a2a3e; color: #9399b2; }
+  .report-card .actions {
+    margin-top: 5px; display: flex; gap: 4px; flex-wrap: nowrap;
+  }
+  .kind-btn {
+    padding: 3px 8px; background: #313244; color: #bac2de;
+    border: 1px solid #45475a; border-radius: 4px; cursor: pointer; font-size: 10px;
+    line-height: 1.3; flex: 1; text-align: center; min-width: 0;
+  }
+  /* 卡片中的图标按钮（emoji-only），不要被 flex 等分撑大 */
+  .report-card .actions .kind-btn.icon-only { flex: 0 0 auto; padding: 3px 6px; }
+  .kind-btn:hover { background: #45475a; color: #cdd6f4; }
+  .kind-btn.proven { color: #a6e3a1; border-color: #2a5a3e; }
+  .kind-btn.proven:hover { background: #1e3a2e; }
+  .kind-btn.delete { color: #f38ba8; }
+  .kind-btn.delete:hover { background: #4a1e25; }
+  .kind-btn:disabled { color: #6c7086; cursor: not-allowed; background: #181825; }
+  .kind-btn.active { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+
+  /* Tab 按钮（顶部 3 个视图切换） */
+  .kind-btn.tab-btn.active {
+    background: #89b4fa; color: #1e1e2e; border-color: #89b4fa;
+  }
+  /* 保存按钮：未变更时禁用为灰色，变更时亮绿色（清爽不压抑） */
+  .save-btn {
+    background: #d6f5d2 !important; color: #2e7d32 !important;
+    border: 1px solid #b6e2b1 !important;
+  }
+  .save-btn:hover:not(:disabled) {
+    background: #c4eebd !important; color: #1b5e20 !important;
+    border-color: #93cf8d !important;
+  }
+  .save-btn:disabled {
+    background: #313244 !important; color: #6c7086 !important;
+    border-color: #45475a !important; cursor: not-allowed;
+  }
+  [data-theme="light"] .save-btn {
+    background: #e8f5e9 !important; color: #2e7d32 !important;
+    border-color: #c8e6c9 !important;
+  }
+  [data-theme="light"] .save-btn:hover:not(:disabled) {
+    background: #c8e6c9 !important; color: #1b5e20 !important;
+    border-color: #a5d6a7 !important;
+  }
+  [data-theme="light"] .save-btn:disabled {
+    background: #f0f1f3 !important; color: #9e9e9e !important;
+    border-color: #e2e5e9 !important;
+  }
+  /* dirty 标记 */
+  .preview-header .title.dirty::after {
+    content: ' •'; color: #f9e2af; font-weight: 700;
+  }
+
+  .right-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .right-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #6c7086; font-size: 13px; flex-direction: column; gap: 12px;
+  }
+  .preview-header {
+    padding: 12px 20px; border-bottom: 1px solid #313244;
+    background: #181825; display: flex; align-items: center; gap: 12px;
+  }
+  .preview-header .title { font-size: 14px; color: #f9e2af; font-weight: 600; }
+  .preview-header .file { font-size: 11px; color: #6c7086; font-family: monospace; }
+  .preview-header .right-actions { margin-left: auto; display: flex; gap: 8px; }
+
+  .preview-body {
+    flex: 1; overflow: auto; padding: 24px 32px;
+    background: #1a1a2e;
+  }
+  .markdown {
+    color: #cdd6f4; line-height: 1.7; max-width: 980px; margin: 0 auto;
+  }
+  .markdown h1 { color: #89b4fa; font-size: 26px; padding-bottom: 12px; border-bottom: 1px solid #313244; margin-bottom: 20px; }
+  .markdown h2 { color: #89b4fa; font-size: 20px; margin: 22px 0 12px; }
+  .markdown h3 { color: #f9e2af; font-size: 16px; margin: 16px 0 10px; }
+  .markdown h4 { color: #cba6f7; font-size: 14px; margin: 12px 0 6px; }
+  .markdown p { margin: 8px 0; color: #bac2de; font-size: 14px; }
+  .markdown code {
+    background: #11111b; color: #f9e2af; padding: 2px 7px;
+    border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 12px;
+  }
+  .markdown pre {
+    background: #11111b; padding: 12px 16px; border-radius: 6px;
+    overflow-x: auto; border: 1px solid #313244; margin: 10px 0;
+  }
+  .markdown pre code { padding: 0; background: transparent; font-size: 12px; line-height: 1.5; }
+  .markdown ul, .markdown ol { padding-left: 30px; color: #bac2de; margin: 8px 0; font-size: 14px; }
+  .markdown li { margin: 4px 0; }
+  .markdown blockquote {
+    border-left: 4px solid #f9e2af; padding: 8px 16px; color: #f9e2af;
+    background: #2a2418; margin: 10px 0; border-radius: 0 4px 4px 0;
+  }
+  .markdown table { border-collapse: collapse; margin: 12px 0; font-size: 13px; width: 100%; }
+  .markdown th, .markdown td { border: 1px solid #313244; padding: 8px 12px; text-align: left; }
+  .markdown th { background: #181825; color: #89b4fa; }
+  .markdown hr { border: none; border-top: 1px solid #313244; margin: 20px 0; }
+  .markdown a { color: #89b4fa; }
+  .markdown strong { color: #f9e2af; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    padding: 10px 18px; border-radius: 8px; font-size: 13px;
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 999;
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .toast.ok { background: #1e3a2e; color: #a6e3a1; border-color: #2a5a3e; }
+  .toast.err { background: #3a1e25; color: #f38ba8; border-color: #5a2a35; }
+
+  /* Topbar tabs */
+  .topbar-tabs { display: flex; gap: 4px; margin-left: 12px; }
+  .topbar-tab {
+    padding: 5px 12px; background: #313244; color: #bac2de;
+    border: 1px solid #45475a; border-radius: 6px; cursor: pointer; font-size: 11px;
+  }
+  .topbar-tab:hover { background: #45475a; color: #cdd6f4; }
+  .topbar-tab.active { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; font-weight: 600; }
+
+  /* 明亮模式 topbar tabs */
+  [data-theme="light"] .topbar-tab { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar-tab:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar-tab.active { background: #1565c0 !important; color: #fff !important; border-color: #1565c0 !important; }
+
+  /* 自定义模版面板 */
+  .template-panel { flex-direction: column; }
+  .tpl-header { margin-bottom: 14px; }
+
+  /* ★ 当前生效模版状态条 */
+  .tpl-active-banner {
+    margin-top: 10px; padding: 10px 14px;
+    background: linear-gradient(90deg, rgba(166,227,161,0.08), rgba(137,180,250,0.06));
+    border: 1px solid #2a5a3e; border-left: 3px solid #a6e3a1;
+    border-radius: 8px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .tpl-active-banner.empty {
+    background: rgba(108,112,134,0.08);
+    border-color: #45475a; border-left-color: #6c7086;
+  }
+  .tpl-active-icon { font-size: 18px; }
+  .tpl-active-text { flex: 1; min-width: 0; }
+  .tpl-active-label { font-size: 10px; color: #6c7086; letter-spacing: .5px; }
+  .tpl-active-name {
+    font-size: 13px; color: #a6e3a1; font-weight: 600; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tpl-active-banner.empty .tpl-active-name { color: #6c7086; font-weight: 400; }
+
+  /* ★ 工作原理说明 */
+  .tpl-help {
+    margin-top: 8px; padding: 10px 14px;
+    background: #181825; border: 1px solid #313244; border-radius: 8px;
+    font-size: 12px; color: #bac2de;
+  }
+  .tpl-help-title { color: #89b4fa; font-weight: 600; margin-bottom: 4px; }
+  .tpl-help-body { color: #bac2de; line-height: 1.6; }
+
+  /* ★ 紧凑上传行（单行双卡片） */
+  .tpl-upload-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .upload-dropzone-inner {
+    display: flex; align-items: center; gap: 12px;
+    text-align: left;
+  }
+
+  .tpl-upload-area { margin-bottom: 14px; }
+  .upload-dropzone {
+    border: 2px dashed #45475a; border-radius: 10px; padding: 14px 18px;
+    cursor: pointer; transition: all .15s;
+  }
+  .upload-dropzone:hover { border-color: #89b4fa; background: #1f1f33; }
+  .upload-dropzone.dragover { border-color: #a6e3a1; background: #1e3a2e; transform: scale(1.01); }
+  .upload-form { margin-top: 10px; padding: 10px; background: #181825; border-radius: 8px; border: 1px solid #313244; }
+
+  /* ★ 内置示例区 */
+  .tpl-builtin-area {
+    margin-bottom: 14px; padding: 12px 14px;
+    background: #181825; border: 1px solid #313244; border-radius: 8px;
+  }
+  .tpl-builtin-title {
+    display: flex; align-items: center; font-size: 12px; color: #f9e2af;
+    font-weight: 600; margin-bottom: 8px;
+  }
+  .tpl-builtin-title button { margin-left: auto; }
+  .tpl-builtin-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;
+  }
+  .tpl-builtin-card {
+    padding: 10px 12px; background: #1e1e2e; border: 1px solid #313244; border-radius: 8px;
+    cursor: pointer; transition: all .15s;
+  }
+  .tpl-builtin-card:hover {
+    border-color: #f9e2af; transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(249,226,175,0.08);
+  }
+  .tpl-builtin-card .b-icon { font-size: 22px; }
+  .tpl-builtin-card .b-name { font-size: 12px; color: #cdd6f4; font-weight: 600; margin-top: 4px; }
+  .tpl-builtin-card .b-desc { font-size: 11px; color: #6c7086; margin-top: 3px; line-height: 1.4; }
+  .tpl-builtin-card .b-clone { font-size: 10px; color: #f9e2af; margin-top: 6px; }
+
+  /* ★ 主区：左列表 + 右 sticky 预览 */
+  .tpl-main {
+    display: grid; grid-template-columns: 1fr 360px; gap: 14px;
+    align-items: start;
+  }
+  @media (max-width: 1100px) {
+    .tpl-main { grid-template-columns: 1fr; }
+    .tpl-side { position: static !important; }
+  }
+  .tpl-list-col { min-width: 0; }
+  .tpl-list-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 2px 8px;
+  }
+  .tpl-list { margin-top: 0; }
+
+  /* ★ 空状态卡片（双主题适配） */
+  .tpl-empty-card {
+    text-align: center; color: #6c7086; padding: 30px 20px; font-size: 13px;
+    background: #181825; border: 1px dashed #313244; border-radius: 8px;
+  }
+  .tpl-empty-hl { color: #f9e2af; }
+  .tpl-card {
+    display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+    background: #181825; border: 1px solid #313244; border-radius: 8px;
+    margin-bottom: 6px; transition: all .15s;
+  }
+  .tpl-card.active {
+    border-color: #a6e3a1; box-shadow: inset 3px 0 0 #a6e3a1;
+    background: #1c2a25;
+  }
+  .tpl-card:hover { border-color: #45475a; background: #1f1f33; }
+  .tpl-card.active:hover { border-color: #a6e3a1; }
+  .tpl-card .tpl-icon { font-size: 22px; flex-shrink: 0; }
+  .tpl-card .tpl-info { flex: 1; min-width: 0; }
+  .tpl-card .tpl-name {
+    font-size: 13px; color: #cdd6f4; font-weight: 500;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tpl-card .tpl-meta { font-size: 11px; color: #6c7086; margin-top: 3px; }
+  .tpl-card .tpl-actions { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .tpl-card .tpl-status {
+    padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+  }
+  .tpl-status.on { background: #1e3a2e; color: #a6e3a1; border: 1px solid #2a5a3e; }
+  .tpl-status.off { background: #2a2a3e; color: #6c7086; border: 1px solid #45475a; }
+
+  /* ★ sticky 右侧预览 */
+  .tpl-side {
+    position: sticky; top: 12px;
+    background: #181825; border: 1px solid #313244; border-radius: 10px;
+    max-height: calc(100vh - 80px); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .tpl-side-empty {
+    padding: 60px 20px; text-align: center;
+  }
+  .tpl-side-content { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .tpl-side-header {
+    padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid #313244; background: #11111b;
+    flex-shrink: 0;
+  }
+  #previewContent {
+    margin: 0; padding: 14px 16px; flex: 1; overflow: auto;
+    font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    background: transparent; color: #bac2de;
+  }
+
+  /* 明亮模式模版面板 */
+  [data-theme="light"] .tpl-active-banner {
+    background: linear-gradient(90deg, rgba(46,125,50,0.08), rgba(21,101,192,0.06)) !important;
+    border-color: #c8e6c9 !important; border-left-color: #2e7d32 !important;
+  }
+  [data-theme="light"] .tpl-active-banner.empty {
+    background: #f5f5f5 !important; border-color: #e2e5e9 !important; border-left-color: #9e9e9e !important;
+  }
+  [data-theme="light"] .tpl-active-name { color: #2e7d32 !important; }
+  [data-theme="light"] .tpl-active-banner.empty .tpl-active-name { color: #757575 !important; }
+  [data-theme="light"] .tpl-active-label { color: #757575 !important; }
+  [data-theme="light"] .tpl-help { background: #f8f9fa !important; border-color: #e2e5e9 !important; color: #424242 !important; }
+  [data-theme="light"] .tpl-help-title { color: #1565c0 !important; }
+  [data-theme="light"] .tpl-help-body { color: #424242 !important; }
+  [data-theme="light"] .tpl-builtin-area { background: #fffaf0 !important; border-color: #ffe0b2 !important; }
+  [data-theme="light"] .tpl-builtin-title { color: #e65100 !important; }
+  [data-theme="light"] .tpl-builtin-card { background: #ffffff !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-builtin-card:hover { border-color: #ff9800 !important; }
+  [data-theme="light"] .tpl-builtin-card .b-name { color: #212121 !important; }
+  [data-theme="light"] .tpl-builtin-card .b-desc { color: #757575 !important; }
+  [data-theme="light"] .tpl-builtin-card .b-clone { color: #e65100 !important; }
+  [data-theme="light"] .upload-dropzone { border-color: #e2e5e9 !important; }
+  [data-theme="light"] .upload-dropzone:hover { border-color: #1565c0 !important; background: #f0f4ff !important; }
+  [data-theme="light"] .upload-dropzone.dragover { border-color: #2e7d32 !important; background: #e8f5e9 !important; }
+  [data-theme="light"] .upload-form { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-card { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-empty-card {
+    background: #f8f9fa !important; border-color: #e2e5e9 !important; color: #757575 !important;
+  }
+  [data-theme="light"] .tpl-empty-hl { color: #e65100 !important; }
+  [data-theme="light"] .tpl-card.active { background: #e8f5e9 !important; border-color: #2e7d32 !important; box-shadow: inset 3px 0 0 #2e7d32 !important; }
+  [data-theme="light"] .tpl-card:hover { background: #f0f4ff !important; border-color: #c8ccd0 !important; }
+  [data-theme="light"] .tpl-card .tpl-name { color: #212121 !important; }
+  [data-theme="light"] .tpl-card .tpl-meta { color: #757575 !important; }
+  [data-theme="light"] .tpl-status.on { background: #e8f5e9 !important; color: #2e7d32 !important; border-color: #c8e6c9 !important; }
+  [data-theme="light"] .tpl-status.off { background: #f5f5f5 !important; color: #9e9e9e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-side { background: #ffffff !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-side-header { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] #previewContent { color: #37474f !important; }
+
+  /* ============================================================
+     上传区辅助文案 / 在线新建卡片（默认 dark；light 主题在下方覆盖）
+     ============================================================ */
+  .upload-tip { font-size: 13px; color: #bac2de; }
+  .upload-tip-sub { font-size: 11px; color: #6c7086; margin-top: 4px; }
+  .upload-tip-mini { font-size: 10px; color: #6c7086; margin-top: 2px; }
+  .tpl-create-card {
+    flex: 0 0 200px; border: 2px dashed #45475a; border-radius: 12px;
+    padding: 30px 16px; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s, transform .2s;
+    background: transparent;
+  }
+  .tpl-create-card:hover { border-color: #a6e3a1; background: #1e3a2e; transform: translateY(-1px); }
+  .upload-form-name,
+  .upload-form-desc {
+    padding: 6px 10px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 12px;
+  }
+  .upload-form-filename { color: #f9e2af; font-size: 12px; }
+  #previewTitle { color: #f9e2af; }
+  #templateList .tpl-loading { text-align: center; color: #6c7086; padding: 40px; font-size: 13px; }
+
+  [data-theme="light"] .upload-tip { color: #424242 !important; }
+  [data-theme="light"] .upload-tip-sub,
+  [data-theme="light"] .upload-tip-mini { color: #9e9e9e !important; }
+  [data-theme="light"] .tpl-create-card { border-color: #e2e5e9 !important; }
+  [data-theme="light"] .tpl-create-card:hover { border-color: #2e7d32 !important; background: #e8f5e9 !important; }
+  [data-theme="light"] .upload-form-name,
+  [data-theme="light"] .upload-form-desc {
+    background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important;
+  }
+  [data-theme="light"] .upload-form-name:focus,
+  [data-theme="light"] .upload-form-desc:focus { border-color: #1565c0 !important; outline: none; }
+  [data-theme="light"] .upload-form-filename { color: #e65100 !important; }
+  [data-theme="light"] #previewTitle { color: #e65100 !important; }
+
+  /* ============================================================
+     Markdown 模版编辑器弹窗
+     ============================================================ */
+  .md-editor-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 1000; align-items: center; justify-content: center;
+  }
+  .md-editor-panel {
+    width: min(1200px, 95vw); height: 88vh;
+    background: #1e1e2e; border: 1px solid #45475a; border-radius: 12px;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+  .md-editor-header {
+    padding: 14px 20px; background: #181825; border-bottom: 1px solid #313244;
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  .md-editor-header .md-editor-icon { font-size: 20px; }
+  .md-editor-title { color: #89b4fa; margin: 0; font-size: 15px; font-weight: 600; }
+  .md-editor-dirty { display: none; color: #f9e2af; font-size: 12px; }
+  .md-editor-shortcut { margin-left: auto; color: #6c7086; font-size: 11px; }
+  .md-editor-meta {
+    padding: 12px 20px; background: #181825; border-bottom: 1px solid #313244;
+    display: flex; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
+  }
+  .md-editor-input {
+    padding: 8px 12px; background: #1e1e2e; color: #cdd6f4;
+    border: 1px solid #313244; border-radius: 6px; font-size: 13px;
+    outline: none; transition: border-color .15s;
+  }
+  .md-editor-input:focus { border-color: #89b4fa; }
+  .md-editor-input.name { flex: 1; min-width: 200px; }
+  .md-editor-input.desc { flex: 2; min-width: 240px; }
+  .md-editor-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .md-editor-pane {
+    flex: 1; display: flex; flex-direction: column; min-width: 0;
+  }
+  .md-editor-pane.left { border-right: 1px solid #313244; }
+  .md-editor-pane-title {
+    padding: 8px 14px; background: #11111b; color: #6c7086;
+    font-size: 11px; font-family: monospace; flex-shrink: 0;
+  }
+  .md-editor-textarea {
+    flex: 1; width: 100%; box-sizing: border-box;
+    background: #11111b; color: #cdd6f4;
+    border: none; padding: 18px 24px;
+    font-family: 'SF Mono','Monaco', monospace; font-size: 13px;
+    line-height: 1.6; resize: none; outline: none; tab-size: 2;
+  }
+  .md-editor-preview {
+    flex: 1; overflow: auto; padding: 20px 28px; background: #1a1a2e;
+  }
+  .md-editor-footer {
+    padding: 12px 20px; background: #181825; border-top: 1px solid #313244;
+    display: flex; gap: 10px; align-items: center; flex-shrink: 0;
+  }
+  .md-editor-stat { color: #6c7086; font-size: 11px; }
+  .md-editor-spacer { margin-left: auto; }
+  .md-editor-save-btn {
+    background: #a6e3a1; color: #1e1e2e; border: 1px solid #2a5a3e;
+    font-weight: 600;
+  }
+  .md-editor-save-btn:hover { background: #b5e8b0; }
+
+  /* ---- 明亮主题覆盖 ---- */
+  [data-theme="light"] .md-editor-overlay { background: rgba(20, 30, 60, 0.35) !important; }
+  [data-theme="light"] .md-editor-panel {
+    background: #ffffff !important; border-color: #e2e5e9 !important;
+    box-shadow: 0 20px 60px rgba(21, 101, 192, 0.18) !important;
+  }
+  [data-theme="light"] .md-editor-header {
+    background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important;
+  }
+  [data-theme="light"] .md-editor-title { color: #1565c0 !important; }
+  [data-theme="light"] .md-editor-dirty { color: #e65100 !important; }
+  [data-theme="light"] .md-editor-shortcut { color: #9e9e9e !important; }
+  [data-theme="light"] .md-editor-meta {
+    background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important;
+  }
+  [data-theme="light"] .md-editor-input {
+    background: #ffffff !important; color: #1a1a2e !important;
+    border-color: #e2e5e9 !important;
+  }
+  [data-theme="light"] .md-editor-input::placeholder { color: #9e9e9e !important; }
+  [data-theme="light"] .md-editor-input:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .md-editor-pane.left { border-right-color: #e2e5e9 !important; }
+  [data-theme="light"] .md-editor-pane-title {
+    background: #f0f1f3 !important; color: #757575 !important;
+  }
+  [data-theme="light"] .md-editor-textarea {
+    background: #fafbfc !important; color: #212121 !important;
+  }
+  [data-theme="light"] .md-editor-preview {
+    background: #ffffff !important;
+  }
+  [data-theme="light"] .md-editor-footer {
+    background: #f8f9fa !important; border-top-color: #e2e5e9 !important;
+  }
+  [data-theme="light"] .md-editor-stat { color: #9e9e9e !important; }
+  [data-theme="light"] .md-editor-save-btn {
+    background: #1565c0 !important; color: #ffffff !important;
+    border-color: #0d47a1 !important;
+  }
+  [data-theme="light"] .md-editor-save-btn:hover { background: #1976d2 !important; }
+
+  /* ============================================================
+     ★ 新增：可视化仪表盘 / 高级筛选条 / 卡片信息升级 / 对比视图
+     ============================================================ */
+  .dashboard {
+    padding: 14px 18px; background: #181825; border-bottom: 1px solid #313244;
+    display: grid; grid-template-columns: repeat(4, 1fr) 1.4fr 1.2fr; gap: 12px;
+    align-items: stretch;
+  }
+  .kpi-card {
+    background: #1e1e2e; border: 1px solid #313244; border-radius: 10px;
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 4px;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .kpi-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+  .kpi-icon { font-size: 18px; line-height: 1; }
+  .kpi-label { font-size: 10px; color: #6c7086; letter-spacing: .5px; text-transform: uppercase; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: #cdd6f4; line-height: 1.2; }
+  .kpi-value.vuln { color: #f38ba8; }
+  .kpi-value.proven { color: #a6e3a1; }
+  .kpi-value.full { color: #89b4fa; }
+  .kpi-sub { font-size: 10px; color: #6c7086; }
+
+  .chart-card {
+    background: #1e1e2e; border: 1px solid #313244; border-radius: 10px;
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+    min-width: 0;
+  }
+  .chart-title { font-size: 11px; color: #6c7086; letter-spacing: .3px; }
+  .chart-body { flex: 1; min-height: 56px; display: flex; align-items: center; }
+
+  /* TOP-N 漏洞条形图 */
+  .bar-row { display: flex; align-items: center; gap: 8px; font-size: 11px; margin: 2px 0; }
+  .bar-label {
+    width: 92px; color: #bac2de; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-family: monospace; font-size: 10px;
+  }
+  .bar-track { flex: 1; height: 8px; background: #11111b; border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, #f38ba8, #fab387); border-radius: 4px; transition: width .3s; }
+  .bar-value { color: #f38ba8; font-weight: 600; min-width: 24px; text-align: right; font-size: 11px; }
+
+  /* 7 日 sparkline */
+  .spark-wrap { width: 100%; height: 56px; }
+  .spark-wrap svg { width: 100%; height: 100%; display: block; }
+
+  /* 高级筛选 / 批量条 */
+  .filter-bar {
+    padding: 6px 10px; border-bottom: 1px solid #313244;
+    display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
+    background: #181825; overflow-x: auto; scrollbar-width: thin;
+  }
+  .filter-bar::-webkit-scrollbar { height: 4px; }
+  .filter-bar::-webkit-scrollbar-thumb { background: #313244; border-radius: 2px; }
+  .filter-chip {
+    padding: 2px 8px; background: #313244; color: #bac2de;
+    border: 1px solid #45475a; border-radius: 10px; font-size: 10px;
+    cursor: pointer; transition: all .15s; user-select: none;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .filter-chip:hover { background: #45475a; color: #cdd6f4; }
+  .filter-chip.active { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; font-weight: 600; }
+  .filter-chip.danger.active { background: #f38ba8; color: #1e1e2e; border-color: #f38ba8; }
+
+  .batch-bar {
+    display: none; padding: 8px 12px; background: #1e3a5f; border-bottom: 1px solid #2a5a8a;
+    align-items: center; gap: 8px; font-size: 12px; color: #cdd6f4;
+    flex-wrap: wrap;
+  }
+  .batch-bar.show { display: flex; }
+  .batch-count { font-weight: 600; color: #89b4fa; }
+  .batch-spacer { flex: 1; }
+
+  .checkbox-mini {
+    width: 14px; height: 14px; cursor: pointer; accent-color: #89b4fa;
+    flex-shrink: 0;
+  }
+
+  /* 卡片增强 */
+  .report-card { position: relative; }
+  .card-checkbox {
+    position: absolute; top: 9px; right: 9px;
+    opacity: 0; transition: opacity .15s;
+  }
+  .left-pane.batch-mode .card-checkbox,
+  .report-card:hover .card-checkbox { opacity: 1; }
+  .report-card.selected { background: #2a3a5e !important; }
+  [data-theme="light"] .report-card.selected { background: #d6e7ff !important; }
+  /* size 徽章直接 inline 在 meta 行里，不再独占行 */
+  .sz {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 0 5px; border-radius: 3px; background: #2a2a3e;
+    font-size: 9px; line-height: 14px; height: 14px;
+    color: #9399b2;
+  }
+  .sz.full { color: #89b4fa; background: #1f3a5f; }
+  .sz.proven { color: #a6e3a1; background: #1e3a2e; }
+
+  /* 下载下拉菜单 */
+  .dl-wrap { position: relative; display: inline-block; }
+  .dl-menu {
+    display: none; position: absolute; right: 0; top: 100%;
+    background: #1e1e2e; border: 1px solid #45475a; border-radius: 6px;
+    min-width: 180px; padding: 4px; margin-top: 4px; z-index: 100;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+  }
+  .dl-menu.show { display: block; }
+  .dl-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-radius: 4px; cursor: pointer; color: #cdd6f4; font-size: 12px;
+  }
+  .dl-item:hover { background: #313244; color: #89b4fa; }
+
+  /* 对比视图 */
+  .diff-pane { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .diff-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .diff-col + .diff-col { border-left: 1px solid #313244; }
+  .diff-col-header {
+    padding: 8px 14px; background: #181825; border-bottom: 1px solid #313244;
+    font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+  .diff-col-header.full { color: #89b4fa; }
+  .diff-col-header.proven { color: #a6e3a1; }
+  .diff-col-body {
+    flex: 1; overflow: auto; padding: 14px 18px;
+    font-family: 'SF Mono','Monaco',monospace; font-size: 12px; line-height: 1.55;
+    background: #1a1a2e;
+  }
+  .diff-line { padding: 1px 6px; white-space: pre-wrap; word-break: break-word; border-radius: 2px; }
+  .diff-line.add { background: rgba(166,227,161,0.18); border-left: 2px solid #a6e3a1; padding-left: 6px; }
+  .diff-line.del { background: rgba(243,139,168,0.18); border-left: 2px solid #f38ba8; padding-left: 6px; }
+  .diff-line.same { color: #6c7086; }
+  .diff-empty { padding: 30px; text-align: center; color: #6c7086; font-size: 13px; }
+
+  .reading-meta {
+    font-size: 10px; color: #6c7086; padding: 0 0 0 8px;
+    display: inline-block;
+  }
+
+  /* ---- 浅色主题覆盖 ---- */
+  [data-theme="light"] .dashboard { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .kpi-card,
+  [data-theme="light"] .chart-card { background: #ffffff !important; border-color: #e2e5e9 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  [data-theme="light"] .kpi-label,
+  [data-theme="light"] .kpi-sub,
+  [data-theme="light"] .chart-title { color: #757575 !important; }
+  [data-theme="light"] .kpi-value { color: #212121 !important; }
+  [data-theme="light"] .kpi-value.vuln { color: #c62828 !important; }
+  [data-theme="light"] .kpi-value.proven { color: #2e7d32 !important; }
+  [data-theme="light"] .kpi-value.full { color: #1565c0 !important; }
+  [data-theme="light"] .bar-track { background: #f0f1f3 !important; }
+  [data-theme="light"] .bar-label { color: #424242 !important; }
+  [data-theme="light"] .bar-value { color: #c62828 !important; }
+  [data-theme="light"] .filter-bar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .filter-chip { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .filter-chip:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .filter-chip.active { background: #1565c0 !important; color: #fff !important; border-color: #1565c0 !important; }
+  [data-theme="light"] .filter-chip.danger.active { background: #c62828 !important; color: #fff !important; border-color: #c62828 !important; }
+  [data-theme="light"] .batch-bar { background: #e3f2fd !important; border-bottom-color: #bbdefb !important; color: #1565c0 !important; }
+  [data-theme="light"] .batch-count { color: #0d47a1 !important; }
+  [data-theme="light"] .report-card .sz { background: #f0f1f3 !important; color: #757575 !important; }
+  [data-theme="light"] .report-card .sz.full { color: #1565c0 !important; background: #e3f2fd !important; }
+  [data-theme="light"] .report-card .sz.proven { color: #2e7d32 !important; background: #e8f5e9 !important; }
+  [data-theme="light"] .dl-menu { background: #ffffff !important; border-color: #e2e5e9 !important; box-shadow: 0 6px 18px rgba(21,101,192,0.15) !important; }
+  [data-theme="light"] .dl-item { color: #212121 !important; }
+  [data-theme="light"] .dl-item:hover { background: #f0f4ff !important; color: #1565c0 !important; }
+  [data-theme="light"] .diff-col + .diff-col { border-left-color: #e2e5e9 !important; }
+  [data-theme="light"] .diff-col-header { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .diff-col-header.full { color: #1565c0 !important; }
+  [data-theme="light"] .diff-col-header.proven { color: #2e7d32 !important; }
+  [data-theme="light"] .diff-col-body { background: #ffffff !important; color: #424242 !important; }
+  [data-theme="light"] .diff-line.add { background: rgba(46,125,50,0.10) !important; border-left-color: #2e7d32 !important; }
+  [data-theme="light"] .diff-line.del { background: rgba(198,40,40,0.10) !important; border-left-color: #c62828 !important; }
+  [data-theme="light"] .diff-line.same { color: #9e9e9e !important; }
+  [data-theme="light"] .diff-empty { color: #9e9e9e !important; }
+  [data-theme="light"] .reading-meta { color: #9e9e9e !important; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+<a href="/" class="back-btn">← 返回</a>
+      <h1>📑 报告管理</h1>
+  <div class="topbar-tabs">
+    <button class="topbar-tab active" id="tabReports" onclick="switchMainTab('reports')">📄 报告列表</button>
+    <button class="topbar-tab" id="tabTemplates" onclick="switchMainTab('templates')">📐 自定义模版</button>
+  </div>
+  <button class="reload-btn" onclick="loadList()">🔄 刷新</button>
+  <span class="stat" id="topStat">加载中...</span>
+</div>
+
+<!-- ★ 可视化仪表盘（仅报告列表Tab可见） -->
+<div class="dashboard" id="dashboard" style="display:none;">
+  <div class="kpi-card">
+    <div class="kpi-icon">📁</div>
+    <div class="kpi-label">任务总数</div>
+    <div class="kpi-value" id="kpiTasks">-</div>
+    <div class="kpi-sub" id="kpiTasksSub">-</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon">🩸</div>
+    <div class="kpi-label">漏洞总数</div>
+    <div class="kpi-value vuln" id="kpiVulns">-</div>
+    <div class="kpi-sub" id="kpiVulnsSub">-</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon">📄</div>
+    <div class="kpi-label">完整报告</div>
+    <div class="kpi-value full" id="kpiFull">-</div>
+    <div class="kpi-sub" id="kpiFullSub">-</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-icon">✅</div>
+    <div class="kpi-label">已证明报告</div>
+    <div class="kpi-value proven" id="kpiProven">-</div>
+    <div class="kpi-sub" id="kpiProvenSub">-</div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">🔥 漏洞数 TOP-5（按目标）</div>
+    <div class="chart-body" id="chartTop5">—</div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">📈 近 7 天报告生成趋势</div>
+    <div class="chart-body"><div class="spark-wrap" id="chartSpark">—</div></div>
+  </div>
+</div>
+
+<div class="layout" id="panelReports">
+  <div class="left-pane" id="leftPane">
+    <div class="search-bar">
+      <input id="searchInput" placeholder="搜索目标 / task_id..." oninput="renderList()" />
+    </div>
+    <!-- ★ 高级筛选条 -->
+    <div class="filter-bar">
+      <span class="filter-chip active" data-filter="all" onclick="setFilter('all')">全部</span>
+      <span class="filter-chip danger" data-filter="vuln" onclick="setFilter('vuln')">🩸 有漏洞</span>
+      <span class="filter-chip" data-filter="clean" onclick="setFilter('clean')">✨ 无漏洞</span>
+      <span class="filter-chip" data-filter="recent" onclick="setFilter('recent')">⏱ 近 7 天</span>
+      <span class="filter-chip" data-filter="both" onclick="setFilter('both')">⚡ 双报告</span>
+      <span style="flex:1"></span>
+      <span class="filter-chip" id="batchToggle" onclick="toggleBatchMode()">☑️ 多选</span>
+    </div>
+    <!-- ★ 批量操作条 -->
+    <div class="batch-bar" id="batchBar">
+      <input type="checkbox" class="checkbox-mini" id="selectAll" onchange="toggleSelectAll(this.checked)" />
+      <span>已选 <span class="batch-count" id="batchCount">0</span> 个任务</span>
+      <span class="batch-spacer"></span>
+      <button class="kind-btn" onclick="batchExportZip()">📦 打包下载</button>
+      <button class="kind-btn delete" onclick="batchDelete()">🗑️ 批量删除</button>
+      <button class="kind-btn" onclick="toggleBatchMode()">✕</button>
+    </div>
+    <div id="reportList"></div>
+  </div>
+  <div class="resizer" id="resizer" title="拖拽调整宽度"></div>
+
+  <div class="right-pane">
+    <div id="rightEmpty" class="right-empty">
+      ← 从左侧选择一份报告查看<br/>
+      <small style="color:#6c7086;font-size:11px;">每个任务有两份：<b style="color:#bac2de;">完整报告</b>（所有测试结果）和 <b style="color:#a6e3a1;">已证明漏洞报告</b>（含 PoC，剔除误报）</small>
+    </div>
+
+    <div id="rightView" style="display:none; height:100%; flex-direction:column;">
+      <div class="preview-header">
+        <div style="min-width:0;">
+          <div class="title" id="curTitle">-</div>
+          <div class="file" id="curFile"></div>
+          <span class="reading-meta" id="readingMeta"></span>
+        </div>
+        <div class="right-actions">
+          <button class="kind-btn tab-btn active" id="tabRendered" onclick="switchView('rendered')">📄 渲染</button>
+          <button class="kind-btn tab-btn" id="tabRaw" onclick="switchView('raw')">📝 原文</button>
+          <button class="kind-btn tab-btn" id="tabPreview" onclick="switchView('preview')">👁️ 预览</button>
+          <button class="kind-btn tab-btn" id="tabDiff" onclick="switchView('diff')" title="对比完整报告与已证明报告">🔀 对比</button>
+
+          <button class="kind-btn save-btn" id="saveBtn" onclick="saveCurrent()" disabled>💾 保存</button>
+          <span class="dl-wrap">
+            <button class="kind-btn" id="dlBtn" onclick="toggleDlMenu(event)">⬇️ 下载 ▾</button>
+            <div class="dl-menu" id="dlMenu">
+              <div class="dl-item" onclick="downloadAs('md')">📝 Markdown (.md)</div>
+              <div class="dl-item" onclick="downloadAs('html')">🌐 HTML 独立页 (.html)</div>
+              <div class="dl-item" onclick="downloadAs('pdf')">📕 PDF（打印另存）</div>
+              <div class="dl-item" onclick="downloadAs('txt')">📄 纯文本 (.txt)</div>
+            </div>
+          </span>
+          <button class="kind-btn delete" onclick="deleteCurrentSingle()">🗑️ 删除此报告</button>
+        </div>
+      </div>
+
+      <div class="preview-body" id="paneRendered">
+        <div class="markdown" id="markdownBody"></div>
+      </div>
+      <div class="preview-body" id="paneRaw" style="display:none; padding:0;">
+        <textarea id="rawEditor" oninput="onRawInput()" spellcheck="false"
+          style="width:100%; height:100%; box-sizing:border-box; background:#11111b;
+          color:#cdd6f4; border:none; padding:18px 24px;
+          font-family:'SF Mono','Monaco',monospace; font-size:13px; line-height:1.55;
+          resize:none; outline:none; tab-size:2;"></textarea>
+      </div>
+      <div class="preview-body" id="panePreview" style="display:none;">
+        <div class="markdown" id="previewBody"></div>
+      </div>
+      <!-- ★ 对比视图 -->
+      <div class="diff-pane" id="paneDiff" style="display:none;">
+        <div class="diff-col">
+          <div class="diff-col-header full">📄 完整报告</div>
+          <div class="diff-col-body" id="diffLeft"><div class="diff-empty">加载中...</div></div>
+        </div>
+        <div class="diff-col">
+          <div class="diff-col-header proven">✅ 已证明报告</div>
+          <div class="diff-col-body" id="diffRight"><div class="diff-empty">加载中...</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自定义模版管理面板 -->
+<div class="layout template-panel" id="panelTemplates" style="display:none;">
+  <div style="flex:1; padding:18px 24px; overflow-y:auto;">
+
+    <!-- 头部：标题 + 当前生效模版状态条 -->
+    <div class="tpl-header">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <h2 style="color:#89b4fa; margin:0; font-size:18px;">📐 自定义报告模版</h2>
+        <button class="kind-btn" id="tplHelpBtn" onclick="toggleTplHelp()" style="font-size:11px;">❓ 工作原理</button>
+      </div>
+
+      <!-- 当前生效模版 banner -->
+      <div class="tpl-active-banner" id="tplActiveBanner">
+        <span class="tpl-active-icon">📌</span>
+        <div class="tpl-active-text">
+          <div class="tpl-active-label">当前生效模版</div>
+          <div class="tpl-active-name" id="tplActiveName">— 未设置（系统将使用默认报告格式）—</div>
+        </div>
+        <button class="kind-btn" id="tplActiveTestBtn" onclick="testActiveTemplate()" style="display:none;">🧪 测试效果</button>
+      </div>
+
+      <!-- 工作原理（默认折叠） -->
+      <div class="tpl-help" id="tplHelp" style="display:none;">
+        <div class="tpl-help-title">📖 模版是怎么影响报告生成的？</div>
+        <div class="tpl-help-body">
+          <ol style="margin:6px 0 0 18px; padding:0; line-height:1.7;">
+            <li>你上传 / 编写的模版会被系统解析为<b>纯文本</b>（PDF / docx 自动提取文字）；</li>
+            <li>生成报告时，<b>当前生效</b>的那一份模版会被作为「格式参照」喂给 LLM；</li>
+            <li>LLM 会模仿你的<b>章节结构、字段名称、写作风格</b>，再填入真实漏洞数据；</li>
+            <li>同时只有<b>一份</b>模版生效（点击其它模版的"启用"会自动切换）；</li>
+            <li>不启用任何模版时，使用系统默认报告格式。</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <!-- 紧凑上传区：双卡片合并成一行 -->
+    <div class="tpl-upload-area" id="uploadArea">
+      <div class="tpl-upload-row">
+        <div class="upload-dropzone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+          <div class="upload-dropzone-inner">
+            <span style="font-size:22px;">📁</span>
+            <div>
+              <div class="upload-tip">上传模版文件</div>
+              <div class="upload-tip-sub">PDF / Word / MD / TXT / HTML · 最大 20MB · 拖拽到此处亦可</div>
+            </div>
+          </div>
+        </div>
+        <div class="tpl-create-card" onclick="openMdEditor()">
+          <div class="upload-dropzone-inner">
+            <span style="font-size:22px;">✍️</span>
+            <div>
+              <div class="upload-tip">在线新建</div>
+              <div class="upload-tip-sub">直接编写 Markdown，实时预览</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="fileInput" style="display:none;" accept=".pdf,.docx,.md,.txt,.html" onchange="handleFileSelect(event)" />
+      <div class="upload-form" id="uploadForm" style="display:none;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <span id="selectedFileName" class="upload-form-filename"></span>
+          <input id="tplName" class="upload-form-name" placeholder="模版名称（可选）" style="flex:1; min-width:150px;" />
+          <input id="tplDesc" class="upload-form-desc" placeholder="模版描述（可选）" style="flex:2; min-width:200px;" />
+          <button class="kind-btn md-editor-save-btn" onclick="uploadTemplate()">⬆️ 上传</button>
+          <button class="kind-btn" onclick="cancelUpload()">✗ 取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 内置示例（仅当用户列表为空时显式展示，列表非空时折叠在工具栏） -->
+    <div class="tpl-builtin-area" id="tplBuiltinArea" style="display:none;">
+      <div class="tpl-builtin-title">
+        <span>✨ 内置示例模版（一键克隆后修改）</span>
+        <button class="kind-btn" onclick="toggleBuiltinArea()" id="tplBuiltinToggleBtn" style="font-size:11px;">收起</button>
+      </div>
+      <div class="tpl-builtin-grid" id="tplBuiltinGrid">
+        <div style="color:#6c7086; font-size:12px;">加载中...</div>
+      </div>
+    </div>
+
+    <!-- 主区：左侧列表 + 右侧 sticky 预览 -->
+    <div class="tpl-main">
+      <div class="tpl-list-col">
+        <div class="tpl-list-toolbar">
+          <span style="font-size:12px; color:#6c7086;" id="tplCountLabel">共 0 个模版</span>
+          <span class="md-editor-spacer"></span>
+          <button class="kind-btn" onclick="openBuiltinAreaIfHidden()" style="font-size:11px;">✨ 内置示例</button>
+        </div>
+        <div class="tpl-list" id="templateList">
+          <div class="tpl-loading">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 右侧粘性预览面板 -->
+      <div class="tpl-side" id="tplSide">
+        <div class="tpl-side-empty" id="tplSideEmpty">
+          <div style="font-size:32px; opacity:.5;">👁️</div>
+          <div style="margin-top:6px; font-size:12px; color:#6c7086;">点击左侧 <b>预览</b> 查看模版内容</div>
+        </div>
+        <div class="tpl-side-content" id="tplSideContent" style="display:none;">
+          <div class="tpl-side-header">
+            <h3 id="previewTitle" style="margin:0; font-size:13px;">模版预览</h3>
+            <span class="md-editor-spacer"></span>
+            <button class="kind-btn" onclick="closePreview()" title="关闭预览">✗</button>
+          </div>
+          <pre id="previewContent"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 修改模版元信息（名字 + 描述）弹窗 -->
+<div id="metaEditOverlay" class="md-editor-overlay">
+  <div class="md-editor-panel" style="width:min(560px,90vw); height:auto;">
+    <div class="md-editor-header">
+      <span class="md-editor-icon">✏️</span>
+      <h3 class="md-editor-title">修改模版信息</h3>
+      <span class="md-editor-shortcut">Esc 关闭</span>
+    </div>
+    <div style="padding:18px 22px; display:flex; flex-direction:column; gap:12px;">
+      <label style="display:flex; flex-direction:column; gap:4px;">
+        <span style="font-size:12px; color:#6c7086;">模版名称</span>
+        <input id="metaEditName" class="md-editor-input" />
+      </label>
+      <label style="display:flex; flex-direction:column; gap:4px;">
+        <span style="font-size:12px; color:#6c7086;">模版描述</span>
+        <input id="metaEditDesc" class="md-editor-input" />
+      </label>
+    </div>
+    <div class="md-editor-footer">
+      <span class="md-editor-spacer"></span>
+      <button class="kind-btn" onclick="closeMetaEdit()">✗ 取消</button>
+      <button class="kind-btn md-editor-save-btn" onclick="saveMetaEdit()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 测试渲染（mock 漏洞数据 → LLM 生成示例报告）弹窗 -->
+<div id="testRenderOverlay" class="md-editor-overlay">
+  <div class="md-editor-panel" style="width:min(960px,92vw); height:82vh;">
+    <div class="md-editor-header">
+      <span class="md-editor-icon">🧪</span>
+      <h3 class="md-editor-title" id="testRenderTitle">测试模版效果</h3>
+      <span id="testRenderStat" style="color:#6c7086; font-size:11px;"></span>
+      <span class="md-editor-shortcut">Esc 关闭</span>
+    </div>
+    <div style="padding:10px 18px; font-size:12px; color:#6c7086; border-bottom:1px solid #313244;">
+      使用 3 条 mock 漏洞数据 + 当前模版 → 调用 LLM 生成一段示例报告，便于你验证模版结构是否符合预期。
+    </div>
+    <div id="testRenderBody" class="markdown" style="flex:1; overflow:auto; padding:20px 28px; background:#11111b;">
+      <div style="text-align:center; color:#6c7086; padding:60px 0;">⏳ 生成中，请稍候...</div>
+    </div>
+    <div class="md-editor-footer">
+      <span class="md-editor-spacer"></span>
+      <button class="kind-btn" onclick="closeTestRender()">✗ 关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Markdown 模版编辑器（在线新建 / 编辑） -->
+<div id="mdEditorOverlay" class="md-editor-overlay">
+  <div class="md-editor-panel">
+    <!-- 头部 -->
+    <div class="md-editor-header">
+      <span class="md-editor-icon">📝</span>
+      <h3 id="mdEditorTitle" class="md-editor-title">新建 Markdown 模版</h3>
+      <span id="mdEditorDirtyMark" class="md-editor-dirty">·  未保存</span>
+      <span class="md-editor-shortcut">⌘/Ctrl + S 保存 · Esc 关闭</span>
+    </div>
+    <!-- 元信息 -->
+    <div class="md-editor-meta">
+      <input id="mdTplName" class="md-editor-input name" placeholder="模版名称（必填）" oninput="setMdEditorDirty()" />
+      <input id="mdTplDesc" class="md-editor-input desc" placeholder="模版描述（可选）" oninput="setMdEditorDirty()" />
+    </div>
+    <!-- 双栏：编辑器 + 实时预览 -->
+    <div class="md-editor-body">
+      <div class="md-editor-pane left">
+        <div class="md-editor-pane-title">📝 Markdown 源码</div>
+        <textarea id="mdTplContent" class="md-editor-textarea" oninput="onMdEditorInput()" onkeydown="onMdEditorKeydown(event)" spellcheck="false"></textarea>
+      </div>
+      <div class="md-editor-pane">
+        <div class="md-editor-pane-title">👁️ 实时预览</div>
+        <div id="mdTplPreview" class="markdown md-editor-preview"></div>
+      </div>
+    </div>
+    <!-- 底部 -->
+    <div class="md-editor-footer">
+      <span id="mdEditorStat" class="md-editor-stat">0 字符 · 0 行</span>
+      <span class="md-editor-spacer"></span>
+      <button class="kind-btn" onclick="closeMdEditor()">✗ 取消</button>
+      <button class="kind-btn md-editor-save-btn" id="mdSaveBtn" onclick="saveMdTemplate()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>if(typeof marked==='undefined')document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.4/marked.min.js"><\/script>')</script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>if(typeof DOMPurify==='undefined')document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"><\/script>')</script>
+<script>
+let allReports = [];
+let currentTaskId = null;
+let currentKind = null;
+let currentContent = '';       // 当前从后端读到的原始内容（保存基准）
+let currentDirty = false;      // 是否有未保存的编辑
+let currentView = 'rendered';  // rendered / raw / preview
+
+function toast(msg, kind) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + (kind || '');
+  setTimeout(() => { el.className = 'toast ' + (kind || ''); }, 2400);
+}
+
+async function loadList() {
+  try {
+    const resp = await fetch('/api/reports/list');
+    const data = await resp.json();
+    allReports = data.reports || [];
+    let totalProven = 0, totalRealtime = 0, totalVulns = 0;
+    for (const r of allReports) {
+      if (r.files.proven) totalProven++;
+      if (r.files.realtime) totalRealtime++;
+      totalVulns += r.vuln_count || 0;
+    }
+    document.getElementById('topStat').innerHTML =
+      `共 <b>${data.count}</b> 个任务 · 完整报告 <b>${totalRealtime}</b> · 已证明报告 <b>${totalProven}</b> · 累计 <b>${totalVulns}</b> 个漏洞`;
+    // ★ 驱动仪表盘
+    renderDashboard(data.count || 0, totalRealtime, totalProven, totalVulns);
+    // ★ 仪表盘仅在「报告列表」Tab 可见
+    document.getElementById('dashboard').style.display =
+      (currentMainTab === 'reports') ? 'grid' : 'none';
+    renderList();
+  } catch (e) { toast('加载失败: ' + e.message, 'err'); }
+}
+
+function renderList() {
+  const kw = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  const now = Date.now() / 1000;
+  const SEVEN_DAYS = 7 * 86400;
+  const list = allReports.filter(r => {
+    // 关键词
+    if (kw && !(r.task_id.toLowerCase().includes(kw) || (r.target || '').toLowerCase().includes(kw))) return false;
+    // 类别 chip
+    if (currentFilter === 'vuln' && !(r.vuln_count > 0)) return false;
+    if (currentFilter === 'clean' && (r.vuln_count > 0)) return false;
+    if (currentFilter === 'recent' && (now - (r.latest_mtime || 0) > SEVEN_DAYS)) return false;
+    if (currentFilter === 'both' && !(r.files.realtime && r.files.proven)) return false;
+    return true;
+  });
+  // 顶部统计同步刷新（筛选后的可见数量）
+  try {
+    const filterMeta = document.getElementById('topStat');
+    if (filterMeta && currentFilter !== 'all') {
+      const baseHtml = filterMeta.dataset.base || filterMeta.innerHTML;
+      filterMeta.dataset.base = baseHtml;
+      filterMeta.innerHTML = baseHtml + ` <span style="color:#fab387;">· 当前筛选 <b>${list.length}</b> 个</span>`;
+    } else if (filterMeta && filterMeta.dataset.base) {
+      filterMeta.innerHTML = filterMeta.dataset.base;
+    }
+  } catch (e) {}
+  // 计算最大漏洞数用于密度条比例
+  let maxVulns = 0;
+  for (const r of allReports) maxVulns = Math.max(maxVulns, r.vuln_count || 0);
+
+  const el = document.getElementById('reportList');
+  if (list.length === 0) {
+    el.innerHTML = '<div style="padding:30px;text-align:center;color:#6c7086;font-size:12px;">暂无符合条件的报告</div>';
+    syncBatchBar();
+    return;
+  }
+  let html = '';
+  for (const r of list) {
+    const isCur = (currentTaskId === r.task_id);
+    const isSel = selectedTasks.has(r.task_id);
+    const date = new Date(r.latest_mtime * 1000);
+    const dateStr = date.toLocaleString();
+    const hasRT = !!r.files.realtime;
+    const hasPV = !!r.files.proven;
+    const target = r.target || '(未知目标)';
+    const rtKB = hasRT ? (r.files.realtime.size / 1024).toFixed(1) : 0;
+    const pvKB = hasPV ? (r.files.proven.size / 1024).toFixed(1) : 0;
+    const vulnPct = maxVulns > 0 ? Math.round(((r.vuln_count || 0) / maxVulns) * 100) : 0;
+    const vulnBadge = r.vuln_count
+      ? `<span class="badge vuln">🩸 ${r.vuln_count} 个漏洞</span>` : '';
+    const featBadge = r.features_count
+      ? `<span class="badge feat">${r.features_count} 功能点</span>` : '';
+    // size 徽章直接拼到 meta 行尾，不再独占一行
+    const sizePills = `${hasRT ? `<span class="sz full" title="完整报告 ${rtKB}K">📄 ${rtKB}K</span>` : ''}${hasPV ? `<span class="sz proven" title="已证明报告 ${pvKB}K">🩸 ${pvKB}K</span>` : ''}`;
+    html += `<div class="report-card ${isCur ? 'active' : ''} ${isSel ? 'selected' : ''}">
+      <input type="checkbox" class="checkbox-mini card-checkbox" ${isSel ? 'checked' : ''}
+        onclick="event.stopPropagation()" onchange="toggleTaskSelect('${escapeAttr(r.task_id)}', this.checked)" />
+      <div class="target" title="${escapeAttr(target)}">${escapeHtml(target)}</div>
+      <div class="meta">
+        <span style="font-family:monospace;">${escapeHtml(r.task_id)}</span>
+        <span>${dateStr}</span>
+        ${featBadge}${vulnBadge}${sizePills}
+      </div>
+      <div class="actions">
+        <button class="kind-btn ${isCur && currentKind==='realtime' ? 'active' : ''}" ${hasRT ? '' : 'disabled'}
+          onclick="viewReport('${escapeAttr(r.task_id)}', 'realtime')" title="查看完整报告">📄 完整</button>
+        <button class="kind-btn proven ${isCur && currentKind==='proven' ? 'active' : ''}" ${hasPV ? '' : 'disabled'}
+          onclick="viewReport('${escapeAttr(r.task_id)}', 'proven')" title="查看已证明漏洞报告">🩸 已证明</button>
+        <button class="kind-btn icon-only" ${(hasRT && hasPV) ? '' : 'disabled'}
+          onclick="viewDiff('${escapeAttr(r.task_id)}')" title="左右对比两份报告">🔀</button>
+        <button class="kind-btn delete icon-only" onclick="deleteAllReports('${escapeAttr(r.task_id)}')" title="删除该任务的所有报告">🗑️</button>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html;
+  syncBatchBar();
+}
+
+async function viewReport(taskId, kind) {
+  // 切换报告前若有未保存修改，提示
+  if (currentDirty) {
+    if (!confirm('当前报告有未保存的修改，确定切换并丢弃修改？')) return;
+  }
+  currentTaskId = taskId;
+  currentKind = kind;
+  currentContent = '';
+  currentDirty = false;
+  document.getElementById('rightEmpty').style.display = 'none';
+  document.getElementById('rightView').style.display = 'flex';
+  const titleEl = document.getElementById('curTitle');
+  titleEl.textContent = (kind === 'proven' ? '🩸 已证明漏洞报告' : '📄 完整报告');
+  titleEl.classList.remove('dirty');
+  document.getElementById('curFile').textContent = `data/reports/${taskId}-${kind}-report.md`;
+  document.getElementById('markdownBody').innerHTML = '<p style="color:#6c7086;">加载中...</p>';
+  document.getElementById('rawEditor').value = '';
+  document.getElementById('previewBody').innerHTML = '';
+  document.getElementById('saveBtn').disabled = true;
+  // 清空阅读 meta
+  const rm = document.getElementById('readingMeta'); if (rm) rm.textContent = '';
+  // 默认回到渲染视图
+  switchView('rendered');
+  renderList();
+  try {
+    const resp = await fetch(`/api/reports/content?task_id=${encodeURIComponent(taskId)}&kind=${kind}`);
+    const data = await resp.json();
+    if (data.status !== 'ok') {
+      document.getElementById('markdownBody').innerHTML = '<p style="color:#f38ba8;">✗ ' + escapeHtml(data.message || '加载失败') + '</p>';
+      return;
+    }
+    currentContent = data.content || '';
+    document.getElementById('markdownBody').innerHTML = safeRenderMd(currentContent);
+    document.getElementById('rawEditor').value = currentContent;
+    // ★ 阅读元数据（字数/阅读时长）
+    updateReadingMeta(currentContent);
+    // 滚动到顶部
+    document.getElementById('paneRendered').scrollTop = 0;
+  } catch (e) {
+    document.getElementById('markdownBody').innerHTML = '<p style="color:#f38ba8;">✗ ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+// ---- Tab 切换：渲染 / 原文 / 预览 / 对比 ----
+function switchView(view) {
+  currentView = view;
+  // 按钮高亮
+  document.getElementById('tabRendered').classList.toggle('active', view === 'rendered');
+  document.getElementById('tabRaw').classList.toggle('active', view === 'raw');
+  document.getElementById('tabPreview').classList.toggle('active', view === 'preview');
+  const tabDiff = document.getElementById('tabDiff');
+  if (tabDiff) tabDiff.classList.toggle('active', view === 'diff');
+  // 面板显隐
+  document.getElementById('paneRendered').style.display = (view === 'rendered' ? '' : 'none');
+  document.getElementById('paneRaw').style.display = (view === 'raw' ? '' : 'none');
+  document.getElementById('panePreview').style.display = (view === 'preview' ? '' : 'none');
+  const paneDiff = document.getElementById('paneDiff');
+  if (paneDiff) paneDiff.style.display = (view === 'diff' ? 'flex' : 'none');
+  // 进入预览：用 textarea 的最新值重新渲染
+  if (view === 'preview') {
+    const md = document.getElementById('rawEditor').value || '';
+    try {
+      document.getElementById('previewBody').innerHTML = safeRenderMd(md);
+    } catch (e) {
+      document.getElementById('previewBody').innerHTML = '<pre style="color:#f38ba8;">预览渲染失败: ' + escapeHtml(e.message) + '</pre>';
+    }
+    document.getElementById('panePreview').scrollTop = 0;
+  } else if (view === 'raw') {
+    setTimeout(() => document.getElementById('rawEditor').focus(), 30);
+  } else if (view === 'diff') {
+    if (currentTaskId) renderDiff(currentTaskId);
+  }
+}
+
+// ---- 编辑器输入：标记 dirty + 启用保存按钮 ----
+function onRawInput() {
+  const cur = document.getElementById('rawEditor').value;
+  const dirty = (cur !== currentContent);
+  if (dirty !== currentDirty) {
+    currentDirty = dirty;
+    document.getElementById('saveBtn').disabled = !dirty;
+    document.getElementById('curTitle').classList.toggle('dirty', dirty);
+  }
+}
+
+// ---- 保存当前报告 ----
+async function saveCurrent() {
+  if (!currentTaskId || !currentKind) return;
+  const content = document.getElementById('rawEditor').value;
+  if (!confirm(`确认保存？\n文件: ${currentTaskId}-${currentKind}-report.md\n\n原文件会自动备份到 .bak.<时间戳>`)) return;
+  try {
+    const resp = await fetch('/api/reports/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_id: currentTaskId, kind: currentKind, content})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已保存 (${data.size} 字节${data.backup ? '，备份: ' + data.backup : ''})`, 'ok');
+      currentContent = content;
+      currentDirty = false;
+      document.getElementById('saveBtn').disabled = true;
+      document.getElementById('curTitle').classList.remove('dirty');
+      // 同步刷新渲染视图
+      document.getElementById('markdownBody').innerHTML = safeRenderMd(content);
+      await loadList();
+    } else {
+      toast('✗ ' + (data.message || '保存失败'), 'err');
+    }
+  } catch (e) {
+    toast('✗ 保存失败: ' + e.message, 'err');
+  }
+}
+
+// ---- 离开页面前提示未保存 ----
+window.addEventListener('beforeunload', (e) => {
+  if (currentDirty) {
+    e.preventDefault();
+    e.returnValue = '当前有未保存的报告修改';
+    return e.returnValue;
+  }
+});
+
+// ---- Ctrl/Cmd+S 快捷键保存 ----
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    if (currentTaskId && currentDirty) saveCurrent();
+  }
+});
+
+function downloadCurrent() {
+  if (!currentTaskId || !currentKind) return;
+  window.location.href = `/api/reports/download?task_id=${encodeURIComponent(currentTaskId)}&kind=${currentKind}`;
+}
+
+async function deleteCurrentSingle() {
+  if (!currentTaskId || !currentKind) return;
+  const kindName = currentKind === 'proven' ? '已证明漏洞报告' : '完整报告';
+  if (!confirm(`确定删除「${kindName}」？\nfile: ${currentTaskId}-${currentKind}-report.md`)) return;
+  try {
+    const resp = await fetch('/api/reports/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_id: currentTaskId, kind: currentKind}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已删除 ${data.deleted.length} 个文件`, 'ok');
+      currentTaskId = null; currentKind = null;
+      document.getElementById('rightEmpty').style.display = 'flex';
+      document.getElementById('rightView').style.display = 'none';
+      await loadList();
+    } else { toast('✗ ' + (data.message || '失败'), 'err'); }
+  } catch (e) { toast('失败: ' + e.message, 'err'); }
+}
+
+async function deleteAllReports(taskId) {
+  if (!confirm(`确定删除该任务的所有报告（完整 + 已证明漏洞）？\ntask_id: ${taskId}`)) return;
+  try {
+    const resp = await fetch('/api/reports/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_id: taskId}),
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已删除 ${data.deleted.length} 个文件`, 'ok');
+      if (currentTaskId === taskId) {
+        currentTaskId = null; currentKind = null;
+        document.getElementById('rightEmpty').style.display = 'flex';
+        document.getElementById('rightView').style.display = 'none';
+      }
+      await loadList();
+    } else { toast('✗ ' + (data.message || '失败'), 'err'); }
+  } catch (e) { toast('失败: ' + e.message, 'err'); }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// 用于 onclick="...('${escapeAttr(x)}')" 这种场景。
+// HTML 属性上下文会先解码实体，之后进入 JS 字符串字面量必须合法：
+//   1) HTML层：转义 & < > 及外层双引号 " 以免干扰属性本体；
+//   2) JS层：转义内层字符串包裹的 ' 和反斜杠 \\，避免提前闭合或被当转义序列。
+// 顺序必须先 \\ 后 ' （否则 \' 的反斜杠会被二次转义）。
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
+// ★ 安全渲染 Markdown：先 marked 解析，再 DOMPurify 清洗，
+//   防止报告中记录的 XSS payload（<script>/<img onerror>/javascript: 等）在本前端执行。
+function safeRenderMd(text) {
+  const src = text == null ? '' : String(text);
+  // marked 未加载时退化为纯文本（保留换行），不渲染原始 HTML
+  if (typeof marked === 'undefined') {
+    return escapeHtml(src).replace(/\n/g, '<br>');
+  }
+  let raw;
+  try {
+    raw = marked.parse(src, {breaks: true});
+  } catch (e) {
+    return '<pre style="color:#f38ba8;">渲染失败: ' + escapeHtml(e.message) + '</pre>';
+  }
+  // DOMPurify 未加载时，强制纯文本（绝不直接 innerHTML 未净化的 HTML）
+  if (typeof DOMPurify === 'undefined') {
+    console.warn('[security] DOMPurify 未加载，已降级为纯文本渲染');
+    return escapeHtml(src).replace(/\n/g, '<br>');
+  }
+  return DOMPurify.sanitize(raw, {
+    ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','hr','ul','ol','li',
+                   'strong','em','code','pre','blockquote','a','table','thead',
+                   'tbody','tr','th','td','span','div','img','del','sup','sub'],
+    ALLOWED_ATTR: ['href','target','class','style','src','alt','colspan','rowspan','title'],
+    ALLOW_DATA_ATTR: false,
+    // 关闭潜在危险协议
+    FORBID_TAGS: ['script','style','iframe','object','embed','form','input','button','link','meta','base'],
+    FORBID_ATTR: ['onerror','onload','onclick','onmouseover','onfocus','onblur','onchange','onsubmit'],
+  });
+}
+
+// ==================== 主 Tab 切换 ====================
+let currentMainTab = 'reports';
+
+function switchMainTab(tab) {
+  currentMainTab = tab;
+  document.getElementById('tabReports').classList.toggle('active', tab === 'reports');
+  document.getElementById('tabTemplates').classList.toggle('active', tab === 'templates');
+  document.getElementById('panelReports').style.display = (tab === 'reports' ? 'flex' : 'none');
+  document.getElementById('panelTemplates').style.display = (tab === 'templates' ? 'flex' : 'none');
+  // 仪表盘只在「报告列表」可见
+  const dash = document.getElementById('dashboard');
+  if (dash) dash.style.display = (tab === 'reports' ? 'grid' : 'none');
+  if (tab === 'templates') {
+    loadTemplates();
+    initTplDragDrop();
+  }
+}
+
+// ==================== 自定义模版管理 ====================
+let allTemplates = [];
+let selectedFile = null;
+let currentPreviewId = null;     // ★ 当前在右侧预览的模版 id
+let metaEditingId = null;        // ★ 元信息弹窗正在编辑的 id
+
+async function loadTemplates() {
+  try {
+    const resp = await fetch('/api/templates/list');
+    const data = await resp.json();
+    allTemplates = data.templates || [];
+    renderTemplates();
+    renderActiveBanner();
+    // 列表为空时自动展开内置示例
+    const builtinArea = document.getElementById('tplBuiltinArea');
+    if (allTemplates.length === 0) {
+      if (builtinArea && builtinArea.style.display === 'none') {
+        builtinArea.style.display = 'block';
+        loadBuiltinTemplates();
+      }
+    }
+  } catch (e) { toast('加载模版列表失败: ' + e.message, 'err'); }
+}
+
+// ★ 友好显示：把"提取 X 字符"换算为"完整度 / 上限"百分比
+function fmtTextLen(n) {
+  const LIMIT = 100000;
+  const pct = Math.min(100, Math.round((n / LIMIT) * 100));
+  if (n < 200) return `<span style="color:#f9e2af;" title="内容过短，可能影响 LLM 理解">📊 内容偏少（${n} 字符）</span>`;
+  if (n >= LIMIT) return `<span style="color:#f38ba8;" title="已达上限，超出会被截断">📊 已达上限（${n}/${LIMIT}）</span>`;
+  return `<span title="模版会被作为格式参照喂给 LLM">📊 ${pct}% 长度（${n} 字符）</span>`;
+}
+
+// ★ 顶部 banner：当前生效模版
+function renderActiveBanner() {
+  const banner = document.getElementById('tplActiveBanner');
+  const nameEl = document.getElementById('tplActiveName');
+  const testBtn = document.getElementById('tplActiveTestBtn');
+  if (!banner) return;
+  const active = allTemplates.find(t => t.enabled);
+  if (active) {
+    banner.classList.remove('empty');
+    nameEl.innerHTML = `${escapeHtml(active.name)} <span style="font-size:10px; color:#6c7086; font-weight:400;">· ${escapeHtml(active.ext || '')}</span>`;
+    testBtn.style.display = 'inline-flex';
+    testBtn.dataset.id = active.id;
+  } else {
+    banner.classList.add('empty');
+    nameEl.textContent = '— 未设置（系统将使用默认报告格式）—';
+    testBtn.style.display = 'none';
+  }
+}
+
+function toggleTplHelp() {
+  const el = document.getElementById('tplHelp');
+  el.style.display = (el.style.display === 'none') ? 'block' : 'none';
+}
+
+function renderTemplates() {
+  const el = document.getElementById('templateList');
+  const countLabel = document.getElementById('tplCountLabel');
+  if (countLabel) countLabel.textContent = `共 ${allTemplates.length} 个模版`;
+
+  if (allTemplates.length === 0) {
+    el.innerHTML = `<div class="tpl-empty-card">
+      <div style="font-size:28px; opacity:.5;">📭</div>
+      <div style="margin-top:6px;">还没有任何模版</div>
+      <div style="font-size:11px; margin-top:4px;">从上方上传文件、在线新建，或克隆下方<b class="tpl-empty-hl">内置示例</b></div>
+    </div>`;
+    return;
+  }
+  const extIcons = {'.pdf': '📕', '.doc': '📘', '.docx': '📘', '.md': '📝', '.txt': '📄', '.html': '🌐'};
+  const EDITABLE_EXTS = new Set(['.md', '.txt', '.html']);
+  let html = '';
+  for (const t of allTemplates) {
+    const ext = (t.ext || '').toLowerCase();
+    const icon = extIcons[ext] || '📄';
+    const sizeKB = ((t.size || 0) / 1024).toFixed(1);
+    const ts = (t.updated_at || t.uploaded_at || 0) * 1000;
+    const date = ts ? new Date(ts).toLocaleString() : '-';
+    const textLen = t.text_length || 0;
+    const statusClass = t.enabled ? 'on' : 'off';
+    const statusText = t.enabled ? '✓ 当前使用' : '○ 未启用';
+    const toggleText = t.enabled ? '取消使用' : '设为当前';
+    const toggleColor = t.enabled ? 'color:#f38ba8;' : 'color:#a6e3a1;';
+    const isUnsupported = ext === '.doc';
+    const cardActiveClass = t.enabled ? ' active' : '';
+    const idAttr = escapeAttr(t.id);
+    const nameAttr = escapeAttr(t.name);
+    const editBtn = EDITABLE_EXTS.has(ext)
+      ? `<button class="kind-btn" style="color:#89b4fa;" onclick="editTextTemplate('${idAttr}', '${nameAttr}', '${ext}')" title="编辑模版内容">✏️ 编辑</button>`
+      : '';
+    const unsupportedBadge = isUnsupported
+      ? '<span style="color:#f9e2af; font-size:11px;" title=".doc 无法解析，请重传 .docx">⚠️</span>'
+      : '';
+    const builtinBadge = t.from_builtin
+      ? '<span style="color:#f9e2af; font-size:10px; padding:1px 5px; border:1px solid #f9e2af; border-radius:3px;" title="来自内置示例">示例</span>'
+      : '';
+    html += `<div class="tpl-card${cardActiveClass}">
+      <div class="tpl-icon">${icon}</div>
+      <div class="tpl-info">
+        <div class="tpl-name">${escapeHtml(t.name)} ${unsupportedBadge} ${builtinBadge}</div>
+        <div class="tpl-meta">
+          ${escapeHtml(t.filename || '')} · ${sizeKB} KB · ${fmtTextLen(textLen)} · ${date}
+          ${t.description ? '<br/>' + escapeHtml(t.description) : ''}
+        </div>
+      </div>
+      <span class="tpl-status ${statusClass}">${statusText}</span>
+      <div class="tpl-actions">
+        <button class="kind-btn" onclick="previewTemplate('${idAttr}', '${nameAttr}')" title="右侧预览">👁️</button>
+        ${editBtn}
+        <button class="kind-btn" onclick="openMetaEdit('${idAttr}')" title="修改名字 / 描述">📝</button>
+        <button class="kind-btn" onclick="cloneTemplate('${idAttr}')" title="克隆为副本">📋</button>
+        <button class="kind-btn" onclick="testTemplate('${idAttr}', '${nameAttr}')" title="用 mock 数据测试效果">🧪</button>
+        <button class="kind-btn" style="${toggleColor}" onclick="toggleTemplate('${idAttr}', ${!t.enabled})">${toggleText}</button>
+        <button class="kind-btn delete" onclick="deleteTemplate('${idAttr}', '${nameAttr}')" title="删除">🗑️</button>
+      </div>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+// 文件选择（含 .doc 前端拦截）
+function handleFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!validateFileBeforeUpload(file)) {
+    document.getElementById('fileInput').value = '';
+    return;
+  }
+  showUploadForm(file);
+}
+
+function validateFileBeforeUpload(file) {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.doc') && !name.endsWith('.docx')) {
+    toast('✗ .doc（Word 97-2003）无法解析，请在 Word 中"另存为 .docx"后再上传', 'err');
+    return false;
+  }
+  const ALLOWED = ['.pdf', '.docx', '.md', '.txt', '.html'];
+  const ok = ALLOWED.some(e => name.endsWith(e));
+  if (!ok) {
+    toast(`✗ 不支持的格式，仅支持: ${ALLOWED.join(', ')}`, 'err');
+    return false;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    toast(`✗ 文件过大（${(file.size/1024/1024).toFixed(1)}MB），最大 20MB`, 'err');
+    return false;
+  }
+  return true;
+}
+
+function showUploadForm(file) {
+  selectedFile = file;
+  document.getElementById('selectedFileName').textContent = `📎 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+  document.getElementById('uploadForm').style.display = 'block';
+  document.getElementById('tplName').value = file.name.replace(/\.[^.]+$/, '');
+}
+
+function cancelUpload() {
+  selectedFile = null;
+  document.getElementById('uploadForm').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+}
+
+async function uploadTemplate() {
+  if (!selectedFile) { toast('请先选择文件', 'err'); return; }
+  const name = document.getElementById('tplName').value.trim();
+  const desc = document.getElementById('tplDesc').value.trim();
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  if (name) formData.append('name', name);
+  if (desc) formData.append('description', desc);
+
+  try {
+    const resp = await fetch('/api/templates/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 模版「${data.name}」上传成功，提取了 ${data.text_length} 字符`, 'ok');
+      cancelUpload();
+      await loadTemplates();
+    } else {
+      toast('✗ ' + (data.message || '上传失败'), 'err');
+    }
+  } catch (e) { toast('上传失败: ' + e.message, 'err'); }
+}
+
+async function toggleTemplate(id, enabled) {
+  try {
+    const resp = await fetch('/api/templates/toggle', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, enabled})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(enabled ? '✓ 已设为当前使用模版' : '○ 已取消使用', 'ok');
+      await loadTemplates();
+    } else { toast('✗ ' + (data.message || '操作失败'), 'err'); }
+  } catch (e) { toast('操作失败: ' + e.message, 'err'); }
+}
+
+async function deleteTemplate(id, name) {
+  if (!confirm(`确定删除模版「${name}」？\n此操作不可恢复。`)) return;
+  try {
+    const resp = await fetch('/api/templates/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('✓ 模版已删除', 'ok');
+      if (currentPreviewId === id) closePreview();
+      await loadTemplates();
+    } else { toast('✗ ' + (data.message || '删除失败'), 'err'); }
+  } catch (e) { toast('删除失败: ' + e.message, 'err'); }
+}
+
+async function previewTemplate(id, name) {
+  try {
+    const resp = await fetch(`/api/templates/preview?template_id=${encodeURIComponent(id)}`);
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      currentPreviewId = id;
+      document.getElementById('previewTitle').textContent = `👁️ ${name}`;
+      document.getElementById('previewContent').textContent = data.content || '(空)';
+      document.getElementById('tplSideEmpty').style.display = 'none';
+      document.getElementById('tplSideContent').style.display = 'flex';
+    } else { toast('✗ ' + (data.message || '预览失败'), 'err'); }
+  } catch (e) { toast('预览失败: ' + e.message, 'err'); }
+}
+
+function closePreview() {
+  currentPreviewId = null;
+  const sideContent = document.getElementById('tplSideContent');
+  const sideEmpty = document.getElementById('tplSideEmpty');
+  if (sideContent) sideContent.style.display = 'none';
+  if (sideEmpty) sideEmpty.style.display = 'block';
+}
+
+// ========== 元信息编辑（仅改名字 / 描述） ==========
+function openMetaEdit(id) {
+  const t = allTemplates.find(x => x.id === id);
+  if (!t) return;
+  metaEditingId = id;
+  document.getElementById('metaEditName').value = t.name || '';
+  document.getElementById('metaEditDesc').value = t.description || '';
+  document.getElementById('metaEditOverlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => document.getElementById('metaEditName').focus(), 50);
+}
+function closeMetaEdit() {
+  metaEditingId = null;
+  document.getElementById('metaEditOverlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+async function saveMetaEdit() {
+  if (!metaEditingId) return;
+  const name = document.getElementById('metaEditName').value.trim();
+  const desc = document.getElementById('metaEditDesc').value.trim();
+  if (!name) { toast('模版名称不能为空', 'err'); return; }
+  try {
+    const resp = await fetch('/api/templates/meta/update', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id: metaEditingId, name, description: desc})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast('✓ 已保存', 'ok');
+      closeMetaEdit();
+      await loadTemplates();
+    } else { toast('✗ ' + (data.message || '保存失败'), 'err'); }
+  } catch (e) { toast('保存失败: ' + e.message, 'err'); }
+}
+
+// ========== 克隆模版 ==========
+async function cloneTemplate(id) {
+  try {
+    const resp = await fetch('/api/templates/clone', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已克隆为「${data.name}」`, 'ok');
+      await loadTemplates();
+    } else { toast('✗ ' + (data.message || '克隆失败'), 'err'); }
+  } catch (e) { toast('克隆失败: ' + e.message, 'err'); }
+}
+
+// ========== 测试渲染（mock 漏洞 → LLM） ==========
+async function testTemplate(id, name) {
+  document.getElementById('testRenderTitle').textContent = `🧪 测试效果：${name}`;
+  document.getElementById('testRenderStat').textContent = '';
+  document.getElementById('testRenderBody').innerHTML =
+    '<div style="text-align:center; color:#6c7086; padding:60px 0;">⏳ 正在用 mock 漏洞数据 + 当前模版调用 LLM ...<br/><small>通常需要 5~30 秒</small></div>';
+  document.getElementById('testRenderOverlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+
+  try {
+    const resp = await fetch('/api/templates/test_render', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      document.getElementById('testRenderStat').textContent = `· 耗时 ${data.elapsed}s`;
+      try {
+        document.getElementById('testRenderBody').innerHTML = safeRenderMd(data.content || '');
+      } catch (e) {
+        document.getElementById('testRenderBody').innerHTML =
+          '<pre style="white-space:pre-wrap; word-break:break-word;">' + escapeHtml(data.content || '') + '</pre>';
+      }
+    } else {
+      document.getElementById('testRenderBody').innerHTML =
+        '<div style="color:#f38ba8; padding:20px;">✗ ' + escapeHtml(data.message || '生成失败') + '</div>';
+    }
+  } catch (e) {
+    document.getElementById('testRenderBody').innerHTML =
+      '<div style="color:#f38ba8; padding:20px;">✗ 请求失败: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function closeTestRender() {
+  document.getElementById('testRenderOverlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+function testActiveTemplate() {
+  const btn = document.getElementById('tplActiveTestBtn');
+  if (!btn || !btn.dataset.id) return;
+  const t = allTemplates.find(x => x.id === btn.dataset.id);
+  if (t) testTemplate(t.id, t.name);
+}
+
+// ========== 内置示例模版 ==========
+let builtinTemplatesLoaded = false;
+async function loadBuiltinTemplates() {
+  if (builtinTemplatesLoaded) return;
+  try {
+    const resp = await fetch('/api/templates/builtin');
+    const data = await resp.json();
+    if (data.status !== 'ok') return;
+    const grid = document.getElementById('tplBuiltinGrid');
+    let html = '';
+    for (const t of data.templates) {
+      html += `<div class="tpl-builtin-card" onclick="installBuiltin('${escapeAttr(t.key)}')">
+        <div class="b-icon">${t.icon || '📄'}</div>
+        <div class="b-name">${escapeHtml(t.name)}</div>
+        <div class="b-desc">${escapeHtml(t.description)}</div>
+        <div class="b-clone">📋 点击克隆到我的模版库</div>
+      </div>`;
+    }
+    grid.innerHTML = html || '<div style="color:#6c7086; font-size:12px;">暂无内置示例</div>';
+    builtinTemplatesLoaded = true;
+  } catch (e) { /* 静默失败 */ }
+}
+async function installBuiltin(key) {
+  try {
+    const resp = await fetch('/api/templates/builtin/install', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已克隆「${data.name}」到我的模版库（默认未启用）`, 'ok');
+      await loadTemplates();
+    } else { toast('✗ ' + (data.message || '克隆失败'), 'err'); }
+  } catch (e) { toast('克隆失败: ' + e.message, 'err'); }
+}
+function toggleBuiltinArea() {
+  const area = document.getElementById('tplBuiltinArea');
+  const btn = document.getElementById('tplBuiltinToggleBtn');
+  if (area.style.display === 'none' || !area.style.display) {
+    area.style.display = 'block';
+    btn.textContent = '收起';
+    loadBuiltinTemplates();
+  } else {
+    area.style.display = 'none';
+    btn.textContent = '展开';
+  }
+}
+function openBuiltinAreaIfHidden() {
+  const area = document.getElementById('tplBuiltinArea');
+  if (!area) return;
+  if (area.style.display === 'none' || !area.style.display) {
+    toggleBuiltinArea();
+    area.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  } else {
+    area.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+}
+
+// ========== 拖拽上传：真正绑定事件 ==========
+function initTplDragDrop() {
+  const dz = document.getElementById('dropZone');
+  if (!dz || dz.dataset.dragBound === '1') return;
+  dz.dataset.dragBound = '1';
+  ['dragenter','dragover'].forEach(ev => {
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.add('dragover');
+    });
+  });
+  ['dragleave','drop'].forEach(ev => {
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.remove('dragover');
+    });
+  });
+  dz.addEventListener('drop', (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!validateFileBeforeUpload(file)) return;
+    showUploadForm(file);
+  });
+  // 阻止整个面板对其它区域的拖拽默认行为（避免浏览器把文件当成导航打开）
+  const panel = document.getElementById('panelTemplates');
+  if (panel) {
+    panel.addEventListener('dragover', (e) => e.preventDefault());
+    panel.addEventListener('drop', (e) => {
+      // 非 dropZone 区域拖拽时，阻止浏览器默认打开行为
+      if (!e.target.closest('#dropZone')) e.preventDefault();
+    });
+  }
+}
+
+// 全局 Esc 关闭弹窗（追加，不影响已有 md 编辑器）
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const meta = document.getElementById('metaEditOverlay');
+  if (meta && meta.style.display === 'flex') { closeMetaEdit(); return; }
+  const test = document.getElementById('testRenderOverlay');
+  if (test && test.style.display === 'flex') { closeTestRender(); return; }
+});
+
+// 在合适时机绑定拖拽（页面加载后立即绑定一次）
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initTplDragDrop);
+} else {
+  initTplDragDrop();
+}
+
+// ==================== Markdown / 文本模版在线编辑器 ====================
+// 模式：'new' 新建 / 'edit' 编辑现有
+let mdEditorMode = 'new';
+let mdEditorEditingId = null;        // 编辑模式下，正在编辑的模版 id
+let mdEditorEditingExt = '.md';      // 编辑模式下原文件后缀，用于调用 update
+let mdEditorOriginal = '';           // 打开编辑器时的初始内容（用于 dirty 判断）
+let mdEditorOriginalName = '';
+let mdEditorOriginalDesc = '';
+const MD_EDITOR_TEXT_LIMIT = 100000; // 后端提取上限，超过会被截断
+
+const MD_TPL_BOILERPLATE = `# 渗透测试报告模版
+
+> 在这里编写你想让生成报告时遵循的格式 / 章节 / 风格说明。
+> 系统会把这份模版的全文喂给 LLM，作为生成报告时的"格式参照"。
+
+## 一、基本信息
+- 测试目标：
+- 测试时间：
+- 测试范围：
+
+## 二、漏洞清单
+| 编号 | 漏洞名称 | 风险等级 | 状态 |
+|------|----------|----------|------|
+
+## 三、漏洞详情
+### 3.1 漏洞名称
+- **风险等级**：高 / 中 / 低
+- **影响范围**：
+- **复现步骤**：
+- **PoC**：
+- **修复建议**：
+
+## 四、总结与建议
+`;
+
+function openMdEditor() {
+  mdEditorMode = 'new';
+  mdEditorEditingId = null;
+  mdEditorEditingExt = '.md';
+  mdEditorOriginal = MD_TPL_BOILERPLATE;
+  mdEditorOriginalName = '';
+  mdEditorOriginalDesc = '';
+
+  document.getElementById('mdEditorTitle').textContent = '📝 新建 Markdown 模版';
+  document.getElementById('mdTplName').value = '';
+  document.getElementById('mdTplDesc').value = '';
+  document.getElementById('mdTplContent').value = MD_TPL_BOILERPLATE;
+
+  document.getElementById('mdEditorOverlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  refreshMdEditorPreview();
+  updateMdEditorStat();
+  setMdEditorDirty(false);
+  setTimeout(() => document.getElementById('mdTplName').focus(), 50);
+}
+
+async function editTextTemplate(id, name, ext) {
+  // 拉模版的“提取文本”作为编辑内容（文本类模版的提取文本即原文）
+  try {
+    const resp = await fetch(`/api/templates/preview?template_id=${encodeURIComponent(id)}`);
+    const data = await resp.json();
+    if (data.status !== 'ok') {
+      toast('✗ ' + (data.message || '加载失败'), 'err');
+      return;
+    }
+    const meta = allTemplates.find(t => t.id === id) || {};
+    const desc = meta.description || '';
+    const content = data.content || '';
+    const realExt = (ext || meta.ext || '.md').toLowerCase();
+
+    mdEditorMode = 'edit';
+    mdEditorEditingId = id;
+    mdEditorEditingExt = realExt;
+    mdEditorOriginal = content;
+    mdEditorOriginalName = name;
+    mdEditorOriginalDesc = desc;
+
+    const extLabel = realExt === '.md' ? 'Markdown' : (realExt === '.html' ? 'HTML' : '纯文本');
+    document.getElementById('mdEditorTitle').textContent = `✏️ 编辑${extLabel}模版：${name}`;
+    document.getElementById('mdTplName').value = name;
+    document.getElementById('mdTplDesc').value = desc;
+    document.getElementById('mdTplContent').value = content;
+
+    document.getElementById('mdEditorOverlay').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    refreshMdEditorPreview();
+    updateMdEditorStat();
+    setMdEditorDirty(false);
+    setTimeout(() => document.getElementById('mdTplContent').focus(), 50);
+  } catch (e) {
+    toast('加载失败: ' + e.message, 'err');
+  }
+}
+// 兼容旧名称
+const editMdTemplate = (id, name) => editTextTemplate(id, name, '.md');
+
+function closeMdEditor() {
+  if (isMdEditorDirty()) {
+    if (!confirm('当前有未保存的改动，确定关闭并丢弃？')) return;
+  }
+  document.getElementById('mdEditorOverlay').style.display = 'none';
+  document.body.style.overflow = '';
+  mdEditorMode = 'new';
+  mdEditorEditingId = null;
+  mdEditorEditingExt = '.md';
+}
+
+function isMdEditorDirty() {
+  return document.getElementById('mdTplContent').value !== mdEditorOriginal
+    || document.getElementById('mdTplName').value.trim() !== mdEditorOriginalName
+    || document.getElementById('mdTplDesc').value.trim() !== mdEditorOriginalDesc;
+}
+
+function setMdEditorDirty(forceDirty) {
+  const dirty = forceDirty == null ? isMdEditorDirty() : forceDirty;
+  document.getElementById('mdEditorDirtyMark').style.display = dirty ? 'inline' : 'none';
+}
+
+function onMdEditorInput() {
+  refreshMdEditorPreview();
+  updateMdEditorStat();
+  setMdEditorDirty();
+}
+
+function refreshMdEditorPreview() {
+  const md = document.getElementById('mdTplContent').value || '';
+  try {
+    document.getElementById('mdTplPreview').innerHTML = safeRenderMd(md);
+  } catch (e) {
+    document.getElementById('mdTplPreview').innerHTML =
+      '<pre style="color:#f38ba8;">预览失败: ' + escapeHtml(e.message) + '</pre>';
+  }
+}
+
+function updateMdEditorStat() {
+  const v = document.getElementById('mdTplContent').value || '';
+  const lines = v ? v.split('\n').length : 0;
+  const el = document.getElementById('mdEditorStat');
+  if (v.length > MD_EDITOR_TEXT_LIMIT) {
+    const overflow = v.length - MD_EDITOR_TEXT_LIMIT;
+    el.innerHTML = `<span style="color:#f38ba8;">⚠️ ${v.length} 字符 · ${lines} 行 · 超过 ${MD_EDITOR_TEXT_LIMIT}，末尾 ${overflow} 字符会被截断</span>`;
+  } else {
+    el.textContent = `${v.length} 字符 · ${lines} 行`;
+  }
+}
+
+// textarea 内处理 Tab 缩进 / Shift+Tab 反缩进
+function onMdEditorKeydown(e) {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  const ta = e.target;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const val = ta.value;
+  const INDENT = '  ';
+  if (start === end && !e.shiftKey) {
+    // 单光标插入两个空格
+    ta.value = val.slice(0, start) + INDENT + val.slice(end);
+    ta.selectionStart = ta.selectionEnd = start + INDENT.length;
+  } else {
+    // 多行：在选区覆盖的每一行首加/减缩进
+    const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+    const before = val.slice(0, lineStart);
+    const region = val.slice(lineStart, end);
+    const after = val.slice(end);
+    let newRegion;
+    if (e.shiftKey) {
+      newRegion = region.replace(/^(  |\t)/gm, '');
+    } else {
+      newRegion = region.replace(/^/gm, INDENT);
+    }
+    ta.value = before + newRegion + after;
+    const delta = newRegion.length - region.length;
+    ta.selectionStart = lineStart;
+    ta.selectionEnd = end + delta;
+  }
+  onMdEditorInput();
+}
+
+// 全局监听已不再需要：name/desc 已在 oninput 中直接调用 setMdEditorDirty()
+
+async function saveMdTemplate() {
+  const name = document.getElementById('mdTplName').value.trim();
+  const desc = document.getElementById('mdTplDesc').value.trim();
+  const content = document.getElementById('mdTplContent').value;
+
+  if (!name) { toast('请填写模版名称', 'err'); return; }
+  if (!content.trim()) { toast('模版内容不能为空', 'err'); return; }
+
+  // 编辑模式：调用原地更新接口（保持 id / saved_as 不变，避免“先删后传”丢数据风险）
+  if (mdEditorMode === 'edit' && mdEditorEditingId) {
+    try {
+      const resp = await fetch('/api/templates/update', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: mdEditorEditingId, name, description: desc, content})
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') {
+        toast(`✓ 已更新模版「${data.name}」`, 'ok');
+        mdEditorOriginal = content;
+        mdEditorOriginalName = name;
+        mdEditorOriginalDesc = desc;
+        setMdEditorDirty(false);
+        document.getElementById('mdEditorOverlay').style.display = 'none';
+        document.body.style.overflow = '';
+        await loadTemplates();
+      } else {
+        toast('✗ ' + (data.message || '保存失败'), 'err');
+      }
+    } catch (e) {
+      toast('保存失败: ' + e.message, 'err');
+    }
+    return;
+  }
+
+  // 新建模式：用 Blob 把字符串包成 .md 文件，复用 /api/templates/upload
+  const safe = (name.replace(/[^\w\u4e00-\u9fa5\-]+/g, '_') || 'template') + '.md';
+  const blob = new Blob([content], {type: 'text/markdown'});
+  const formData = new FormData();
+  formData.append('file', blob, safe);
+  formData.append('name', name);
+  if (desc) formData.append('description', desc);
+
+  try {
+    const resp = await fetch('/api/templates/upload', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      toast(`✓ 已新建模版「${data.name}」`, 'ok');
+      mdEditorOriginal = content;
+      mdEditorOriginalName = name;
+      mdEditorOriginalDesc = desc;
+      setMdEditorDirty(false);
+      document.getElementById('mdEditorOverlay').style.display = 'none';
+      document.body.style.overflow = '';
+      await loadTemplates();
+    } else {
+      toast('✗ ' + (data.message || '保存失败'), 'err');
+    }
+  } catch (e) {
+    toast('保存失败: ' + e.message, 'err');
+  }
+}
+
+// 编辑器内的 Esc 关闭 / Cmd+S 保存
+window.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('mdEditorOverlay');
+  if (!overlay || overlay.style.display === 'none') return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeMdEditor();
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    saveMdTemplate();
+  }
+});
+
+// 拖拽上传
+(function setupDragDrop() {
+  setTimeout(() => {
+    const dz = document.getElementById('dropZone');
+    if (!dz) return;
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', () => { dz.classList.remove('dragover'); });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) showUploadForm(file);
+    });
+  }, 100);
+})();
+
+// ============================================================
+// ★ 新增：仪表盘 / 筛选 / 批量 / 对比 / 多格式下载
+// ============================================================
+let currentFilter = 'all';
+let selectedTasks = new Set();
+let batchMode = false;
+
+// ---- 仪表盘渲染 ----
+function renderDashboard(taskCnt, fullCnt, provenCnt, vulnCnt) {
+  const $ = (id) => document.getElementById(id);
+  if (!$('dashboard')) return;
+  // KPI
+  $('kpiTasks').textContent = taskCnt;
+  $('kpiVulns').textContent = vulnCnt;
+  $('kpiFull').textContent = fullCnt;
+  $('kpiProven').textContent = provenCnt;
+  // 副文本：占比/平均
+  const avgVuln = taskCnt > 0 ? (vulnCnt / taskCnt).toFixed(1) : '0';
+  const both = allReports.filter(r => r.files.realtime && r.files.proven).length;
+  const provenRate = taskCnt > 0 ? Math.round((provenCnt / taskCnt) * 100) : 0;
+  const fullRate = taskCnt > 0 ? Math.round((fullCnt / taskCnt) * 100) : 0;
+  const haveVuln = allReports.filter(r => (r.vuln_count || 0) > 0).length;
+  $('kpiTasksSub').textContent = `双报告 ${both} · 含漏洞 ${haveVuln}`;
+  $('kpiVulnsSub').textContent = `平均 ${avgVuln} 个/任务`;
+  $('kpiFullSub').textContent = `覆盖率 ${fullRate}%`;
+  $('kpiProvenSub').textContent = `证明率 ${provenRate}%`;
+
+  // TOP-5 漏洞条形图
+  const top = [...allReports]
+    .filter(r => (r.vuln_count || 0) > 0)
+    .sort((a, b) => (b.vuln_count || 0) - (a.vuln_count || 0))
+    .slice(0, 5);
+  const top5El = $('chartTop5');
+  if (top.length === 0) {
+    top5El.innerHTML = '<div style="font-size:11px;color:#6c7086;">暂无漏洞数据 ✨</div>';
+  } else {
+    const max = top[0].vuln_count;
+    top5El.innerHTML = '<div style="width:100%">' + top.map(r => {
+      const label = (r.target || r.task_id).replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const w = max > 0 ? Math.max(6, Math.round((r.vuln_count / max) * 100)) : 0;
+      return `<div class="bar-row" title="${escapeAttr(r.target || r.task_id)}">
+        <span class="bar-label">${escapeHtml(label.slice(0, 18))}</span>
+        <span class="bar-track"><span class="bar-fill" style="width:${w}%"></span></span>
+        <span class="bar-value">${r.vuln_count}</span>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  // 7 日 sparkline
+  const days = 7;
+  const buckets = new Array(days).fill(0);
+  const labels = [];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    labels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+  }
+  for (const r of allReports) {
+    const t = (r.latest_mtime || 0) * 1000;
+    if (!t) continue;
+    const dayOffset = Math.floor((today.getTime() - t) / 86400000);
+    if (dayOffset >= 0 && dayOffset < days) {
+      buckets[days - 1 - dayOffset] += 1;
+    }
+  }
+  const max = Math.max(1, ...buckets);
+  const W = 220, H = 56, P = 6;
+  const stepX = (W - P * 2) / (days - 1);
+  const points = buckets.map((v, i) => {
+    const x = P + stepX * i;
+    const y = H - P - ((H - P * 2) * v / max);
+    return [x, y];
+  });
+  const polyline = points.map(p => p.join(',')).join(' ');
+  const area = `M${P},${H - P} L${points.map(p => p.join(',')).join(' L')} L${W - P},${H - P} Z`;
+  const dots = points.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#89b4fa">
+    <title>${labels[i]} · ${buckets[i]} 份</title></circle>`).join('');
+  const xLabels = labels.map((lb, i) =>
+    `<text x="${P + stepX * i}" y="${H - 1}" font-size="8" fill="#6c7086" text-anchor="middle">${lb}</text>`
+  ).join('');
+  $('chartSpark').innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <path d="${area}" fill="rgba(137,180,250,0.18)" />
+    <polyline points="${polyline}" fill="none" stroke="#89b4fa" stroke-width="1.5" />
+    ${dots}${xLabels}
+  </svg>`;
+}
+
+// ---- 筛选 chip ----
+function setFilter(name) {
+  currentFilter = name;
+  document.querySelectorAll('.filter-bar .filter-chip[data-filter]').forEach(el => {
+    el.classList.toggle('active', el.dataset.filter === name);
+  });
+  renderList();
+}
+
+// ---- 批量模式 ----
+function toggleBatchMode() {
+  batchMode = !batchMode;
+  document.getElementById('leftPane').classList.toggle('batch-mode', batchMode);
+  document.getElementById('batchToggle').classList.toggle('active', batchMode);
+  if (!batchMode) selectedTasks.clear();
+  renderList();
+}
+function toggleTaskSelect(taskId, checked) {
+  if (checked) selectedTasks.add(taskId); else selectedTasks.delete(taskId);
+  syncBatchBar();
+  // 高亮该卡片不重渲染整个列表，避免抖动
+  const cards = document.querySelectorAll('.report-card');
+  for (const c of cards) {
+    const cb = c.querySelector('.card-checkbox');
+    if (cb && cb.checked === checked) {
+      // 当前卡片可能是别的，按 dataset 不可靠，简单触发一次 renderList
+    }
+  }
+  renderList();
+}
+function toggleSelectAll(checked) {
+  const visibleIds = Array.from(document.querySelectorAll('#reportList .report-card .card-checkbox'))
+    .map(cb => cb.getAttribute('onchange') || '')
+    .map(s => (s.match(/'([^']+)'/) || [])[1])
+    .filter(Boolean);
+  if (checked) visibleIds.forEach(id => selectedTasks.add(id));
+  else visibleIds.forEach(id => selectedTasks.delete(id));
+  renderList();
+}
+function syncBatchBar() {
+  const bar = document.getElementById('batchBar');
+  if (!bar) return;
+  bar.classList.toggle('show', batchMode || selectedTasks.size > 0);
+  const cnt = document.getElementById('batchCount');
+  if (cnt) cnt.textContent = selectedTasks.size;
+}
+
+// ---- 批量打包下载（前端 zip：用浏览器一次性多文件下载方案） ----
+async function batchExportZip() {
+  if (selectedTasks.size === 0) { toast('请先勾选任务', 'err'); return; }
+  if (!confirm(`将逐个下载 ${selectedTasks.size} 个任务的所有报告（浏览器会触发多个下载请确认允许多文件下载）？`)) return;
+  const tasks = Array.from(selectedTasks);
+  let n = 0;
+  for (const tid of tasks) {
+    const r = allReports.find(x => x.task_id === tid);
+    if (!r) continue;
+    if (r.files.realtime) {
+      window.open(`/api/reports/download?task_id=${encodeURIComponent(tid)}&kind=realtime`, '_blank');
+      n++;
+      await new Promise(res => setTimeout(res, 250));
+    }
+    if (r.files.proven) {
+      window.open(`/api/reports/download?task_id=${encodeURIComponent(tid)}&kind=proven`, '_blank');
+      n++;
+      await new Promise(res => setTimeout(res, 250));
+    }
+  }
+  toast(`✓ 已触发 ${n} 个下载`, 'ok');
+}
+async function batchDelete() {
+  if (selectedTasks.size === 0) { toast('请先勾选任务', 'err'); return; }
+  if (!confirm(`确定批量删除 ${selectedTasks.size} 个任务的所有报告？此操作不可恢复！`)) return;
+  let ok = 0, fail = 0;
+  for (const tid of Array.from(selectedTasks)) {
+    try {
+      const resp = await fetch('/api/reports/delete', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({task_id: tid}),
+      });
+      const data = await resp.json();
+      if (data.status === 'ok') ok++; else fail++;
+    } catch (e) { fail++; }
+  }
+  toast(`✓ 删除完成：成功 ${ok} · 失败 ${fail}`, fail === 0 ? 'ok' : 'err');
+  selectedTasks.clear();
+  await loadList();
+}
+
+// ---- 对比视图 ----
+async function viewDiff(taskId) {
+  // 直接进入对比视图：分别拉两份报告
+  if (currentDirty) {
+    if (!confirm('当前报告有未保存的修改，确定切换并丢弃？')) return;
+  }
+  currentTaskId = taskId;
+  currentKind = 'realtime';
+  currentContent = '';
+  currentDirty = false;
+  document.getElementById('rightEmpty').style.display = 'none';
+  document.getElementById('rightView').style.display = 'flex';
+  document.getElementById('curTitle').textContent = '🔀 报告对比';
+  document.getElementById('curTitle').classList.remove('dirty');
+  document.getElementById('curFile').textContent = `task_id: ${taskId}`;
+  document.getElementById('saveBtn').disabled = true;
+  switchView('diff');
+  renderList();
+}
+async function renderDiff(taskId) {
+  const left = document.getElementById('diffLeft');
+  const right = document.getElementById('diffRight');
+  left.innerHTML = '<div class="diff-empty">加载中...</div>';
+  right.innerHTML = '<div class="diff-empty">加载中...</div>';
+  try {
+    const [a, b] = await Promise.all([
+      fetch(`/api/reports/content?task_id=${encodeURIComponent(taskId)}&kind=realtime`).then(r => r.json()),
+      fetch(`/api/reports/content?task_id=${encodeURIComponent(taskId)}&kind=proven`).then(r => r.json()),
+    ]);
+    const A = (a.status === 'ok') ? (a.content || '') : '';
+    const B = (b.status === 'ok') ? (b.content || '') : '';
+    if (!A && !B) {
+      left.innerHTML = right.innerHTML = '<div class="diff-empty">两份报告均不存在</div>';
+      return;
+    }
+    if (!A) { left.innerHTML = '<div class="diff-empty">完整报告不存在</div>'; }
+    if (!B) { right.innerHTML = '<div class="diff-empty">已证明报告不存在</div>'; }
+    if (!A || !B) return;
+    const linesA = A.split('\n');
+    const linesB = B.split('\n');
+    const setB = new Set(linesB);
+    const setA = new Set(linesA);
+    // 简易行级 diff（基于 set 包含）：
+    // 左侧：标蓝/灰色 same，红色 only-in-A（被剔除的可能误报）
+    // 右侧：标绿色 only-in-B（已证明特有），灰色 same
+    let leftHtml = '', rightHtml = '';
+    for (const ln of linesA) {
+      const cls = setB.has(ln) ? 'same' : 'del';
+      leftHtml += `<div class="diff-line ${cls}">${escapeHtml(ln) || '&nbsp;'}</div>`;
+    }
+    for (const ln of linesB) {
+      const cls = setA.has(ln) ? 'same' : 'add';
+      rightHtml += `<div class="diff-line ${cls}">${escapeHtml(ln) || '&nbsp;'}</div>`;
+    }
+    left.innerHTML = leftHtml;
+    right.innerHTML = rightHtml;
+    // 同步滚动
+    const syncFn = (src, tgt) => () => {
+      const ratio = src.scrollTop / Math.max(1, src.scrollHeight - src.clientHeight);
+      tgt.scrollTop = ratio * (tgt.scrollHeight - tgt.clientHeight);
+    };
+    left.onscroll = syncFn(left, right);
+    right.onscroll = syncFn(right, left);
+  } catch (e) {
+    left.innerHTML = right.innerHTML = `<div class="diff-empty">加载失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---- 阅读元数据 ----
+function updateReadingMeta(content) {
+  const el = document.getElementById('readingMeta');
+  if (!el) return;
+  const chars = (content || '').length;
+  const words = (content || '').split(/\s+/).filter(Boolean).length;
+  // 中文阅读 ~ 400字/分钟，英文 ~ 250词/分钟，混合按字符估算
+  const minutes = Math.max(1, Math.round(chars / 400));
+  el.innerHTML = `· ${chars.toLocaleString()} 字符 · ~${minutes} 分钟阅读`;
+}
+
+// ---- 多格式下载 ----
+function toggleDlMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('dlMenu');
+  if (m) m.classList.toggle('show');
+}
+document.addEventListener('click', () => {
+  const m = document.getElementById('dlMenu');
+  if (m) m.classList.remove('show');
+});
+function downloadAs(fmt) {
+  const m = document.getElementById('dlMenu');
+  if (m) m.classList.remove('show');
+  if (!currentTaskId || !currentKind) { toast('请先选择一份报告', 'err'); return; }
+  const baseName = `${currentTaskId}-${currentKind}-report`;
+  const md = document.getElementById('rawEditor').value || currentContent || '';
+  if (fmt === 'md') {
+    // 直接走后端下载（保留原版本）
+    window.location.href = `/api/reports/download?task_id=${encodeURIComponent(currentTaskId)}&kind=${currentKind}`;
+    return;
+  }
+  if (fmt === 'txt') {
+    triggerDownload(baseName + '.txt', md, 'text/plain;charset=utf-8');
+    return;
+  }
+  if (fmt === 'html') {
+    const body = safeRenderMd(md);
+    const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>${escapeHtml(baseName)}</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  line-height:1.7;max-width:920px;margin:32px auto;padding:0 20px;color:#212121;}
+h1{color:#1565c0;border-bottom:1px solid #e2e5e9;padding-bottom:8px;}
+h2{color:#1565c0;}h3{color:#e65100;}h4{color:#7b1fa2;}
+code{background:#f5f5f5;color:#e65100;padding:2px 6px;border-radius:4px;}
+pre{background:#f5f5f5;padding:12px 16px;border-radius:6px;overflow-x:auto;border:1px solid #e2e5e9;}
+pre code{background:transparent;color:#37474f;padding:0;}
+blockquote{border-left:4px solid #ff9800;padding:8px 16px;background:#fff8e1;color:#e65100;border-radius:0 4px 4px 0;}
+table{border-collapse:collapse;width:100%;margin:12px 0;}
+th,td{border:1px solid #e2e5e9;padding:8px 12px;text-align:left;}
+th{background:#f8f9fa;color:#1565c0;}
+strong{color:#e65100;}a{color:#1565c0;}
+hr{border:none;border-top:1px solid #e2e5e9;margin:20px 0;}
+</style></head><body>${body}</body></html>`;
+    triggerDownload(baseName + '.html', html, 'text/html;charset=utf-8');
+    return;
+  }
+  if (fmt === 'pdf') {
+    // 用打印方式生成 PDF：另开一个最小窗口写入渲染好的 HTML，自动调起打印
+    const body = safeRenderMd(md);
+    const w = window.open('', '_blank', 'width=900,height=1000');
+    if (!w) { toast('请允许弹窗后再试', 'err'); return; }
+    w.document.write(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<title>${escapeHtml(baseName)}</title>
+<style>
+@page{margin:18mm;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  line-height:1.65;color:#212121;font-size:13px;}
+h1{color:#1565c0;border-bottom:1px solid #e2e5e9;padding-bottom:6px;page-break-after:avoid;}
+h2,h3,h4{page-break-after:avoid;}h2{color:#1565c0;}h3{color:#e65100;}h4{color:#7b1fa2;}
+code{background:#f5f5f5;color:#e65100;padding:2px 5px;border-radius:3px;}
+pre{background:#f5f5f5;padding:10px 14px;border-radius:4px;border:1px solid #e2e5e9;page-break-inside:avoid;}
+pre code{background:transparent;color:#37474f;padding:0;}
+blockquote{border-left:3px solid #ff9800;padding:6px 14px;background:#fff8e1;color:#e65100;}
+table{border-collapse:collapse;width:100%;page-break-inside:avoid;}
+th,td{border:1px solid #e2e5e9;padding:6px 10px;}th{background:#f8f9fa;color:#1565c0;}
+</style></head><body><h1 style="border:none;color:#999;font-size:11px;margin-bottom:0;">${escapeHtml(baseName)} · ${new Date().toLocaleString()}</h1>${body}
+<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>
+</body></html>`);
+    w.document.close();
+    return;
+  }
+}
+function triggerDownload(filename, content, mime) {
+  try {
+    const blob = new Blob([content], {type: mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    toast(`✓ 已下载 ${filename}`, 'ok');
+  } catch (e) {
+    toast('下载失败: ' + e.message, 'err');
+  }
+}
+
+loadList();
+
+// ---- 拖拽分隔条调整左侧宽度 ----
+(function setupResizer() {
+  const resizer = document.getElementById('resizer');
+  const left = document.getElementById('leftPane');
+  if (!resizer || !left) return;
+
+  // 恢复用户上次保存的宽度
+  try {
+    const saved = parseInt(localStorage.getItem('reportsLeftWidth') || '0', 10);
+    if (saved >= 200 && saved <= window.innerWidth * 0.6) {
+      left.style.width = saved + 'px';
+    }
+  } catch (e) {}
+
+  let dragging = false, startX = 0, startW = 0;
+  resizer.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = left.getBoundingClientRect().width;
+    resizer.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const w = Math.min(Math.max(220, startW + (e.clientX - startX)), window.innerWidth * 0.6);
+    left.style.width = w + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    try {
+      localStorage.setItem('reportsLeftWidth', String(parseInt(left.style.width, 10)));
+    } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
