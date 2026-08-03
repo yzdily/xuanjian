@@ -22,6 +22,9 @@ _refs/
 *.backup
 .pytest_cache/
 *.png
+# README 截图例外（必须入库才能在 GitHub 显示）
+!首页.png
+!系统.png
 .backup_skills_*/
 .backups/
 *.backup

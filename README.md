@@ -115,15 +115,13 @@ cd burp-plugin && ./gradlew jar
 
 ### 截图
 
-<img width="3320" height="1886" alt="Clipboard_Screenshot_1781007519" src="https://github.com/user-attachments/assets/806fc26f-da71-4ee7-8f5f-f83f91d91676" />
-
-首页突破：
+**首页突破** — 自动登录并识别首页攻击面：
 
 <img alt="首页突破" src="首页.png" />
 
-两个系统：
+**多系统并行** — 同时对两个目标系统进行渗透测试：
 
-<img alt="两个系统" src="系统.png" />
+<img alt="多系统并行测试" src="系统.png" />
 
 ---
 
