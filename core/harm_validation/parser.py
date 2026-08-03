@@ -260,11 +260,39 @@ def finalize_harm_result(
             vd["poc_response"] = best["response"][:500]
             vd["poc_note"] = "实测复现（工具调用结果自动注入）"
 
-        # ★ 核心修复：未实际调 proxy_send_request 就判 accepted → 降级为 borderline
-        if not matched_traces and vd.get("verdict") == "accepted" and tool_trace is not None:
+        # ★ 核心修复 1：仅响应头证据(header_only)的 accepted → 降级为 rejected（优先）
+        # 纯响应头/状态码/banner/版本号泄露不构成可被 SRC 收录的漏洞；
+        # 只有当 LLM 实测复现(matched_traces 非空)并拿到敏感数据时才保留 accepted。
+        orig_eq = (orig.get("evidence_quality", "") or "").lower()
+        if (orig_eq == "header_only"
+                and vd.get("verdict") == "accepted"
+                and not matched_traces):
             log.warning(
-                "harm_validation: vuln %s accepted 但无实测复现，降级为 borderline",
+                "harm_validation: vuln %s 为 header_only 证据却被 accepted，降级为 rejected",
                 vd.get("vuln_id", "?"),
+            )
+            vd["verdict"] = "rejected"
+            old_note = vd.get("poc_note", "")
+            vd["poc_note"] = (
+                "⛔ 仅响应头/状态码证据(header_only)，无实测复现，"
+                "纯响应头信息不构成可被 SRC 收录的漏洞，自动降级为 rejected。"
+                + (f" 原说明: {old_note}" if old_note else "")
+            )
+            vd["reject_reason"] = (
+                "仅响应头/状态码证据（header_only），未实测复现敏感数据，"
+                "属合规/banner 问题而非可收录漏洞"
+            )
+
+        # ★ 核心修复 2：未实际调 proxy_send_request 就判 accepted → 降级为 borderline
+        # 但 body_confirmed / content_match 是响应体级强证据（已含敏感数据/指纹匹配），
+        # 可不依赖工具实测复现即保留 accepted，避免误降级真实漏洞。
+        elif (not matched_traces
+                and vd.get("verdict") == "accepted"
+                and tool_trace is not None
+                and orig_eq not in ("body_confirmed", "content_match")):
+            log.warning(
+                "harm_validation: vuln %s accepted 但无实测复现且非强证据(%s)，降级为 borderline",
+                vd.get("vuln_id", "?"), orig_eq or "无标签",
             )
             vd["verdict"] = "borderline"
             old_note = vd.get("poc_note", "")

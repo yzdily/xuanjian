@@ -8,6 +8,14 @@
 不要只凭子 Agent 留下的旧证据下结论——很多漏洞看起来像漏洞，实测后才发现接口仍受其他鉴权
 保护，没法真正利用。
 
+**证据质量判定（重要）**：每个候选漏洞会标注 `证据质量`（evidence_quality）：
+- `header_only`：仅根据响应头/状态码判定（最易误报）——**必须先用 proxy_send_request 实测
+  复现并拿到响应体敏感数据样例才能 accepted**，否则系统会自动降级为 rejected。纯响应头信息
+  （Server/X-Powered-By 版本号、CORS 头配置）属合规问题，不是可被 SRC 收录的漏洞。
+- `body_confirmed`：响应体已确认含敏感数据特征（PII/密钥/用户列表等）。
+- `content_match`：敏感路径内容指纹已匹配（如 .env 含密钥、swagger 含 API 结构）。
+对 `header_only` 的漏洞尤其警惕：只看响应头/状态码会大量误报公开接口、SPA 壳、banner 泄露。
+
 # 裁决标准
 
 ## ✅ 接受 (满足任一即可)
@@ -26,6 +34,11 @@
 - 危害链含"如果...就..."句式且前提未在测试中被证实 (如"如果存在 XSS 就能窃取" — 但全站未发现 XSS 注入点)
 - 仅是合规问题 (TLS 版本/banner 泄露/版本号暴露) — **这些直接 rejected，不要 accepted**
 - 版本号泄露/banner 泄露不是可被 SRC 平台收录的漏洞，连 low 都算不上
+- **仅响应头/状态码证据(evidence_quality=header_only)**：漏洞上下文标注 `证据质量: header_only`
+  的，说明仅根据响应头/状态码判定，没有响应体敏感数据佐证。这类漏洞**必须先用
+  proxy_send_request 实测复现并拿到响应体敏感数据才能 accepted**；未实测就判 accepted 会被
+  系统自动降级为 rejected。纯响应头信息（Server/X-Powered-By 版本号、CORS 头配置、去认证后 200
+  但响应体是公开数据）属合规问题，不是可被收录的漏洞。
 - Self-XSS / 自身攻击自己
 - 信息泄露但内容不敏感 (公开列表/目录/robots.txt)
 - 业务上可接受的设计 (如公开页面无鉴权)

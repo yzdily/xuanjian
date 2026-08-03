@@ -112,13 +112,19 @@ def _write_fast_scanner_results(
             for api in (fp.related_apis or []):
                 api_url = api.split(" ", 1)[-1].lower().rstrip("/") if " " in api else api.lower().rstrip("/")
                 if finding_url == api_url or finding_url in api_url or api_url in finding_url:
+                    # ★ 将 evidence_quality 追加到 evidence_response 末尾，
+                    #    供 harm_validation collect_vulnerabilities 解析（无需改 mark_check 接口）
+                    eq = getattr(finding, "evidence_quality", "") or ""
+                    ev = getattr(finding, "evidence", "") or ""
+                    if eq:
+                        ev = f"{ev}\n[evidence_quality={eq}]"
                     marked = fp.mark_check(
                         vuln_type=finding.vuln_type,
                         result=CheckResult.VULNERABLE,
                         detail=finding.detail,
                         severity=finding.severity,
                         evidence_request=getattr(finding, "payload", ""),
-                        evidence_response=getattr(finding, "evidence", ""),
+                        evidence_response=ev,
                         fix_suggestion=getattr(finding, "fix_suggestion", ""),
                     )
                     if marked:
@@ -140,6 +146,8 @@ def _write_fast_scanner_results(
                 "evidence": (finding.evidence or "")[:500],
                 "payload": finding.payload,
                 "fix_suggestion": finding.fix_suggestion,
+                # ★ 证据质量（header_only/body_confirmed/content_match）
+                "evidence_quality": getattr(finding, "evidence_quality", "") or "",
             })
 
     # 将 orphan findings 存入 sitemap，确保不丢失

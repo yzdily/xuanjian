@@ -182,6 +182,28 @@ def _check_api_publicly_called(sitemap: "Sitemap", vuln_url: str) -> str:
     return "; ".join(evidences)
 
 
+# 用于从 evidence_response 末尾剥离 FastScanner 注入的 [evidence_quality=xxx] 标记
+_EQ_TAG_RE = re.compile(r"\[evidence_quality=([a-z_]+)\]\s*$", re.IGNORECASE)
+
+
+def _extract_evidence_quality(evidence_response: str) -> tuple[str, str]:
+    """从 evidence_response 末尾剥离 [evidence_quality=xxx] 标记。
+
+    FastScanner 在写 sitemap 时把 evidence_quality 追加到 evidence_response 末尾，
+    这里剥离出来供 harm_validation 二次裁决使用，避免标记污染展示给 LLM 的证据文本。
+
+    Returns:
+        (clean_response, evidence_quality): 清理后的响应文本 + 证据质量等级
+    """
+    if not evidence_response:
+        return "", ""
+    m = _EQ_TAG_RE.search(evidence_response)
+    if m:
+        clean = _EQ_TAG_RE.sub("", evidence_response).rstrip()
+        return clean, m.group(1).lower()
+    return evidence_response, ""
+
+
 def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
     """从 sitemap 收集所有标记为漏洞的项,返回统一格式。
 
@@ -217,6 +239,9 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
 
             vt = getattr(c, "vuln_type", "") or getattr(c, "check_type", "") or "漏洞"
             evidence_req_text = getattr(c, "evidence_request", "") or ""
+            # ★ 从 evidence_response 末尾剥离 [evidence_quality=xxx] 标记
+            evidence_resp_clean, eq_value = _extract_evidence_quality(
+                getattr(c, "evidence_response", "") or "")
 
             # ★ 标题兜底：优先用 item/description，为空时从 evidence_request
             # 提取真实接口 URL 生成 "vuln_type - url" 标题，避免空标题或纯 "漏洞 @ "
@@ -234,12 +259,15 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
                 "url": fp_url,
                 "severity_original": sev_str,
                 "detail": (getattr(c, "detail", "") or "")[:1500],
-                "evidence_request": (getattr(c, "evidence_request", "") or "")[:2000],
-                "evidence_response": (getattr(c, "evidence_response", "") or "")[:2000],
+                "evidence_request": evidence_req_text[:2000],
+                "evidence_response": evidence_resp_clean[:2000],
                 "reproduce_steps": (getattr(c, "reproduce_steps", "") or "")[:1500],
                 "fix_suggestion": (getattr(c, "fix_suggestion", "") or "")[:800],
                 "public_api_evidence": public_evidence,
                 "candidate_level": candidate_level,
+                # ★ 证据质量（header_only=仅响应头/状态码, body_confirmed=响应体已确认含敏感数据,
+                #   content_match=敏感路径内容指纹已匹配）
+                "evidence_quality": eq_value,
             })
 
     # 2. XSS findings (status == confirmed / needs_review 都算候选)
@@ -312,6 +340,8 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
             "public_api_evidence": public_evidence,
             # 孤儿发现未经 LLM 确认，默认疑似，交 harm_validation 裁决
             "candidate_level": "suspected",
+            # ★ 证据质量（FastScanner 已标注）
+            "evidence_quality": f.get("evidence_quality", "") or "",
         })
 
     # 4. 脚本广扫发现（统一作为 suspected 候选）
@@ -420,6 +450,14 @@ def build_context_for_llm(
         parts.append(f"- **标题**: {title}")
         parts.append(f"- **类型**: {vuln_type}")
         parts.append(f"- **候选级别**: {candidate_level}（confirmed=已确认/suspected=疑似待验证）")
+        eq = v.get("evidence_quality", "") or ""
+        if eq:
+            eq_desc = {
+                "header_only": "仅响应头/状态码证据（最易误报，必须实测复现才能 accepted）",
+                "body_confirmed": "响应体已确认含敏感数据",
+                "content_match": "敏感路径内容指纹已匹配",
+            }.get(eq, eq)
+            parts.append(f"- **证据质量**: {eq} — {eq_desc}")
         parts.append(f"- **来源**: {v.get('source', '') or '未知'}")
         parts.append(f"- **URL**: `{v.get('url', '') or '未知'}`")
         parts.append(f"- **功能模块**: {v.get('module', '') or v.get('feature', '') or '未知'}")

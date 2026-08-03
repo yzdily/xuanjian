@@ -49,6 +49,11 @@ class VulnFinding:
     evidence: str = ""
     payload: str = ""
     fix_suggestion: str = ""
+    # ★ 证据质量（供 harm_validation 二次裁决参考）：
+    #   header_only   = 仅根据响应头判定，无响应体敏感数据佐证（最易误报）
+    #   body_confirmed = 响应体已确认含敏感数据特征
+    #   content_match = 敏感路径/文件内容特征已匹配预期
+    evidence_quality: str = ""
 
 
 @dataclass
@@ -210,13 +215,187 @@ CORS_VULN_HEADERS = {
     "access-control-allow-credentials": ["true"],
 }
 
-# 信息泄露响应头
+# 信息泄露响应头：仅当值含具体版本号时才视为有价值的泄露。
+# 纯 banner（如 "nginx"、"Express" 无版本号）几乎所有站点都有，不构成可被 SRC 收录的漏洞。
 INFO_LEAK_HEADERS = {
-    "x-powered-by": r".+",  # 任何值都算信息泄露
+    "x-powered-by": r".+",
     "server": r".+",
     "x-aspnet-version": r".+",
     "x-generator": r".+",
 }
+
+# 版本号特征：匹配 "nginx/1.2.3"、"Apache/2.4.1 (Ubuntu)"、"Microsoft-HTTPAPI/2.0"、
+# "Express/4.18.2"、"(ASP.NET 4.0.30319)" 等。纯产品名不带版本号（如 "nginx"、"cloudflare"）不算。
+_HEADER_VERSION_RE = re.compile(
+    r"/?\s*v?\d+(?:\.\d+){1,3}"          # 1.2 / 1.2.3 / 1.2.3.4
+    r"|"                                  # 或
+    r"\(\s*[A-Za-z.\s]+\s*\d+(?:\.\d+)+\s*\)",  # (ASP.NET 4.0.30319)
+    re.IGNORECASE,
+)
+
+
+# ============================================================
+# 多因素判定辅助：响应体敏感数据 / 公开数据特征
+# （用于未授权访问、CORS、信息泄露等多因素验证，避免"只看响应头/长度"误报）
+# ============================================================
+
+# 敏感数据特征：响应体出现这些才认为"真有危害"
+SENSITIVE_DATA_PATTERNS = [
+    r"(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?token|private[_-]?key)"
+    r"\s*[:=]\s*['\"]?[A-Za-z0-9+/=_\-]{6,}",          # 密钥/令牌赋值
+    r"\b\d{15,18}\b",                                    # 身份证号
+    r"\b1[3-9]\d{9}\b",                                  # 中国手机号
+    r"\b4\d{15}\b|\b5[1-5]\d{14}\b",                     # 银行卡号
+    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",  # 邮箱（批量出现才算）
+    r"\"(?:user|admin|account|order|balance|idcard|phone|email|address)\"\s*:\s*",
+    # JSON 字段暴露用户/账户/订单等私有数据
+    r"<(?:userList|userInfo|accountList|orderList|user_list|admin_list)\b",
+    r"(?:jdbc:|mysql://|postgresql://|redis://|mongodb://)",  # 数据库连接串
+    r"(?:access_key|secret_key|accesskeyid|secretaccesskey)\s*[:=]",
+    r"AKIA[0-9A-Z]{16}",                                 # AWS Access Key
+    r"-----BEGIN (?:RSA |EC |)PRIVATE KEY-----",          # 私钥
+    r"stack[_-]?trace|exception\s+(?:in|at)\s+",         # 错误堆栈
+    r"/home/\w+|/var/\w+|C:\\\\(Users|inetpub|wwwroot)",  # 服务器内部路径
+    r"phpinfo|PHP_VERSION|DOCUMENT_ROOT",                # phpinfo 泄露
+]
+
+# 公开数据特征：响应体是这些内容时，即使无需认证也不算漏洞
+PUBLIC_DATA_PATTERNS = [
+    r"<title>\s*(?:example|test|hello|welcome|首页|登录|home)\b",
+    r"<!doctype html>[\s\S]{0,300}<html",                # 普通 HTML 壳/落地页
+    r"<div id=\"(?:root|app|app-root)\"",                # SPA 空壳
+    r"(?:公告|通知|新闻|帮助|faq|about|contact)\s*[:：]?",
+    r"(?:price|product|商品|价格|费率|利率|限额|杠杆)\s*[:：]",  # 交易参数（面向公众）
+    r"(?:version|copyright|license)\s*[:：]",            # 版本/版权声明
+]
+
+# 公开/无害 Content-Type：这类响应体一般不含敏感数据
+_PUBLIC_CONTENT_TYPES = ("text/html", "text/css", "application/javascript",
+                         "image/", "font/", "text/plain")
+
+
+def _body_contains_sensitive_data(text: str) -> bool:
+    """检测响应体是否包含真实敏感数据特征。
+
+    用于未授权访问/CORS/信息泄露的多因素验证：只有响应体确实含敏感数据，
+    才认为该漏洞有实际危害，避免只看响应头/状态码就判漏洞。
+    """
+    if not text or len(text) < 5:
+        return False
+    # 邮箱需要批量出现才算（单个邮箱可能是示例）
+    email_count = len(re.findall(
+        r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b", text))
+    for pat in SENSITIVE_DATA_PATTERNS:
+        if "email" in pat.lower():
+            continue
+        if re.search(pat, text, re.IGNORECASE):
+            return True
+    if email_count >= 3:
+        return True
+    return False
+
+
+def _is_public_data(text: str, content_type: str = "") -> bool:
+    """检测响应体是否属于公开/无害数据。
+
+    用于未授权访问/CORS 判定：如果响应体是公开数据（公告、商品、SPA 壳等），
+    即使无需认证也不应判为漏洞。
+    """
+    if not text:
+        return True
+    ct = (content_type or "").lower()
+    # 纯静态资源一般不含敏感业务数据
+    if any(ct.startswith(p) for p in ("image/", "font/", "text/css",
+                                       "application/javascript", "text/plain")):
+        if len(text) < 200:
+            return True
+    for pat in PUBLIC_DATA_PATTERNS:
+        if re.search(pat, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def _header_value_leaks_version(val: str) -> bool:
+    """判断响应头值是否泄露了具体版本号。
+
+    纯产品名（如 "nginx"、"cloudflare"、"Express" 无版本）不算泄露，
+    因为无法据版本号匹配已知 CVE。
+    """
+    if not val:
+        return False
+    return bool(_HEADER_VERSION_RE.search(val))
+
+
+# 敏感路径内容指纹：path 后缀/关键字 → 预期内容特征（命中才算真泄露，避免 SPA 兜底 200 误报）
+SENSITIVE_PATH_FINGERPRINTS = {
+    # 配置文件类：应含键值对
+    ".env": [r"^[A-Z_]+\s*=", r"\b(?:DB_|APP_|SECRET|API_|TOKEN)"],
+    "config.yml": [r"^\s*\w+:\s*", r"(?:database|server|port|host)\s*:"],
+    "application.yml": [r"^\s*\w+:\s*", r"(?:spring|datasource|server)\s*:"],
+    "web.config": [r"<configuration", r"<connectionStrings"],
+    "config.php.bak": [r"<\?php", r"\$(?:db|config|host|pass)"],
+    ".htaccess": [r"RewriteRule", r"Allow(?:From|Override)"],
+    ".htpasswd": [r"^[^:]+:\$[0-9a-z]\$", r"\$2[aby]\$"],
+    # Git/SVN
+    ".git/config": [r"\[core\]", r"\[remote\b"],
+    ".git/head": [r"^ref:\s*refs/"],
+    ".svn/entries": [r"^\d+\n", r"svn://", r"dir\n"],
+    # API 文档
+    "swagger-ui.html": [r"swagger", r"SwaggerUI"],
+    "api-docs": [r'"swagger"\s*:', r'"paths"\s*:', r'"openapi"\s*:'],
+    "openapi.json": [r'"openapi"\s*:', r'"paths"\s*:'],
+    "v2/api-docs": [r'"swagger"\s*:', r'"paths"\s*:', r'"basePath"\s*:'],
+    # Spring Actuator
+    "actuator": [r'"_links"', r'"diskSpace"', r'"health"'],
+    "actuator/env": [r'"propertySources"', r'"property"', r'"configName"'],
+    "actuator/heapdump": [r"^\x00", r"JAVA PROFILE"],  # 二进制
+    "actuator/mappings": [r'"handler"', r'"mappings"'],
+    # 数据库备份
+    ".sql": [r"CREATE TABLE", r"INSERT INTO", r"^--\s*-{2,}"],
+    ".zip": [r"^PK\x03\x04"],  # ZIP 魔数
+    # phpinfo
+    "phpinfo.php": [r"PHP Version", r"phpinfo"],
+    "info.php": [r"PHP Version", r"phpinfo"],
+    "test.php": [r"PHP Version", r"phpinfo", r"<\?php"],
+    # 开发工具
+    "druid/index.html": [r"Druid", r"StatView"],
+    "druid/login.html": [r"Druid", r"login"],
+    "h2-console": [r"H2 Console", r"h2"],
+    "server-status": [r"Apache Status", r"Server uptime"],
+    # 依赖/清单
+    "package.json": [r'"name"\s*:', r'"dependencies"\s*:'],
+    "composer.json": [r'"name"\s*:', r'"require"\s*:'],
+}
+
+
+def _verify_sensitive_path_content(path: str, text: str) -> tuple[bool, str]:
+    """验证敏感路径响应体是否匹配预期内容特征。
+
+    Returns:
+        (matched, evidence_quality):
+        - (True, "content_match")  路径有指纹且内容命中 → 强证据
+        - (True, "header_only")     路径无指纹但 200 + 内容较大 → 弱证据（可能误报）
+        - (False, "")               路径有指纹但内容未命中 → 跳过（多为 SPA 兜底）
+    """
+    if not text:
+        return False, ""
+    path_lower = path.lower()
+    # 查找匹配的指纹（按 path 后缀/子串匹配）
+    # ★ 按长度降序迭代：让更具体的 key（如 "actuator/env"）先于
+    #   更宽泛的 key（如 "actuator"）匹配，避免误用错误指纹导致漏判。
+    for key in sorted(SENSITIVE_PATH_FINGERPRINTS, key=len, reverse=True):
+        patterns = SENSITIVE_PATH_FINGERPRINTS[key]
+        if key in path_lower:
+            for pat in patterns:
+                if re.search(pat, text, re.IGNORECASE):
+                    return True, "content_match"
+            # 有指纹但都没命中 → 大概率是 SPA 兜底页/默认页，跳过
+            return False, ""
+    # 无指纹的路径（少数）：仅当内容足够大且非 HTML 壳时给弱证据
+    if len(text) > 50 and not re.search(r"<(?:html|!doctype|div id=\"(?:root|app))",
+                                         text, re.IGNORECASE):
+        return True, "header_only"
+    return False, ""
 
 
 # ============================================================
@@ -678,18 +857,44 @@ class FastScanner:
             return findings
 
         # 响应头信息泄露（基线已拿到，复用）
+        # ★ 多因素验证：纯 banner（无版本号）几乎所有站点都有，不构成可被 SRC 收录的漏洞，
+        #    不再产出 VulnFinding。只有泄露了具体版本号、且响应体也含敏感信息时才报告。
         if baseline.status_code < 500:
-            for header, pattern in INFO_LEAK_HEADERS.items():
+            baseline_text = baseline.text or ""
+            baseline_ct = baseline.headers.get("content-type", "")
+            body_sensitive = _body_contains_sensitive_data(baseline_text)
+            for header in INFO_LEAK_HEADERS:
                 val = baseline.headers.get(header, "")
-                if val and re.match(pattern, val):
+                if not val:
+                    continue
+                # 因素1：响应头值必须含具体版本号才视为有价值的泄露
+                if not _header_value_leaks_version(val):
+                    continue
+                # 因素2：响应体也泄露敏感信息（phpinfo/堆栈/密钥等）→ 升级 medium
+                if body_sensitive:
+                    findings.append(VulnFinding(
+                        vuln_type="信息泄露",
+                        severity="medium",
+                        url=target.url,
+                        method="GET",
+                        detail=(f"响应头 {header} 泄露版本号({val})，且响应体含敏感数据，"
+                                f"可据版本号匹配已知 CVE"),
+                        evidence=f"{header}: {val}\n响应体片段: {baseline_text[:200]}",
+                        fix_suggestion=f"移除或混淆 {header} 响应头，清理响应体敏感信息",
+                        evidence_quality="body_confirmed",
+                    ))
+                else:
+                    # 仅版本号泄露、无响应体佐证 → 标 header_only，留给二次裁决
                     findings.append(VulnFinding(
                         vuln_type="信息泄露",
                         severity="low",
                         url=target.url,
                         method="GET",
-                        detail=f"响应头 {header} 泄露服务器信息: {val}",
+                        detail=(f"响应头 {header} 泄露版本号: {val}（仅响应头证据，"
+                                f"需结合已知 CVE 才有实际危害）"),
                         evidence=f"{header}: {val}",
                         fix_suggestion=f"移除或混淆 {header} 响应头",
+                        evidence_quality="header_only",
                     ))
 
         # 基线 500/404 → base 路径失效，跳过敏感路径批量探测
@@ -706,23 +911,25 @@ class FastScanner:
                                        rule_tag="InfoLeak", payload_tag=path)
             if not resp:
                 return None
-            # 200 且有内容
+            # ★ 多因素验证：仅看 200 不够，必须内容匹配预期指纹才算真泄露
             if resp.status_code == 200 and len(resp.text) > 10:
-                # 排除 SPA 拦截（所有路径都返回 200 HTML）
-                content_type = resp.headers.get("content-type", "")
-                if "text/html" in content_type and len(resp.text) < 500:
-                    # 可能是 SPA 拦截，跳过
-                    if "<div id=" in resp.text or "<app-root" in resp.text:
-                        return None
+                matched, quality = _verify_sensitive_path_content(path, resp.text)
+                if not matched:
+                    # 内容未匹配指纹 → 多为 SPA 兜底页/默认页，跳过
+                    return None
+                severity = "medium" if quality == "content_match" else "low"
                 return VulnFinding(
                     vuln_type="信息泄露",
-                    severity="medium",
+                    severity=severity,
                     url=url,
                     method="GET",
-                    detail=f"敏感路径可访问: {path}",
-                    evidence=f"HTTP {resp.status_code}, Content-Length: {len(resp.text)}",
+                    detail=(f"敏感路径可访问: {path}（内容指纹"
+                            f"{'已确认' if quality == 'content_match' else '未匹配，弱证据'}）"),
+                    evidence=f"HTTP {resp.status_code}, Content-Length: {len(resp.text)}\n"
+                             f"响应体片段: {resp.text[:200]}",
                     payload="",
                     fix_suggestion=f"限制对 {path} 的访问，添加访问控制",
+                    evidence_quality=quality,
                 )
             return None
 
@@ -764,24 +971,45 @@ class FastScanner:
         if not noauth_resp:
             return []
 
-        # 如果去认证后仍返回 200 且内容相似 → 未授权访问
+        # 如果去认证后仍返回 200 且内容相似 → 疑似未授权访问
         if noauth_resp.status_code == 200 and auth_resp.status_code == 200:
             auth_len = len(auth_resp.text)
             noauth_len = len(noauth_resp.text)
+            noauth_ct = noauth_resp.headers.get("content-type", "")
             # 内容相似度 > 80%
             if abs(auth_len - noauth_len) < max(auth_len * 0.2, 100):
-                # 排除 SPA 空壳
-                if "text/html" in noauth_resp.headers.get("content-type", "") and noauth_len < 500:
-                    pass  # SPA 空壳，跳过
-                else:
+                noauth_text = noauth_resp.text or ""
+                # ★ 多因素验证：只看长度/状态码会大量误报公开接口
+                if _is_public_data(noauth_text, noauth_ct):
+                    # 公开数据（公告/商品/SPA 壳/静态资源）→ 不算漏洞
+                    log.info("[SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: %s", target.url)
+                    pass
+                elif _body_contains_sensitive_data(noauth_text):
+                    # 响应体确实含敏感数据（PII/密钥/用户列表）→ 高危，强证据
                     findings.append(VulnFinding(
                         vuln_type="未授权访问",
                         severity="high",
                         url=target.url,
                         method=target.method,
-                        detail=f"去除认证头后仍可访问，响应长度对比: 认证={auth_len} / 去认证={noauth_len}",
-                        evidence=f"无认证响应: {noauth_resp.text[:300]}",
+                        detail=(f"去除认证头后仍返回 200，且响应体含敏感数据，"
+                                f"响应长度对比: 认证={auth_len} / 去认证={noauth_len}"),
+                        evidence=f"无认证响应: {noauth_text[:300]}",
                         fix_suggestion="添加认证中间件，对所有 API 请求强制鉴权",
+                        evidence_quality="body_confirmed",
+                    ))
+                else:
+                    # 既非明显公开也非含敏感数据 → 弱证据，留二次裁决
+                    findings.append(VulnFinding(
+                        vuln_type="未授权访问",
+                        severity="medium",
+                        url=target.url,
+                        method=target.method,
+                        detail=(f"去除认证头后仍返回 200（仅状态码+长度证据，"
+                                f"响应体未确认含敏感数据）: "
+                                f"认证={auth_len} / 去认证={noauth_len}"),
+                        evidence=f"无认证响应: {noauth_text[:300]}",
+                        fix_suggestion="添加认证中间件，并对接口返回数据做最小化",
+                        evidence_quality="header_only",
                     ))
 
         # 去认证后返回 401/403 → 正常（有鉴权）
@@ -887,35 +1115,63 @@ class FastScanner:
         acao = resp.headers.get("access-control-allow-origin", "")
         acac = resp.headers.get("access-control-allow-credentials", "")
 
+        # 先判定 CORS 头是否配置错误
+        cors_misconfigured = False
+        misconfig_desc = ""
         if acao == "*" and acac.lower() == "true":
-            findings.append(VulnFinding(
-                vuln_type="CORS配置错误",
-                severity="high",
-                url=target.url,
-                method="GET",
-                detail="CORS 配置允许任意来源 (*) 且允许携带凭据，可被任意网站跨域读取",
-                evidence=f"ACAO: {acao}, ACAC: {acac}",
-                fix_suggestion="限制 CORS 允许的来源白名单，不要使用 *",
-            ))
+            cors_misconfigured = True
+            misconfig_desc = "CORS 允许任意来源 (*) 且允许携带凭据"
         elif acao == evil_origin:
+            cors_misconfigured = True
+            misconfig_desc = "CORS 反射任意 Origin"
+        elif acao == "null" and acac.lower() == "true":
+            cors_misconfigured = True
+            misconfig_desc = "CORS 允许 null Origin 且允许凭据"
+
+        if not cors_misconfigured:
+            return findings
+
+        # ★ 多因素验证：CORS 配置错误只有当接口确实返回敏感数据才有实际危害。
+        #    公开数据/静态资源即使 CORS 宽松也无法窃取有价值信息。
+        resp_text = resp.text or ""
+        resp_ct = resp.headers.get("content-type", "")
+        if _body_contains_sensitive_data(resp_text):
             findings.append(VulnFinding(
                 vuln_type="CORS配置错误",
                 severity="high",
                 url=target.url,
                 method="GET",
-                detail="CORS 配置反射任意 Origin，可被恶意网站跨域读取数据",
-                evidence=f"ACAO 反射 Origin: {acao}",
-                fix_suggestion="使用严格的来源白名单，不要反射 Origin 头",
+                detail=(f"{misconfig_desc}，且响应体含敏感数据，"
+                        f"可被恶意网站跨域读取"),
+                evidence=f"ACAO: {acao}, ACAC: {acac}\n响应体片段: {resp_text[:200]}",
+                fix_suggestion="限制 CORS 允许的来源白名单，不要使用 * 或反射 Origin",
+                evidence_quality="body_confirmed",
             ))
-        elif acao == "null" and acac.lower() == "true":
+        elif _is_public_data(resp_text, resp_ct):
+            # 公开数据/静态资源 → CORS 宽松无实际危害，降级为 low
+            findings.append(VulnFinding(
+                vuln_type="CORS配置错误",
+                severity="low",
+                url=target.url,
+                method="GET",
+                detail=(f"{misconfig_desc}，但响应体为公开数据/静态资源，"
+                        f"无实际跨域窃取价值"),
+                evidence=f"ACAO: {acao}, ACAC: {acac}",
+                fix_suggestion="仍建议收紧 CORS 来源白名单",
+                evidence_quality="header_only",
+            ))
+        else:
+            # 数据敏感性未知 → 中危，留二次裁决实测
             findings.append(VulnFinding(
                 vuln_type="CORS配置错误",
                 severity="medium",
                 url=target.url,
                 method="GET",
-                detail="CORS 允许 null Origin 且允许凭据，可被 sandbox iframe 利用",
-                evidence=f"ACAO: {acao}, ACAC: {acac}",
-                fix_suggestion="不要允许 null Origin",
+                detail=(f"{misconfig_desc}（仅响应头证据，响应体未确认含敏感数据，"
+                        f"需实测跨域读取是否真能拿到敏感信息）"),
+                evidence=f"ACAO: {acao}, ACAC: {acac}\n响应体片段: {resp_text[:200]}",
+                fix_suggestion="限制 CORS 允许的来源白名单，不要使用 * 或反射 Origin",
+                evidence_quality="header_only",
             ))
 
         return findings

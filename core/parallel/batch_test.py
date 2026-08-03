@@ -952,13 +952,18 @@ def convert_findings_to_checklist_results(
             for api in (fp.related_apis or []):
                 api_url = api.split(" ", 1)[-1].lower().rstrip("/") if " " in api else api.lower().rstrip("/")
                 if finding_url == api_url or finding_url in api_url or api_url in finding_url:
+                    # ★ 传递 evidence_quality 到 evidence_response 末尾（供 harm_validation 解析）
+                    _eq = getattr(finding, "evidence_quality", "") or ""
+                    _ev = getattr(finding, "evidence", "") or ""
+                    if _eq:
+                        _ev = f"{_ev}\n[evidence_quality={_eq}]"
                     marked = fp.mark_check(
                         vuln_type=finding.vuln_type,
                         result=_CR.VULNERABLE,
                         detail=getattr(finding, "detail", ""),
                         severity=getattr(finding, "severity", ""),
                         evidence_request=getattr(finding, "payload", ""),
-                        evidence_response=getattr(finding, "evidence", ""),
+                        evidence_response=_ev,
                         fix_suggestion=getattr(finding, "fix_suggestion", ""),
                     )
                     if marked:

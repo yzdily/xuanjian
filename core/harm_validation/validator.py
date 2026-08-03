@@ -150,6 +150,29 @@ async def validate_harm(
                     vd["_original"] = v
                     break
 
+    # ★ 纯文本模式无 tool_trace，header_only 证据的 accepted 一律降级为 rejected
+    #    （纯响应头/状态码/banner 泄露不构成可被 SRC 收录的漏洞，且未实测复现）
+    for vd in verdicts:
+        if vd.get("verdict") != "accepted":
+            continue
+        orig = vd.get("_original") or {}
+        orig_eq = (orig.get("evidence_quality", "") or "").lower()
+        if orig_eq == "header_only":
+            log.warning(
+                "harm_validation(纯文本): vuln %s 为 header_only 证据却被 accepted，降级为 rejected",
+                vd.get("vuln_id", "?"),
+            )
+            vd["verdict"] = "rejected"
+            old_note = vd.get("poc_note", "")
+            vd["poc_note"] = (
+                "⛔ 仅响应头/状态码证据(header_only)，纯文本模式未实测复现，"
+                "自动降级为 rejected。"
+                + (f" 原说明: {old_note}" if old_note else "")
+            )
+            vd["reject_reason"] = (
+                "仅响应头/状态码证据（header_only），未实测复现敏感数据"
+            )
+
     # 统计
     stats = {"accepted": 0, "borderline": 0, "rejected": 0}
     for vd in verdicts:
