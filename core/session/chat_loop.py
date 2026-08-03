@@ -143,10 +143,12 @@ class ChatLoopMixin:
                     msg = await asyncio.wait_for(progress_queue.get(), timeout=2.0)
                     if not msg.strip():
                         continue
-                    # ★ 2026-05-27: 收到爬虫进度消息 → 重置外部静默计时器
-                    # 爬虫 _report() 在所有关键路径（页面加载、菜单分析、点击成功/失败、跳转处理）都有调用
-                    # 只要爬虫在产出日志，就说明它还活着，外部 180s silent_timeout 不应误杀
-                    last_progress_time = now
+                    # ★ 修复：不再无条件重置 last_progress_time
+                    # 原逻辑：收到任何 _report（含每 30s 一次的心跳 💓）都重置静默计时器，
+                    #   导致 silent_timeout 永不触发，爬虫在菜单/选择器循环中空转无法被杀。
+                    # 现逻辑：静默超时完全依赖循环开头的 progress_tick 检测（line 113-116），
+                    #   progress_tick 只在真实进度（新页面/新 API/点击成功）时递增，
+                    #   心跳不算进度，不重置 → 无真实进展时 silent_timeout 正常触发。
                     if msg.startswith("__EVENT__:"):
                         try:
                             payload = json.loads(msg[len("__EVENT__:"):])
@@ -611,7 +613,10 @@ class ChatLoopMixin:
             progress_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
 
             def on_crawler_progress(msg: str):
+                # ★ 爬虫进度同时写日志文件：原逻辑只走 SSE 事件流，
+                #   日志文件在爬虫运行期间零输出，用户误以为卡死
                 try:
+                    log.info("[CRAWL] %s", msg)
                     progress_queue.put_nowait(msg)
                 except Exception:
                     pass

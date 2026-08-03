@@ -241,6 +241,10 @@ class FastScanner:
         self._timeout_count = 0
         self._error_count = 0
         self._lock = asyncio.Lock()
+        # ★ WAF 封禁标志：连续被拦截超过阈值后置 True，所有规则检测提前退出
+        # 避免对已被 WAF 全量拦截的目标继续打数千次无效请求（实测 zzidc.com 拦截 1737 次仍在打）
+        self._waf_blocked = False
+        self._waf_block_threshold = 20  # 连续 20 次 403/418/429/503 即判定 WAF 封禁
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -271,6 +275,10 @@ class FastScanner:
           深度绕过（编码/分块/注释变体）由 WAFBypassFuzzer 负责，
           本引擎仅做快速规则检测 + 限速保护。
         """
+        # ★ WAF 封禁早退：一旦全局封禁标志置位，后续所有请求直接返回 None
+        if self._waf_blocked:
+            return None
+
         client = await self._get_client()
         # 去认证：移除 Cookie / Authorization
         req_headers = dict(headers) if headers else {}
@@ -300,6 +308,14 @@ class FastScanner:
                         log.warning("[SCAN] WAF 拦截 %d 次，降速 %0.1fs",
                                     self._blocked_count, delay)
                         await asyncio.sleep(delay)
+                    # ★ WAF 全局封禁早退：拦截次数达到阈值，置全局标志中止所有后续请求
+                    # 原逻辑仅降速不中止，导致对 zzidc.com 拦截 1737 次仍在继续打
+                    if self._blocked_count >= self._waf_block_threshold and not self._waf_blocked:
+                        self._waf_blocked = True
+                        log.warning(
+                            "[SCAN] WAF 封禁：连续被拦截 %d 次（阈值 %d），中止该目标所有后续 payload",
+                            self._blocked_count, self._waf_block_threshold
+                        )
 
             log.info("[SCAN] %s | %s %s | payload=%s | => %d %s | body=%d",
                      rule_tag, method, url, payload_tag,
@@ -341,6 +357,8 @@ class FastScanner:
 
         t0 = time.time()
         self._total_requests = 0
+        self._blocked_count = 0
+        self._waf_blocked = False  # ★ 每个目标重置 WAF 封禁标志
         findings: list[VulnFinding] = []
 
         # 并发执行所有启用的规则

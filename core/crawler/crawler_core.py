@@ -276,6 +276,20 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
             "getui.net",           # 个推
             "xg.qq.com",           # 信鸽推送
             # ================================================================
+            # 微信 / QQ 社交（非业务目标，防止爬虫跳转/嵌入资源误爬）
+            # ================================================================
+            "weixin.qq.com",       # 微信开放平台
+            "mp.weixin.qq.com",    # 微信公众号
+            "open.weixin.qq.com",  # 微信开放平台 OAuth
+            "res.wx.qq.com",       # 微信资源 CDN
+            "m.qq.com",            # QQ 移动端
+            # ================================================================
+            # 工商/企业信息查询（非业务目标，防止爬虫误爬第三方查询页）
+            # ================================================================
+            "gsxt.gov.cn",         # 国家企业信用信息公示系统
+            "qcc.com",             # 企查查
+            "tianyancha.com",      # 天眼查
+            # ================================================================
             # 国内 CDN / 静态资源
             # ================================================================
             "gtimg.cn",            # 腾讯图片 CDN
@@ -880,6 +894,12 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
             # 进而被 pyee 的 error handler 反复 emit，导致日志被刷屏数千行。
             # 修复：用 try/except 兜住，二进制 body 用 post_data_buffer 安全提取。
             if req.resource_type not in ("document", "xhr", "fetch", "websocket"):
+                return
+            # ★ 渗透测试场景：跨域 API 过滤
+            # document 类型放行（页面导航/重定向需要跟随），xhr/fetch/websocket 类型
+            # 仅记录目标域及关联域的请求，防止 beian.miit.gov.cn、kuaiyun.cn 等第三方
+            # 域名的 API 污染 sitemap（原逻辑不过滤，导致跨域 API 全部进入 sitemap）
+            if req.resource_type != "document" and not self._is_in_scope(req.url):
                 return
             # 安全提取 post_data
             post_data_str = ""
@@ -2345,6 +2365,48 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         self._report(f"  [{url[:40]}] 发现 {len(unique_menu_items)} 个菜单项, {len(non_menu_items)} 个按钮")
         # ★ 2026-05-27: 菜单分析完成 → tick+1，防止菜单展开/去重/排序阶段 silent_timeout 误判
         self._progress_tick += 1
+
+        # ★ 渗透测试场景：登录页降级策略
+        # 登录页（CAS/SSO/传统登录表单）几乎无可点击菜单，点击"登录"按钮只会触发表单提交
+        # 和页面跳转，浪费爬虫预算。检测到登录页时跳过 Phase B/C，只保留已提取的 API/JS/表单。
+        _is_login_page = False
+        try:
+            _has_password_input = await page.evaluate(
+                "() => !!document.querySelector('input[type=password]')"
+            )
+            _url_lower = url.lower()
+            _login_url_kws = ("/login", "/signin", "/sign-in", "/cas/", "/sso", "/oauth",
+                              "/auth", "/account/login", "/user/login", "/登录")
+            _is_login_page = _has_password_input or any(kw in _url_lower for kw in _login_url_kws)
+        except Exception:
+            pass
+        if _is_login_page:
+            self._report(
+                f"  [{url[:40]}] 🔐 检测到登录页面，跳过菜单/按钮点击 "
+                f"(省略 {len(unique_menu_items)} 菜单 + {len(non_menu_items)} 按钮)，仅提取 API/表单"
+            )
+            unique_menu_items = []
+            non_menu_items = []
+
+        # ★ 登录按钮黑名单：非登录页也跳过"登录/Submit/Sign In"等表单提交按钮，
+        # 防止在业务页面误点登录入口触发跳转
+        if unique_menu_items or non_menu_items:
+            _login_btn_kws = ("登录", "登入", "login", "log in", "sign in", "signin",
+                              "submit", "提交", "注 册", "注册", "register", "sign up")
+            _filtered = 0
+            for item_list in (unique_menu_items, non_menu_items):
+                kept = []
+                for item in item_list:
+                    _text = (item.get("text") or "").strip().lower()
+                    if _text and any(kw in _text for kw in _login_btn_kws):
+                        _filtered += 1
+                        continue
+                    kept.append(item)
+                item_list[:] = kept
+            if _filtered:
+                self._report(
+                    f"  [{url[:40]}] 🚫 跳过 {_filtered} 个登录/注册类按钮（防误触发表单提交跳转）"
+                )
 
         # ★ 2026-05-22 v4: 菜单优先级排序
         # 痛点：99 个菜单按 DOM 顺序点 → "登录"排第 50 → 预算耗尽时未爬到关键入口

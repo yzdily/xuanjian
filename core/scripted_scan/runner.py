@@ -14,12 +14,37 @@ from core.scripted_scan.export_openapi import export_openapi
 from core.scripted_scan.types import dedup_findings, normalize_finding
 
 
-async def _run_command(command: list[str], cwd: Path | None, timeout: float) -> tuple[int, str, str]:
+def _build_auth_env(session_info: dict | None) -> dict:
+    """从 session_info 提取认证信息，构造传给外部进程的环境变量。
+
+    外部脚本扫描器（如 api-pentest-extension）通过 PENTEST_TOKEN / PENTEST_COOKIES
+    环境变量获取认证信息，与玄鉴 session_info 解耦。
+    """
+    env = dict(os.environ)  # 继承当前环境
+    if not session_info:
+        return env
+    headers = session_info.get("headers") or {}
+    if not isinstance(headers, dict):
+        return env
+    auth = headers.get("Authorization", "") or headers.get("authorization", "")
+    if auth:
+        # 去掉 "Bearer " 前缀，api-pentest-extension 的 Config 会自动加回
+        token = auth[7:] if auth.lower().startswith("bearer ") else auth
+        env["PENTEST_TOKEN"] = token
+    cookie = headers.get("Cookie", "") or headers.get("cookie", "")
+    if cookie:
+        env["PENTEST_COOKIES"] = cookie
+    return env
+
+
+async def _run_command(command: list[str], cwd: Path | None, timeout: float,
+                       env: dict | None = None) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(cwd) if cwd else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -95,7 +120,8 @@ async def run_scripted_scan(sitemap, session_info: dict | None = None) -> tuple[
         command.extend(["--output", str(output_file)])
 
     timeout = float(os.getenv("XUANJIAN_SCRIPTED_SCAN_TIMEOUT", "300"))
-    returncode, stdout, stderr = await _run_command(command, cwd=None, timeout=timeout)
+    auth_env = _build_auth_env(session_info)
+    returncode, stdout, stderr = await _run_command(command, cwd=None, timeout=timeout, env=auth_env)
 
     raw_findings = _load_jsonl(output_file)
     if not raw_findings and stdout.strip():
