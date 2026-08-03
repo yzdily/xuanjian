@@ -219,6 +219,11 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
                 # ★ 脚本广扫孤儿发现，统一进入 HarmValidator 裁决
                 "_scripted_scan_findings": getattr(self, "_scripted_scan_findings", []) or [],
                 "_scripted_scan_stats": getattr(self, "_scripted_scan_stats", {}) or {},
+                # ★ 凭证持久化：保存注入的 cookies/auth/headers，供"继续"恢复
+                "_inject_cookies": getattr(self, "_inject_cookies", "") or "",
+                "_inject_auth": getattr(self, "_inject_auth", "") or "",
+                "_inject_headers": getattr(self, "_inject_headers", {}) or {},
+                "_has_credentials": getattr(self, "_has_credentials", False),
             }
             try:
                 raw = json.dumps(data, ensure_ascii=False, indent=2, default=str)
@@ -288,4 +293,9 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         # ★ 恢复脚本广扫孤儿发现
         self._scripted_scan_findings = data.get("_scripted_scan_findings", [])
         self._scripted_scan_stats = data.get("_scripted_scan_stats", {})
+        # ★ 恢复凭证信息（供"继续"命令恢复登录状态）
+        self._inject_cookies = data.get("_inject_cookies", "") or ""
+        self._inject_auth = data.get("_inject_auth", "") or ""
+        self._inject_headers = data.get("_inject_headers", {}) or {}
+        self._has_credentials = data.get("_has_credentials", False)
         return True

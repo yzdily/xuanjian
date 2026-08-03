@@ -268,6 +268,14 @@ class ChatLoopMixin:
         # 如果已有 sitemap 且在 idle 阶段 → 恢复
         # ---- Phase 报告阶段 ----
         if self.phase == "report":
+            # ★ FAST 模式或未配置 LLM：报告阶段追问用本地规则回复
+            _user_mode = getattr(self, "user_scan_mode", "smart")
+            if self.llm is None or _user_mode == "fast":
+                yield self._event("system",
+                    "ℹ️ FAST 模式/未配置 LLM，报告阶段不支持智能追问。"
+                    "扫描结果已生成，如需深度分析请切换到标准/深度模式重新扫描。")
+                yield self._event("done", "FAST 模式扫描完成")
+                return
             yield self._event("thinking", "报告阶段 — 处理追问")
             self.current_context.add_user(user_message)
             messages = self.current_context.get_messages()
@@ -308,11 +316,77 @@ class ChatLoopMixin:
 
         # ---- idle 阶段：LLM 意图识别 ----
         if self.phase == "idle":
-            yield self._event("thinking", "正在理解您的需求...")
-            intent = await parse_user_intent(self.llm, user_message)
-            log.info("intent 解析结果: intent_kind=%s, has_target=%s, target_url=%s, has_packet=%s",
-                     intent.get("intent_kind"), intent.get("has_target"),
-                     intent.get("target_url", "")[:80], bool(intent.get("packet")))
+            # ★ "继续"指令检测：如果用户发"继续"/"resume"且有之前的扫描目标，恢复扫描
+            _resume_keywords = ("继续", "resume", "继续扫描", "继续测试", "恢复扫描", "恢复测试", "go on", "continue")
+            _trimmed_lower = user_message.strip().lower()
+            _is_resume_cmd = any(_trimmed_lower == kw or _trimmed_lower == kw.lower() for kw in _resume_keywords)
+            _prev_target = getattr(self, "target_url", "") or (self.sitemap.target if self.sitemap else "")
+
+            if _is_resume_cmd and _prev_target:
+                log.info("检测到\"继续\"指令，恢复对 %s 的扫描", _prev_target)
+                yield self._event("system", f"恢复扫描: {_prev_target}")
+                # 复用已有 sitemap（保留已抓数据），不重置
+                if self.sitemap and self.sitemap.target == _prev_target:
+                    log.info("复用已有 sitemap: target=%s, 功能点 %d 个", _prev_target, len(self.sitemap.features))
+                # 设置好状态，直接跳到 Phase 0 扫描入口（跳过 intent 解析和凭证注入）
+                url = _prev_target
+                self.target_url = url
+                self.target_info = url
+                self._sync_tool_executor()
+                # ★ 恢复凭证：从实例字段（_try_recover 已恢复）或 sitemap 持久化字段中读取
+                _saved_cookies = getattr(self, "_inject_cookies", "") or (getattr(self.sitemap, "_inject_cookies", "") if self.sitemap else "")
+                _saved_auth = getattr(self, "_inject_auth", "") or (getattr(self.sitemap, "_inject_auth", "") if self.sitemap else "")
+                _saved_headers = getattr(self, "_inject_headers", {}) or (getattr(self.sitemap, "_inject_headers", {}) if self.sitemap else {})
+                _had_creds = getattr(self, "has_credentials", False) or (getattr(self.sitemap, "_has_credentials", False) if self.sitemap else False)
+                if _had_creds or _saved_cookies or _saved_auth:
+                    # 恢复环境变量（让爬虫能复用登录凭证）
+                    if _saved_cookies:
+                        os.environ["PENTEST_INJECT_COOKIES"] = _saved_cookies
+                    if _saved_auth:
+                        os.environ["PENTEST_INJECT_AUTH"] = _saved_auth
+                    if _saved_headers:
+                        os.environ["PENTEST_INJECT_HEADERS"] = json.dumps(_saved_headers, ensure_ascii=False)
+                    os.environ["PENTEST_TARGET_URL"] = url
+                    self.has_credentials = True
+                    log.info("恢复凭证: cookies=%s, auth=%s, has_credentials=True",
+                             bool(_saved_cookies), bool(_saved_auth))
+                    yield self._event("system", "✅ 已恢复登录凭证（Cookie/Auth），将使用已登录状态继续扫描")
+                # 直接进入 Phase 0（下方代码会执行 self.phase = "explore"）
+                _skip_intent = True
+            else:
+                _skip_intent = False
+
+            if not _skip_intent:
+                yield self._event("thinking", "正在理解您的需求...")
+                intent = await parse_user_intent(self.llm, user_message)
+                log.info("intent 解析结果: intent_kind=%s, has_target=%s, target_url=%s, has_packet=%s",
+                         intent.get("intent_kind"), intent.get("has_target"),
+                         intent.get("target_url", "")[:80], bool(intent.get("packet")))
+            else:
+                # "继续"指令：构造一个 site 意图直接走扫描流程
+                # ★ 从恢复的凭证中填充 session_cookies/auth_header，让凭证注入块能正常工作
+                _resume_cookies = getattr(self, "_inject_cookies", "") or ""
+                _resume_auth = getattr(self, "_inject_auth", "") or ""
+                _resume_headers = getattr(self, "_inject_headers", {}) or {}
+                _resume_creds = []
+                if _resume_cookies or _resume_auth:
+                    _resume_creds = [{
+                        "role": "user",
+                        "session_cookies": _resume_cookies,
+                        "auth_header": _resume_auth,
+                        "extra_headers": dict(_resume_headers),
+                    }]
+                intent = {
+                    "intent_kind": "site",
+                    "has_target": True,
+                    "target_url": url,
+                    "credentials": _resume_creds,
+                    "session_cookies": _resume_cookies,
+                    "auth_header": _resume_auth,
+                    "extra_headers": dict(_resume_headers),
+                    "test_mode": "",
+                    "special_notes": "恢复上次扫描",
+                }
 
             if not intent.get("has_target") or not intent.get("target_url"):
                 self.current_context.add_system(
@@ -464,13 +538,18 @@ class ChatLoopMixin:
 
             # 如果已恢复了同目标的 sitemap，继续使用（避免覆盖已有测试结果）
             if self.sitemap and self.sitemap.target == url:
-                log.info("复用已恢复的 sitemap: target=%s, 已有 %d 个功能点",
-                         url, len(self.sitemap.features))
-                # 清理旧的功能点，重新开始（用户明确重新输入了目标）
-                self._reset_for_new_task()
-                self.target_url = url
-                self.target_info = user_message
-                self.sitemap = Sitemap(target=url, task_id=self.task_id)
+                if _skip_intent:
+                    # "继续"指令：保留已有 sitemap 数据，不重置
+                    log.info("复用已有 sitemap（继续指令）: target=%s, 功能点 %d 个",
+                             url, len(self.sitemap.features))
+                else:
+                    # 用户明确重新输入了目标：清理旧的功能点，重新开始
+                    log.info("复用已恢复的 sitemap: target=%s, 已有 %d 个功能点",
+                             url, len(self.sitemap.features))
+                    self._reset_for_new_task()
+                    self.target_url = url
+                    self.target_info = user_message
+                    self.sitemap = Sitemap(target=url, task_id=self.task_id)
             else:
                 self.sitemap = Sitemap(target=url, task_id=self.task_id)
             log.info("新任务启动: target=%s, task_id=%s", url, self.task_id)
@@ -510,6 +589,12 @@ class ChatLoopMixin:
                 self._inject_auth = auth_header
                 self._inject_headers = dict(extra_headers)
                 self._inject_target_url = url
+                # ★ 同步凭证到 sitemap（持久化，供"继续"恢复）
+                if self.sitemap:
+                    self.sitemap._inject_cookies = session_cookies
+                    self.sitemap._inject_auth = auth_header
+                    self.sitemap._inject_headers = dict(extra_headers)
+                    self.sitemap._has_credentials = True
 
             # ★ 当只有 cookie/auth/数据包但没有用户名密码时，合成一个 credential
             # 让 AutoCrawler 有登录轮次可跑（否则 credentials=[] → 无登录爬取）
@@ -628,9 +713,10 @@ class ChatLoopMixin:
                     f"🔗 关联域名（来自数据包 Host）: {', '.join(_intent_extra_scope)}")
 
             # ★ LLM 回调：供 AutoCrawler → analyze_page_js → llm_analyze_key_js 使用
-            # llm 未配置时返回空 Message，让爬虫的 JS 分析降级跳过
+            # llm 未配置或 FAST 模式时返回空 Message，让爬虫的 JS 分析降级跳过
             async def _llm_chat_fn(messages, caller="js_llm_analyze"):
-                if self.llm is None:
+                _fast_mode = getattr(self, "user_scan_mode", "smart") == "fast"
+                if self.llm is None or _fast_mode:
                     return Message(role="assistant", content="")
                 return await asyncio.to_thread(self.llm.chat, messages, caller=caller)
 
@@ -1040,9 +1126,11 @@ class ChatLoopMixin:
                     auth_headers, cookies = self._extract_auth_for_xss(crawl_result)
                     xss_proxy = os.getenv("BROWSER_PROXY", "http://127.0.0.1:18080")
                     oob_callback = getattr(self, "oob_callback_url", "") or os.getenv("XSS_OOB_URL", "")
+                    # ★ FAST 模式：XSS 扫描器不传 LLM，禁用 LLM 判断
+                    _fast_mode = getattr(self, "user_scan_mode", "smart") == "fast"
                     xss_scanner = XssScanner(
                         sitemap=self.sitemap,
-                        llm=self.llm,
+                        llm=None if _fast_mode else self.llm,
                         proxy=xss_proxy,
                         auth_headers=auth_headers,
                         cookies=cookies,
@@ -1050,7 +1138,7 @@ class ChatLoopMixin:
                         enable_header_injection=True,
                         enable_browser_verify=True,
                         enable_dom_scan=True,
-                        enable_llm_judge=True,
+                        enable_llm_judge=not _fast_mode,
                         enable_waf_bypass=True,
                         enable_stored_xss=True,
                         enable_mutation_xss=True,
@@ -1086,6 +1174,20 @@ class ChatLoopMixin:
                 except Exception as e:
                     log.warning("Failed to start XSS scanner: %s", e)
                     yield self._event("system", f"⚠️ XSS 扫描启动失败: {str(e)[:120]}")
+
+                # ★ FAST 模式：跳过 Phase 1 LLM 分析，直接推进到 Phase 2 本地规则引擎测试
+                _user_mode = getattr(self, "user_scan_mode", "smart")
+                if _user_mode == "fast" or self.llm is None:
+                    _skip_reason = "FAST 模式" if _user_mode == "fast" else "LLM 未配置"
+                    yield self._event("system",
+                        f"ℹ️ {_skip_reason}，跳过 Phase 1 LLM 分析阶段，"
+                        f"直接进入 Phase 2 本地规则引擎测试")
+                    self.phase = "analyze"
+                    async for evt in self._advance_phase(
+                        f"{_skip_reason}，跳过分析阶段（fast/无 LLM 模式）"
+                    ):
+                        yield evt
+                    return
 
                 # Phase 1: LLM 补充分析
                 self.phase = "analyze"
@@ -1434,12 +1536,16 @@ class ChatLoopMixin:
         _repeat_count = 0
         _exit_reason = ""
 
-        # ★ fast/无 LLM 模式：llm 未配置时跳过 LLM 分析循环，直接推进到下一阶段
-        # （Phase 2 的 FastScanner 纯本地规则，不需要 LLM）
-        if self.llm is None:
+        # ★ fast/无 LLM 模式：llm 未配置或 FAST 模式时跳过 LLM 分析循环，
+        # 直接推进到下一阶段（Phase 2 的 FastScanner 纯本地规则，不需要 LLM）
+        _user_mode = getattr(self, "user_scan_mode", "smart")
+        if self.llm is None or _user_mode == "fast":
+            _skip_reason = "FAST 模式" if _user_mode == "fast" else "LLM 未配置"
             yield self._event("system",
-                "ℹ️ 未配置 LLM，跳过 LLM 分析阶段，直接进入本地规则引擎测试")
-            async for evt in self._advance_phase("LLM 未配置，跳过分析阶段（fast/无 LLM 模式）"):
+                f"ℹ️ {_skip_reason}，跳过 LLM 分析阶段，直接进入本地规则引擎测试")
+            async for evt in self._advance_phase(
+                f"{_skip_reason}，跳过分析阶段（fast/无 LLM 模式）"
+            ):
                 yield evt
             return
 

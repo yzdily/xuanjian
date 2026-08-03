@@ -24,6 +24,12 @@ class AnalyzePhaseMixin:
 
     async def _maybe_split_analyze(self) -> AsyncGenerator[str, None]:
         """Phase 1 完成时检查：如果已知 API 很多但功能点覆盖不足，启用子 Agent 补充分析。"""
+        # ★ FAST 模式跳过子 Agent 分析（依赖 LLM）
+        _user_mode = getattr(self, "user_scan_mode", "smart")
+        if _user_mode == "fast" or self.llm is None:
+            log.info("FAST 模式或未配置 LLM，跳过子 Agent 补充分析")
+            return
+
         from core.analyze_worker import (
             ANALYZE_SPLIT_THRESHOLD, group_apis_by_prefix, run_analyze_workers
         )

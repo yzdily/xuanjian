@@ -406,6 +406,111 @@ async def delete_report_post(request: Request):
         return {"ok": False, "error": str(e)}
 
 
+@router.post("/api/reports/batch-delete")
+async def batch_delete_reports(request: Request):
+    """批量删除多个任务的报告文件。
+
+    请求体: {"task_ids": ["task1", "task2", ...]}
+    返回: {"ok": true, "deleted": 总文件数, "results": [{"task_id": "..., "deleted": N, "ok": true}, ...]}
+    """
+    try:
+        body = await request.json()
+        task_ids = body.get("task_ids", [])
+        if not task_ids or not isinstance(task_ids, list):
+            return {"ok": False, "error": "缺少 task_ids 或格式不正确"}
+        results = []
+        total_deleted = 0
+        for tid in task_ids:
+            if not isinstance(tid, str) or not tid.strip():
+                continue
+            tid = tid.strip()
+            count = 0
+            try:
+                for f in REPORTS_DIR.glob(f"{tid}*"):
+                    f.unlink(missing_ok=True)
+                    count += 1
+                results.append({"task_id": tid, "deleted": count, "ok": True})
+                total_deleted += count
+            except Exception as e:
+                results.append({"task_id": tid, "deleted": 0, "ok": False, "error": str(e)})
+        return {"ok": True, "deleted": total_deleted, "count": len(results), "results": results}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@router.post("/api/reports/batch-download")
+async def batch_download_reports(request: Request):
+    """批量打包下载多个任务的报告文件（ZIP）。
+
+    请求体: {"task_ids": ["task1", "task2", ...], "kinds": ["realtime", "proven"]}
+    kinds 可选，默认下载所有可用报告。
+    """
+    import io as _io
+    import zipfile as _zipfile
+
+    try:
+        body = await request.json()
+        task_ids = body.get("task_ids", [])
+        kinds = body.get("kinds", ["realtime", "proven"])
+        if not task_ids or not isinstance(task_ids, list):
+            return JSONResponse({"ok": False, "error": "缺少 task_ids 或格式不正确"}, status_code=400)
+
+        buf = _io.BytesIO()
+        added = 0
+        with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+            for tid in task_ids:
+                if not isinstance(tid, str) or not tid.strip():
+                    continue
+                tid = tid.strip()
+                for kind in kinds:
+                    report_file = _find_report_file(tid, kind)
+                    if report_file and report_file.exists() and report_file.stat().st_size > 0:
+                        try:
+                            content_bytes = report_file.read_bytes()
+                            # ZIP 内文件名：{task_id}/{kind}-{原文件名}
+                            arcname = f"{tid}/{kind}-{report_file.name}"
+                            zf.writestr(arcname, content_bytes)
+                            added += 1
+                        except Exception as e:
+                            log.warning("打包报告失败 %s/%s: %s", tid, kind, e)
+                    elif kind == "proven":
+                        # proven 报告优先用 sitemap 动态生成
+                        sitemap = _resolve_sitemap(tid)
+                        if sitemap:
+                            content = sitemap.flush_proven_report() or ""
+                            if content:
+                                arcname = f"{tid}/proven-{tid}-proven-report.md"
+                                zf.writestr(arcname, content.encode("utf-8"))
+                                added += 1
+                    elif kind == "realtime":
+                        # realtime fallback 到 sitemap 实时生成
+                        sitemap = _resolve_sitemap(tid)
+                        if sitemap:
+                            content = sitemap.flush_report() or ""
+                            if content:
+                                arcname = f"{tid}/realtime-{tid}-report.md"
+                                zf.writestr(arcname, content.encode("utf-8"))
+                                added += 1
+
+        if added == 0:
+            return JSONResponse({"ok": False, "error": "未找到任何可下载的报告文件"}, status_code=404)
+
+        buf.seek(0)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"reports_batch_{timestamp}.zip"
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "X-Report-Count": str(added),
+            },
+        )
+    except Exception as e:
+        log.error("批量下载打包失败: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 def _generate_report_md(task_id: str, sitemap) -> str:
     """从站点地图生成 Markdown 报告。"""
     from core.sitemap import CheckResult

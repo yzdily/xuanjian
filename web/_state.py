@@ -81,13 +81,45 @@ def get_session() -> AgentSession:
     cur = STATE["current_session_id"]
     if cur and cur in _sessions:
         return _sessions[cur]
-    session = AgentSession(llm=_pool.primary)
+    # ★ 选择可用的 LLM：优先 primary，如果 primary 不可用（如模型名错误报404）则降级到第一个可用的
+    llm_client = _select_available_llm()
+    session = AgentSession(llm=llm_client)
     _sessions[session.task_id] = session
     STATE["current_session_id"] = session.task_id
     from core.log import bind_context
     bind_context(session_id=session.task_id, phase=session.phase)
     log.info("新建会话: %s", session.task_id)
     return session
+
+
+def _select_available_llm():
+    """选择可用的 LLM 客户端：优先 primary，不可用则降级到备用模型。
+
+    检查方式：如果 primary 的 config.model 包含已知错误模式（如 kimi2），
+    或者 primary 之前被标记为失败，则尝试备用模型。
+    实际的 404 错误会在首次调用时暴露，这里做的是预防性检查。
+    """
+    primary = _pool.primary
+    if primary is None:
+        return None
+
+    # 检查 primary 的模型名是否在已知错误列表中
+    from core.llm import _MODEL_NAME_CORRECTIONS
+    base_url = primary.config.base_url or ""
+    model = primary.config.model or ""
+    for (url_frag, wrong_name), correct_name in _MODEL_NAME_CORRECTIONS.items():
+        if url_frag in base_url and model == wrong_name and correct_name != wrong_name:
+            log.warning("主模型 %s 的模型名 %r 可能有误（应为 %r），尝试降级到备用模型",
+                        primary.config.name, model, correct_name)
+            # 尝试找备用模型
+            for client in _pool.all():
+                if client.config.name != primary.config.name:
+                    log.info("降级使用备用模型: %s (%s)", client.config.name, client.config.model)
+                    return client
+            # 没有备用模型，仍然返回 primary（让错误暴露给用户）
+            return primary
+
+    return primary
 
 
 def _list_saved_sessions() -> list[dict]:

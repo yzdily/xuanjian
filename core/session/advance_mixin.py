@@ -131,7 +131,8 @@ class AdvancePhaseMixin:
             # 此时 sitemap 已经有 LLM 添加的功能点 + 业务标签 + 完整 API/样本数据
             # 无论 Phase 0 是否爬取过、走的是哪条路径，都能在此跑出有质量的业务理解
             # ★ fast/无 LLM 模式跳过业务理解（analyze_business 依赖 LLM）
-            if self.sitemap and self.llm is not None:
+            _user_mode = getattr(self, "user_scan_mode", "smart")
+            if self.sitemap and self.llm is not None and _user_mode != "fast":
                 yield self._event("phase",
                     "Phase 1.5: 业务理解 — 深度分析目标系统业务逻辑")
                 try:

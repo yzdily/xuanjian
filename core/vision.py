@@ -529,6 +529,8 @@ async def _call_openai_vision(
             **extra,
         )
         elapsed = time.time() - t0
+        from core.llm import _parse_sse_chat_payload
+        resp = _parse_sse_chat_payload(resp)
         # 兼容思考模式模型（qwen3.x 等）：content 可能为空，实际内容在 reasoning_content
         content = resp.choices[0].message.content or ""
         if not content.strip():

@@ -815,12 +815,19 @@ class WorkerAgent:
                    "feature": self.feature.name if self.feature else self.group_name,
                    "round": round_num}
 
+            # ★ LLM 调用超时保护：asyncio.wait_for 兜底，防止 API 挂起导致 Worker 永久卡死
+            # SDK 层已设 120s timeout，这里 180s 兜底（给 SDK 先抛出有意义的错误）
+            _LLM_CALL_TIMEOUT = 180
             try:
                 messages = self.context.get_messages()
-                response = await asyncio.to_thread(
-                    self.llm.chat, messages, tools
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(self.llm.chat, messages, tools),
+                    timeout=_LLM_CALL_TIMEOUT,
                 )
             except Exception as e:
+                # ★ asyncio.TimeoutError → 转成可读消息，走重试逻辑
+                if isinstance(e, asyncio.TimeoutError):
+                    e = TimeoutError(f"LLM 调用超时（{_LLM_CALL_TIMEOUT}s），可能 API 挂起或模型无响应")
                 # ★ 自动重试：网络错误/限流/5xx 最多重试 5 次（间隔递增），避免偶发抖动直接退出
                 err_str = str(e).lower()
                 err_type = type(e).__name__.lower()
@@ -846,8 +853,9 @@ class WorkerAgent:
                         await asyncio.sleep(_wait)
                         try:
                             messages = self.context.get_messages()
-                            response = await asyncio.to_thread(
-                                self.llm.chat, messages, tools
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(self.llm.chat, messages, tools),
+                                timeout=_LLM_CALL_TIMEOUT,
                             )
                             _retried_ok = True
                             break

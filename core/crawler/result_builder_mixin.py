@@ -220,6 +220,13 @@ class ResultBuilderMixin:
                         inferred_candidates.append((method, inferred_url))
                         seen_paths.add(inferred_path)
 
+        # ★ 路径前缀字典 fuzz — 门控：爬取完全空时跳过盲猜
+        # 当 0 个业务 API + 0 个页面元素 + 0 个 JS 端点时，fuzz 纯属盲猜，
+        # 800 个候选几乎全部指纹验证失败（日志实测 800→0），浪费 ~46 秒
+        _skip_fuzz = (not all_apis and total_elements == 0 and not all_js_endpoints)
+        if _skip_fuzz:
+            self._report("  路径前缀 fuzz: 跳过（爬取无任何业务信号：0 API / 0 元素 / 0 JS 端点）")
+
         # ★ 路径前缀字典 fuzz
         target_parsed = urlparse(self.target)
         target_host_root = f"{target_parsed.scheme}://{target_parsed.netloc}"
@@ -237,7 +244,10 @@ class ResultBuilderMixin:
                 common_prefixes.add("/" + parts[0] + "/" + parts[1] + "/" + parts[2])
 
         # 兜底：如果没发现任何 API（冷启动），用一组常见前缀
-        if not common_prefixes:
+        if _skip_fuzz:
+            # 爬取完全空时跳过盲猜，清空前缀使 fuzz 循环不执行
+            common_prefixes = set()
+        elif not common_prefixes:
             common_prefixes = {
                 "/api", "/api/v1", "/api/v2", "/api/admin", "/api/system",
                 "/api/auth", "/api/user", "/api/sys",

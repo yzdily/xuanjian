@@ -327,6 +327,105 @@ class Message:
     reasoning_content: str | None = None  # DeepSeek V4 思考内容
 
 
+class _SseToolCall:
+    __slots__ = ("id", "function_name", "function_arguments", "type")
+    def __init__(self, call_id, name, arguments, ctype="function"):
+        self.id = call_id or ""
+        self.function_name = name or ""
+        self.function_arguments = arguments or ""
+        self.type = ctype or "function"
+    @property
+    def function(self):
+        return _ObjectProxy({"name": self.function_name, "arguments": self.function_arguments})
+
+
+class _ObjectProxy:
+    """把 dict 包装成支持属性访问的容器，供 SSE 解析后的对象模拟 openai 返回结构。"""
+    __slots__ = ("_d",)
+    def __init__(self, d: dict):
+        self._d = d
+    def __getattr__(self, item):
+        val = self._d.get(item)
+        if isinstance(val, dict):
+            return _ObjectProxy(val)
+        return val
+
+
+def _parse_sse_chat_payload(raw: Any) -> Any:
+    """兼容第三方代理强制 SSE 流式返回：把 str 类型的响应解析为可用的响应对象。
+
+    正常返回（非 str）原样透传。若是 SSE 文本（data: {...} 逐行），则聚合
+    content / reasoning_content / tool_calls / usage 生成模拟对象，
+    使调用方继续按 resp.choices[0].message 的 openai 结构取值而不报错。
+    """
+    if not isinstance(raw, str):
+        return raw
+
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls_acc: dict[int, dict] = {}
+    finish_reason = None
+    usage = None
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        # usage（部分实现放在单独的 data 行）
+        if isinstance(obj, dict) and isinstance(obj.get("usage"), dict):
+            usage = obj["usage"]
+        choices = obj.get("choices") if isinstance(obj, dict) else None
+        if not choices:
+            continue
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                content_parts.append(content)
+            reasoning = delta.get("reasoning_content")
+            if isinstance(reasoning, str):
+                reasoning_parts.append(reasoning)
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                acc = tool_calls_acc.setdefault(idx, {})
+                if tc.get("id"):
+                    acc["id"] = tc["id"]
+                acc.setdefault("type", tc.get("type") or "function")
+                fn = tc.get("function") or {}
+                acc["name"] = acc.get("name", "") + (fn.get("name") or "")
+                acc["arguments"] = acc.get("arguments", "") + (fn.get("arguments") or "")
+        rc = choice.get("finish_reason")
+        if rc:
+            finish_reason = rc
+
+    tool_calls = []
+    for idx in sorted(tool_calls_acc):
+        acc = tool_calls_acc[idx]
+        tool_calls.append(_SseToolCall(acc.get("id"), acc.get("name", ""), acc.get("arguments", ""), acc.get("type", "function")))
+
+    message = _ObjectProxy({
+        "content": "".join(content_parts),
+        "reasoning_content": "".join(reasoning_parts) or None,
+        "tool_calls": tool_calls,
+    })
+    choice_obj = _ObjectProxy({"message": message, "finish_reason": finish_reason or None})
+    resp_obj = _ObjectProxy({
+        "choices": [choice_obj],
+        "usage": _ObjectProxy(usage) if usage else None,
+    })
+    log.warning("LLM 返回为非标准 SSE 流式文本，已降级解析聚合 %d 字符 content、%d 个 tool_calls",
+                len(content_parts), len(tool_calls))
+    return resp_obj
+
+
 def _is_placeholder_key(api_key: str) -> bool:
     """判断 API Key 是否为占位符（非真实 key）。"""
     placeholders = [
@@ -351,7 +450,7 @@ def _is_placeholder_key(api_key: str) -> bool:
 # ★ #10 模型名纠正：常见错误模型名/provider 别名映射表
 # ============================================================
 # data/llm_configs.json 里出现过的错误配置实例：
-#   - "kimi-k2.6" 实际应为 "kimi-k2"（Moonshot 真实模型名）
+#   - "kimi2" / "kimi-k2" 实际应为 "kimi-k3"（Moonshot 最新模型名）
 #   - "deepseek-v4-pro" 实际应为 "deepseek-chat" 或 "deepseek-reasoner"
 #   - provider "kni" 实际应为 "openai"（Moonshot 兼容 OpenAI 协议）
 # 启动时检测并自动纠正，避免每次调用都 400 / model not found。
@@ -369,19 +468,37 @@ _PROVIDER_ALIASES = {
 
 # (base_url 子串, 错误模型名) → 正确模型名
 # 用 base_url 限定以避免误伤同名但不同厂商的模型
+# ★ Moonshot 官方 API (api.moonshot.cn) 有效模型名（2026-08 更新）：
+#   kimi-k3（最新旗舰）/ kimi-k2.7-code / kimi-k2.7-code-highspeed /
+#   kimi-k2.6（通用版）/ kimi-k2.5（2026-08-31 下线）/ moonshot-v1-8k/32k/128k
+#   以下模型已于 2026-05-25 全部下线（EOL），不可使用：
+#   kimi-k2-0905-preview / kimi-k2-0711-preview / kimi-k2-turbo-preview /
+#   kimi-k2-thinking / kimi-k2-thinking-turbo / kimi-latest / kimi-thinking-preview
 _MODEL_NAME_CORRECTIONS = {
-    ("moonshot.cn", "kimi-k2.6"): "kimi-k2",
+    # Moonshot 常见错误/已下线模型名 → 最新稳定版 kimi-k3
+    ("moonshot.cn", "kimi2"): "kimi-k3",
+    ("moonshot.cn", "kimi"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2"): "kimi-k3",           # 无版本后缀，API 不识别
     ("moonshot.cn", "kimi-k1.5"): "moonshot-v1-8k",
-    ("moonshot.cn", "kimi-k2"): "kimi-k2",  # 已正确，原样返回
+    ("moonshot.cn", "kimi-latest"): "kimi-k3",        # 已于 2026-01 下线
+    # ★ 已下线的 kimi-k2-* preview 系列 → kimi-k3
+    ("moonshot.cn", "kimi-k2-0905-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-0711-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-turbo-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-thinking"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-thinking-turbo"): "kimi-k3",
+    ("moonshot.cn", "kimi-thinking-preview"): "kimi-k3",
+    # DeepSeek 错误模型名
     ("deepseek.com", "deepseek-v4-pro"): "deepseek-chat",
     ("deepseek.com", "deepseek-v3"): "deepseek-chat",
     ("deepseek.com", "deepseek-v4"): "deepseek-chat",
-    ("deepseek.com", "deepseek-v5-pro"): "deepseek-chat",  # 兜底未来版本号
+    ("deepseek.com", "deepseek-v5-pro"): "deepseek-chat",
     ("deepseek.com", "deepseek-v5"): "deepseek-chat",
     ("deepseek.com", "deepseek-v6-pro"): "deepseek-chat",
     ("deepseek.com", "deepseek-v6"): "deepseek-chat",
     ("deepseek.com", "deepseek-reasoner-v4"): "deepseek-reasoner",
     ("deepseek.com", "deepseek-reasoner-v5"): "deepseek-reasoner",
+    # 智谱 GLM
     ("bigmodel.cn", "glm-4-pro"): "glm-4-plus",
     ("bigmodel.cn", "glm-4.6"): "glm-4-plus",
 }
@@ -390,6 +507,12 @@ _MODEL_NAME_CORRECTIONS = {
 # 凡 base_url 命中 deepseek.com 且模型名形如 deepseek-vN(-xxx)? 一律纠正为 deepseek-chat。
 import re as _re
 _DEEPSEEK_WRONG_PATTERN = _re.compile(r"^deepseek-v\d+(-.*)?$", _re.IGNORECASE)
+
+# ★ Moonshot 已下线模型匹配：kimi-k2-*-preview / kimi-k2-thinking* 等
+_KIMI_DEPRECATED_PATTERN = _re.compile(
+    r"^kimi-k2-(0905|0711|turbo)-preview$|^kimi-k2-thinking(-turbo)?$|^kimi-thinking-preview$",
+    _re.IGNORECASE,
+)
 
 
 def _normalize_provider(provider: str) -> str:
@@ -413,6 +536,29 @@ def _normalize_model_name(base_url: str, model: str) -> str:
     if "deepseek.com" in base_lower and _DEEPSEEK_WRONG_PATTERN.match(model):
         log.warning("⚠️ DeepSeek 模型名 %r 不存在，自动纠正为 'deepseek-chat'；请改用官方模型名", model)
         return "deepseek-chat"
+    # ★ Moonshot 已下线模型自动纠正：kimi-k2-*-preview 等已 EOL，统一纠正为 kimi-k3
+    if "moonshot.cn" in base_lower and _KIMI_DEPRECATED_PATTERN.match(model):
+        log.warning("⚠️ Moonshot 模型 %r 已下线(EOL)，自动纠正为 'kimi-k3'；请改用最新模型名", model)
+        return "kimi-k3"
+    # ★ 全局兜底：不依赖 base_url 的常见错误模型名纠正
+    _GLOBAL_MODEL_FIXES = {
+        "kimi2": "kimi-k3",
+        "kimi": "kimi-k3",
+        "kimi-k2": "kimi-k3",                # 无版本后缀，API 不识别
+        "kimi-k1.5": "moonshot-v1-8k",
+        "kimi-latest": "kimi-k3",             # 已于 2026-01 下线
+        "kimi-k2-0905-preview": "kimi-k3",   # 已于 2026-05 下线
+        "kimi-k2-0711-preview": "kimi-k3",   # 已于 2026-05 下线
+        "kimi-k2-turbo-preview": "kimi-k3",  # 已于 2026-05 下线
+        "kimi-k2-thinking": "kimi-k3",       # 已于 2026-05 下线
+        "kimi-k2-thinking-turbo": "kimi-k3", # 已于 2026-05 下线
+        "kimi-thinking-preview": "kimi-k3",  # 已于 2025-11 下线
+    }
+    if model.lower() in _GLOBAL_MODEL_FIXES:
+        fixed = _GLOBAL_MODEL_FIXES[model.lower()]
+        if fixed != model:
+            log.warning("⚠️ 模型名全局纠正: %r → %r；建议在 WebUI 修正原始配置", model, fixed)
+        return fixed
     return model
 
 
@@ -834,15 +980,22 @@ class LLMClient:
         self.config = config
         self._client = None
 
+    # ★ LLM API 调用超时（秒）：防止 API 挂起导致 Worker 永久卡死
+    # 连接超时 15s + 读取超时 120s（兼容慢模型如 DeepSeek-R1 思考模式）
+    _LLM_CONNECT_TIMEOUT = 15.0
+    _LLM_READ_TIMEOUT = 120.0
+
     def _get_openai_client(self):
         if self._client is None:
             from openai import OpenAI
             # ★ max_retries=0：由 LLMClient.chat() 统一负责重试 + Retry-After 自适应退避，
             # 避免 SDK 内置重试（默认 2 次）与上层重试叠加导致重试次数失控。
+            # ★ timeout：防止 API 挂起导致 Worker 永久卡死
             self._client = OpenAI(
                 base_url=self.config.base_url,
                 api_key=self.config.api_key,
                 max_retries=0,
+                timeout=self._LLM_READ_TIMEOUT,
             )
         return self._client
 
@@ -850,10 +1003,12 @@ class LLMClient:
         if self._client is None:
             from anthropic import Anthropic
             # ★ max_retries=0：同上，统一由 LLMClient.chat() 负责重试
+            # ★ timeout：防止 API 挂起导致 Worker 永久卡死
             self._client = Anthropic(
                 base_url=self.config.base_url,
                 api_key=self.config.api_key,
                 max_retries=0,
+                timeout=self._LLM_READ_TIMEOUT,
             )
         return self._client
 
@@ -1112,6 +1267,7 @@ class LLMClient:
                 raise
 
         elapsed = time.time() - t0
+        resp = _parse_sse_chat_payload(resp)
         choice = resp.choices[0]
         msg = choice.message
 

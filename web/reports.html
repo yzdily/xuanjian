@@ -1371,20 +1371,21 @@ function downloadCurrent() {
 async function deleteCurrentSingle() {
   if (!currentTaskId || !currentKind) return;
   const kindName = currentKind === 'proven' ? '已证明漏洞报告' : '完整报告';
-  if (!confirm(`确定删除「${kindName}」？\nfile: ${currentTaskId}-${currentKind}-report.md`)) return;
+  if (!confirm(`确定删除「${kindName}」？\ntask_id: ${currentTaskId}`)) return;
   try {
     const resp = await fetch('/api/reports/delete', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({task_id: currentTaskId, kind: currentKind}),
     });
     const data = await resp.json();
-    if (data.status === 'ok') {
-      toast(`✓ 已删除 ${data.deleted.length} 个文件`, 'ok');
+    // ★ 后端 /api/reports/delete 返回 {ok:true, deleted:<整数>}，无 status 字段
+    if (data.ok) {
+      toast(`✓ 已删除 ${data.deleted} 个文件`, 'ok');
       currentTaskId = null; currentKind = null;
       document.getElementById('rightEmpty').style.display = 'flex';
       document.getElementById('rightView').style.display = 'none';
       await loadList();
-    } else { toast('✗ ' + (data.message || '失败'), 'err'); }
+    } else { toast('✗ ' + (data.error || data.message || '失败'), 'err'); }
   } catch (e) { toast('失败: ' + e.message, 'err'); }
 }
 
@@ -1396,8 +1397,8 @@ async function deleteAllReports(taskId) {
       body: JSON.stringify({task_id: taskId}),
     });
     const data = await resp.json();
-    if (data.status === 'ok') {
-      toast(`✓ 已删除 ${data.deleted.length} 个文件`, 'ok');
+    if (data.ok) {
+      toast(`✓ 已删除 ${data.deleted} 个文件`, 'ok');
       if (currentTaskId === taskId) {
         currentTaskId = null; currentKind = null;
         document.getElementById('rightEmpty').style.display = 'flex';
@@ -2323,44 +2324,63 @@ function syncBatchBar() {
   if (cnt) cnt.textContent = selectedTasks.size;
 }
 
-// ---- 批量打包下载（前端 zip：用浏览器一次性多文件下载方案） ----
+// ---- 批量打包下载（后端 ZIP 一次性下载） ----
 async function batchExportZip() {
   if (selectedTasks.size === 0) { toast('请先勾选任务', 'err'); return; }
-  if (!confirm(`将逐个下载 ${selectedTasks.size} 个任务的所有报告（浏览器会触发多个下载请确认允许多文件下载）？`)) return;
   const tasks = Array.from(selectedTasks);
-  let n = 0;
-  for (const tid of tasks) {
-    const r = allReports.find(x => x.task_id === tid);
-    if (!r) continue;
-    if (r.files.realtime) {
-      window.open(`/api/reports/download?task_id=${encodeURIComponent(tid)}&kind=realtime`, '_blank');
-      n++;
-      await new Promise(res => setTimeout(res, 250));
+  if (!confirm(`将打包下载 ${tasks.length} 个任务的所有报告（ZIP）？`)) return;
+  toast('⏳ 正在打包...', 'ok');
+  try {
+    const resp = await fetch('/api/reports/batch-download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_ids: tasks}),
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      toast(`✗ 打包失败: ${errData.error || resp.statusText}`, 'err');
+      return;
     }
-    if (r.files.proven) {
-      window.open(`/api/reports/download?task_id=${encodeURIComponent(tid)}&kind=proven`, '_blank');
-      n++;
-      await new Promise(res => setTimeout(res, 250));
-    }
+    const blob = await resp.blob();
+    const count = resp.headers.get('X-Report-Count') || '?';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    const fnameMatch = disposition.match(/filename=(.+)/);
+    a.download = fnameMatch ? fnameMatch[1] : `reports_batch_${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`✓ 已下载 ZIP（含 ${count} 份报告）`, 'ok');
+  } catch (e) {
+    toast(`✗ 打包下载失败: ${e.message}`, 'err');
   }
-  toast(`✓ 已触发 ${n} 个下载`, 'ok');
 }
 async function batchDelete() {
   if (selectedTasks.size === 0) { toast('请先勾选任务', 'err'); return; }
-  if (!confirm(`确定批量删除 ${selectedTasks.size} 个任务的所有报告？此操作不可恢复！`)) return;
-  let ok = 0, fail = 0;
-  for (const tid of Array.from(selectedTasks)) {
-    try {
-      const resp = await fetch('/api/reports/delete', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({task_id: tid}),
-      });
-      const data = await resp.json();
-      if (data.status === 'ok') ok++; else fail++;
-    } catch (e) { fail++; }
+  const tasks = Array.from(selectedTasks);
+  if (!confirm(`确定批量删除 ${tasks.length} 个任务的所有报告？此操作不可恢复！`)) return;
+  try {
+    const resp = await fetch('/api/reports/batch-delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_ids: tasks}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      const okCnt = (data.results || []).filter(r => r.ok).length;
+      const failCnt = (data.results || []).length - okCnt;
+      toast(`✓ 删除完成：成功 ${okCnt} · 失败 ${failCnt}（共 ${data.deleted} 个文件）`, failCnt === 0 ? 'ok' : 'err');
+    } else {
+      toast(`✗ 批量删除失败: ${data.error || '未知错误'}`, 'err');
+    }
+  } catch (e) {
+    toast(`✗ 批量删除失败: ${e.message}`, 'err');
   }
-  toast(`✓ 删除完成：成功 ${ok} · 失败 ${fail}`, fail === 0 ? 'ok' : 'err');
   selectedTasks.clear();
+  batchMode = false;
+  document.getElementById('leftPane').classList.remove('batch-mode');
+  document.getElementById('batchToggle').classList.remove('active');
   await loadList();
 }
 

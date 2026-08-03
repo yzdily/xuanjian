@@ -124,8 +124,22 @@ class AgentSessionBase:
                     self.sitemap = sitemap
                     self.task_id = task_id
                     self.target_url = data.get("target", "")
-                    log.info("恢复上次未完成的会话: task_id=%s, target=%s, features=%d",
-                             task_id, sitemap.target, len(sitemap.features))
+                    # ★ 恢复凭证状态（从 sitemap 持久化字段中读取）
+                    self._inject_cookies = getattr(sitemap, "_inject_cookies", "") or ""
+                    self._inject_auth = getattr(sitemap, "_inject_auth", "") or ""
+                    self._inject_headers = getattr(sitemap, "_inject_headers", {}) or {}
+                    self.has_credentials = getattr(sitemap, "_has_credentials", False)
+                    # ★ 恢复环境变量（让爬虫能复用登录凭证）
+                    if self._inject_cookies:
+                        os.environ["PENTEST_INJECT_COOKIES"] = self._inject_cookies
+                    if self._inject_auth:
+                        os.environ["PENTEST_INJECT_AUTH"] = self._inject_auth
+                    if self._inject_headers:
+                        os.environ["PENTEST_INJECT_HEADERS"] = json.dumps(self._inject_headers, ensure_ascii=False)
+                    if self.target_url:
+                        os.environ["PENTEST_TARGET_URL"] = self.target_url
+                    log.info("恢复上次未完成的会话: task_id=%s, target=%s, features=%d, has_credentials=%s",
+                             task_id, sitemap.target, len(sitemap.features), self.has_credentials)
         except Exception as e:
             log.warning("恢复会话失败: %s", e)
 

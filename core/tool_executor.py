@@ -12,7 +12,7 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from core.config import BACKEND_KEYWORDS, PUBLIC_KEYWORDS
+from core.config import BACKEND_KEYWORDS, PUBLIC_KEYWORDS, VULN_SYNONYMS
 from core.tools import BROWSER_TOOL_NAMES
 from core.log import get_logger
 
@@ -129,8 +129,14 @@ class ToolExecutor:
             if flow_id and result_enum.value == "vulnerable":
                 evidence_req, evidence_resp = self._fetch_evidence_packet(flow_id)
 
+            # ★ 漏洞类型同义词归一化：LLM 常传 BOLA/IDOR/水平越权 等变体，
+            #   VULN_SYNONYMS 已定义映射但之前标记时未使用，导致子Agent反复猜名浪费轮次
+            raw_vuln_type = args.get("vuln_type", "")
+            canonical_vuln_type = VULN_SYNONYMS.get(raw_vuln_type, raw_vuln_type)
+            if canonical_vuln_type != raw_vuln_type:
+                log.info("漏洞类型归一化: %r → %r", raw_vuln_type, canonical_vuln_type)
             item = feature.mark_check(
-                vuln_type=args.get("vuln_type", ""),
+                vuln_type=canonical_vuln_type,
                 result=result_enum,
                 detail=args.get("detail", ""),
                 evidence_flow_id=flow_id,
@@ -435,8 +441,13 @@ class ToolExecutor:
             if flow_id and result_enum.value == "vulnerable":
                 evidence_req, evidence_resp = self._fetch_evidence_packet(flow_id)
 
+            # ★ 漏洞类型同义词归一化（与子Agent入口一致）
+            raw_vuln_type = args.get("vuln_type", "")
+            canonical_vuln_type = VULN_SYNONYMS.get(raw_vuln_type, raw_vuln_type)
+            if canonical_vuln_type != raw_vuln_type:
+                log.info("漏洞类型归一化: %r → %r", raw_vuln_type, canonical_vuln_type)
             item = fp.mark_check(
-                vuln_type=args.get("vuln_type", ""),
+                vuln_type=canonical_vuln_type,
                 result=result_enum,
                 detail=args.get("detail", ""),
                 evidence_flow_id=flow_id,

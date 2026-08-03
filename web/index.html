@@ -3082,6 +3082,10 @@ function finishScan(target, aborted) {
   setStatus(target.status === 'error' ? 'error' : target.status === 'paused' ? 'warn' : 'idle', statusText);
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('scanBtn').style.display = 'inline-flex';
+  // ★ 显式恢复输入框和发送按钮（防止暂停后仍被禁用）
+  document.getElementById('terminalSendBtn').disabled = false;
+  const ti = document.getElementById('terminalInput');
+  if (ti) { ti.disabled = false; }
   document.getElementById('scanProgressBar').style.width = '100%';
   document.getElementById('scanProgressPercent').textContent = '100%';
   if (!_pauseInProgress) {
@@ -3529,7 +3533,8 @@ function onTerminalKey(e) {
 async function sendTerminalMessage() {
   const input = document.getElementById('terminalInput');
   const msg = input.value.trim();
-  if (!msg || isStreaming) return;
+  if (!msg) return;
+  if (isStreaming) { toast('扫描进行中，请先暂停或等待完成后再发送消息', 'warn'); return; }
 
   addTerminalLine('user', 'USER', msg);
   input.value = '';
@@ -3546,7 +3551,8 @@ async function sendTerminalMessage() {
   isStreaming = true;
   currentAbort = new AbortController();
   document.getElementById('terminalSendBtn').disabled = true;
-  document.getElementById('terminalInput').disabled = true;
+  // ★ 不再禁用输入框：扫描期间用户应能继续输入文字
+  // isStreaming 标志已防止并发发送，无需锁定输入框
   document.getElementById('terminalStatus').textContent = '运行中...';
 
   try {

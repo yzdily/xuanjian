@@ -41,10 +41,15 @@ class ExplorePhaseMixin:
                     verify=False,
                 ) as client:
                     resp = await client.get(url)
-                    # 任何 HTTP 响应（包括 4xx/5xx）都说明目标可达
-                    _log.info("目标可达性预检（第 %d 次）: %s => %d",
-                              attempt + 1, url, resp.status_code)
-                    return True
+                    if resp.status_code >= 500:
+                        # 5xx 服务端错误（502/503/504）视为服务不可用，继续重试
+                        _log.warning("目标返回 %d（服务端错误），视为不可达（第 %d/%d 次）: %s",
+                                     resp.status_code, attempt + 1, max_retries, url)
+                    else:
+                        # 2xx/3xx/4xx 都说明目标可达（服务在线，可能需认证或路径不存在）
+                        _log.info("目标可达性预检（第 %d 次）: %s => %d",
+                                  attempt + 1, url, resp.status_code)
+                        return True
             except httpx.ConnectError as e:
                 _log.warning("目标不可达（第 %d/%d 次）: %s",
                              attempt + 1, max_retries, str(e)[:150])

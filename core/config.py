@@ -346,6 +346,7 @@ MAX_FEATURES_PER_GROUP = 8   # 每组子 Agent 最多分配的功能点数（防
 WORKER_MAX_ROUNDS = 100      # 子 Agent 每个功能点的最大轮数
 CONTEXT_BATCH_SIZE = 10      # 每 N 轮保存一次状态
 WORKER_EVENT_TIMEOUT = 120   # 子 Agent 事件等待超时（秒）
+WORKER_STUCK_TIMEOUT = 600   # 子 Agent 无事件最长时间（秒），超过则强制取消（防 LLM 挂起）
 MAIN_MAX_ROUNDS = 1000       # 主 Agent 单次 chat 最大轮数（防死循环）
 REPEAT_TOOL_THRESHOLD = 3    # 同一工具+相同参数连续重复 N 次，强制中断
 

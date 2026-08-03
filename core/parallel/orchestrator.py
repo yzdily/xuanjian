@@ -21,7 +21,7 @@ from typing import AsyncGenerator, TYPE_CHECKING
 import httpx as _httpx
 
 from core.config import (
-    MAX_WORKERS, WORKER_EVENT_TIMEOUT,
+    MAX_WORKERS, WORKER_EVENT_TIMEOUT, WORKER_STUCK_TIMEOUT,
     FAST_SCAN_MAX_WORKERS, LLM_SCAN_MAX_WORKERS,
     SKIP_META_ANALYSIS, SKIP_BUSINESS_UNDERSTANDING,
     FAST_MODE_TIMEOUTS,
@@ -34,6 +34,30 @@ if TYPE_CHECKING:
     from core.session import AgentSession
 
 log = get_logger("parallel.orchestrator")
+
+
+def _check_stuck_workers(
+    active_workers: dict[str, asyncio.Task],
+    worker_last_event: dict[str, float],
+) -> list[str]:
+    """检测并取消卡死的 Worker（长时间无事件）。
+
+    返回被取消的 worker_id 列表。
+    """
+    import time as _time
+    now = _time.time()
+    stuck_ids = []
+    for wid, task in list(active_workers.items()):
+        last_evt = worker_last_event.get(wid, 0)
+        if last_evt == 0:
+            continue
+        silent_for = now - last_evt
+        if silent_for > WORKER_STUCK_TIMEOUT:
+            log.warning("Worker %s 已 %ds 无事件，强制取消（防 LLM 挂起）",
+                        wid, int(silent_for))
+            task.cancel()
+            stuck_ids.append(wid)
+    return stuck_ids
 
 
 # ============================================================
@@ -577,6 +601,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
         active_workers: dict[str, asyncio.Task] = {}
         event_queue: asyncio.Queue = asyncio.Queue()
         worker_idx = 0
+        worker_last_event: dict[str, float] = {}  # ★ 卡死检测：记录每个 worker 最后事件时间
 
         async def _run_worker(worker: WorkerAgent):
             try:
@@ -604,6 +629,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
             )
             task = asyncio.create_task(_run_worker(worker))
             active_workers[worker.worker_id] = task
+            worker_last_event[worker.worker_id] = time.time()  # ★ 卡死检测起点
             fp_count = len(group_fps)
             checks_count = sum(len(fp.get_http_pending()) for fp in group_fps)
             yield session._event("system",
@@ -611,18 +637,52 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                 f"({fp_count} 个功能点, {checks_count} 项 checklist)")
 
         # 事件循环
-        # 事件循环
         while active_workers:
             try:
                 evt = await asyncio.wait_for(event_queue.get(), timeout=WORKER_EVENT_TIMEOUT)
             except asyncio.TimeoutError:
-                yield session._event("system", "子 Agent 超时，继续等待...")
+                # ★ 卡死检测：取消长时间无事件的 Worker
+                stuck_ids = _check_stuck_workers(active_workers, worker_last_event)
+                for sid in stuck_ids:
+                    yield session._event("system",
+                        f"🛑 子 Agent [{sid}] 卡死（{WORKER_STUCK_TIMEOUT}s 无事件），已强制取消")
+                    if sid in active_workers:
+                        del active_workers[sid]
+                    if sid in worker_last_event:
+                        del worker_last_event[sid]
+                    if queue:
+                        group_name, group_fps = queue.pop(0)
+                        worker_idx += 1
+                        for fp in group_fps:
+                            session.sitemap.start_test(fp.id)
+                        worker = WorkerAgent(
+                            worker_id=f"w{worker_idx}",
+                            llm=session.llm,
+                            features=group_fps,
+                            group_name=group_name,
+                            sitemap=session.sitemap,
+                            session_info=session_info,
+                        )
+                        task = asyncio.create_task(_run_worker(worker))
+                        active_workers[worker.worker_id] = task
+                        worker_last_event[worker.worker_id] = time.time()
+                        yield session._event("system",
+                            f"🔄 子 Agent [{worker.worker_id}] 替补启动（卡死替换）组「{group_name}」")
+                if stuck_ids:
+                    continue
                 done_ids = [wid for wid, t in active_workers.items() if t.done()]
                 for wid in done_ids:
                     del active_workers[wid]
+                    if wid in worker_last_event:
+                        del worker_last_event[wid]
+                if not done_ids:
+                    yield session._event("system", "子 Agent 超时，继续等待...")
                 continue
 
             wid = evt.get("worker", "?")
+            # ★ 更新 Worker 最后事件时间（卡死检测）
+            if wid != "?":
+                worker_last_event[wid] = time.time()
 
             if evt["type"] == "worker_done":
                 metrics.inc("features_tested", evt["features_done"])
@@ -635,6 +695,8 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                     f"{evt['vulns']} 个漏洞")
                 if wid in active_workers:
                     del active_workers[wid]
+                if wid in worker_last_event:
+                    del worker_last_event[wid]
                 # 从队列中取下一组
                 if queue:
                     group_name, group_fps = queue.pop(0)
@@ -651,6 +713,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                     )
                     task = asyncio.create_task(_run_worker(worker))
                     active_workers[worker.worker_id] = task
+                    worker_last_event[worker.worker_id] = time.time()
                     fp_count = len(group_fps)
                     checks_count = sum(len(fp.get_http_pending()) for fp in group_fps)
                     yield session._event("system",
@@ -661,6 +724,8 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                 yield session._event("system", f"❌ 子 Agent [{wid}] 出错: {evt.get('error', '')[:100]}")
                 if wid in active_workers:
                     del active_workers[wid]
+                if wid in worker_last_event:
+                    del worker_last_event[wid]
                 # ★ 错误退出后也要从队列取下一组启动新 worker（否则剩余任务被跳过）
                 if queue:
                     group_name, group_fps = queue.pop(0)
@@ -677,6 +742,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                     )
                     task = asyncio.create_task(_run_worker(worker))
                     active_workers[worker.worker_id] = task
+                    worker_last_event[worker.worker_id] = time.time()
                     fp_count = len(group_fps)
                     checks_count = sum(len(fp.get_http_pending()) for fp in group_fps)
                     yield session._event("system",
@@ -756,6 +822,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
         retry_queue = list(retry_groups)
         retry_active: dict[str, asyncio.Task] = {}
         retry_event_queue: asyncio.Queue = asyncio.Queue()
+        retry_last_event: dict[str, float] = {}  # ★ 卡死检测
 
         async def _run_retry_worker(w: WorkerAgent):
             try:
@@ -780,6 +847,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
             )
             t = asyncio.create_task(_run_retry_worker(w))
             retry_active[w.worker_id] = t
+            retry_last_event[w.worker_id] = time.time()
             yield session._event("system",
                 f"🚀 接力 Agent [{w.worker_id}] 测试 {len(gfps)} 个功能点")
 
@@ -790,17 +858,34 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
             try:
                 evt = await asyncio.wait_for(retry_event_queue.get(), timeout=WORKER_EVENT_TIMEOUT)
             except asyncio.TimeoutError:
+                # ★ 卡死检测
+                stuck_ids = _check_stuck_workers(retry_active, retry_last_event)
+                for sid in stuck_ids:
+                    yield session._event("system",
+                        f"🛑 接力 Agent [{sid}] 卡死（{WORKER_STUCK_TIMEOUT}s 无事件），已强制取消")
+                    if sid in retry_active:
+                        del retry_active[sid]
+                    if sid in retry_last_event:
+                        del retry_last_event[sid]
+                if stuck_ids:
+                    continue
                 done_ids = [wid for wid, t in retry_active.items() if t.done()]
                 for wid in done_ids:
                     del retry_active[wid]
+                    if wid in retry_last_event:
+                        del retry_last_event[wid]
                 continue
 
             wid = evt.get("worker", "?")
+            if wid != "?":
+                retry_last_event[wid] = time.time()
             if evt["type"] == "worker_done":
                 metrics.inc("features_tested", evt.get("features_done", 0))
                 yield session._event("system", f"✅ 接力 Agent [{wid}] 完成")
                 if wid in retry_active:
                     del retry_active[wid]
+                if wid in retry_last_event:
+                    del retry_last_event[wid]
                 if retry_queue:
                     gname, gfps = retry_queue.pop(0)
                     worker_idx += 1
@@ -816,12 +901,15 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                     )
                     t = asyncio.create_task(_run_retry_worker(w))
                     retry_active[w.worker_id] = t
+                    retry_last_event[w.worker_id] = time.time()
                     yield session._event("system",
                         f"🚀 接力 Agent [{w.worker_id}] 测试 {len(gfps)} 个功能点")
             elif evt["type"] == "worker_error":
                 yield session._event("system", f"❌ 接力 Agent [{wid}] 出错: {evt.get('error', '')[:100]}")
                 if wid in retry_active:
                     del retry_active[wid]
+                if wid in retry_last_event:
+                    del retry_last_event[wid]
                 # ★ 接力轮出错也要补派
                 if retry_queue:
                     gname, gfps = retry_queue.pop(0)
@@ -838,6 +926,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                     )
                     t = asyncio.create_task(_run_retry_worker(w))
                     retry_active[w.worker_id] = t
+                    retry_last_event[w.worker_id] = time.time()
                     yield session._event("system",
                         f"🔄 接力 Agent [{w.worker_id}] 替补 {len(gfps)} 个功能点")
             elif evt["type"] == "worker_tool":
@@ -945,6 +1034,7 @@ async def _run_supplementary_test(
     active_workers: dict[str, asyncio.Task] = {}
     event_queue: asyncio.Queue = asyncio.Queue()
     worker_idx = 100  # 补测从 w100 开始编号
+    supp_last_event: dict[str, float] = {}  # ★ 卡死检测
 
     async def _run_worker(worker: WorkerAgent):
         try:
@@ -964,23 +1054,53 @@ async def _run_supplementary_test(
                              sitemap=session.sitemap, session_info=session_info)
         task = asyncio.create_task(_run_worker(worker))
         active_workers[worker.worker_id] = task
+        supp_last_event[worker.worker_id] = time.time()
         yield session._event("system", f"🔄 补测 [{worker.worker_id}] 组「{group_name}」: {len(group_fps)} 个功能点")
 
     while active_workers:
         try:
             evt = await asyncio.wait_for(event_queue.get(), timeout=WORKER_EVENT_TIMEOUT)
         except asyncio.TimeoutError:
+            # ★ 卡死检测：取消长时间无事件的补测 Worker
+            stuck_ids = _check_stuck_workers(active_workers, supp_last_event)
+            for sid in stuck_ids:
+                yield session._event("system",
+                    f"🛑 补测 [{sid}] 卡死（{WORKER_STUCK_TIMEOUT}s 无事件），已强制取消")
+                if sid in active_workers:
+                    del active_workers[sid]
+                if sid in supp_last_event:
+                    del supp_last_event[sid]
+                if queue:
+                    group_name, group_fps = queue.pop(0)
+                    worker_idx += 1
+                    for fp in group_fps:
+                        session.sitemap.start_test(fp.id)
+                    worker = WorkerAgent(worker_id=f"w{worker_idx}", llm=session.llm,
+                                         features=group_fps, group_name=group_name,
+                                         sitemap=session.sitemap, session_info=session_info)
+                    task = asyncio.create_task(_run_worker(worker))
+                    active_workers[worker.worker_id] = task
+                    supp_last_event[worker.worker_id] = time.time()
+                    yield session._event("system", f"🔄 补测 [{worker.worker_id}] 替补组「{group_name}」")
+            if stuck_ids:
+                continue
             done_ids = [wid for wid, t in active_workers.items() if t.done()]
             for wid in done_ids:
                 del active_workers[wid]
+                if wid in supp_last_event:
+                    del supp_last_event[wid]
             continue
 
         wid = evt.get("worker", "?")
+        if wid != "?":
+            supp_last_event[wid] = time.time()
         if evt["type"] == "worker_done":
             metrics.inc("features_tested", evt.get("features_done", 0))
             yield session._event("system", f"✅ 补测 [{wid}] 完成组「{evt['group']}」")
             if wid in active_workers:
                 del active_workers[wid]
+            if wid in supp_last_event:
+                del supp_last_event[wid]
             if queue:
                 group_name, group_fps = queue.pop(0)
                 worker_idx += 1
@@ -991,11 +1111,14 @@ async def _run_supplementary_test(
                                      sitemap=session.sitemap, session_info=session_info)
                 task = asyncio.create_task(_run_worker(worker))
                 active_workers[worker.worker_id] = task
+                supp_last_event[worker.worker_id] = time.time()
                 yield session._event("system", f"🔄 补测 [{worker.worker_id}] 组「{group_name}」")
         elif evt["type"] == "worker_error":
             yield session._event("system", f"❌ 补测 [{wid}] 出错: {evt.get('error', '')[:80]}")
             if wid in active_workers:
                 del active_workers[wid]
+            if wid in supp_last_event:
+                del supp_last_event[wid]
             # ★ 补测出错也要补派
             if queue:
                 group_name, group_fps = queue.pop(0)
@@ -1007,6 +1130,7 @@ async def _run_supplementary_test(
                                      sitemap=session.sitemap, session_info=session_info)
                 task = asyncio.create_task(_run_worker(worker))
                 active_workers[worker.worker_id] = task
+                supp_last_event[worker.worker_id] = time.time()
                 yield session._event("system", f"🔄 补测 [{worker.worker_id}] 替补组「{group_name}」")
         elif evt["type"] == "worker_tool":
             tool_brief = evt.get("tool_brief", evt.get("tool", ""))
@@ -1304,7 +1428,9 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                 f"ℹ️ 业务理解状态为 {bu_status},跳过 Phase 2.5 对账")
 
     # ★ Phase 2.55: 补测 Agent (2026-05-22)
-    if session.sitemap:
+    # ★ FAST 模式跳过补测（补测 Agent 依赖 LLM）
+    _fast_mode = getattr(session, "user_scan_mode", "smart") == "fast"
+    if session.sitemap and not _fast_mode:
         try:
             from core.supplemental_test_agent import run_supplemental_test
             yield session._event("phase",
@@ -1360,7 +1486,8 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                 f"  原因: 补测 Agent 启动失败，不影响后续 Phase 2.6/3")
 
     # ★ Phase 2.6: 漏洞危害验证 (SRC/赏金平台审核员视角)
-    if session.sitemap:
+    # ★ FAST 模式跳过危害验证（validate_harm 依赖 LLM）
+    if session.sitemap and not _fast_mode:
         try:
             from core.harm_validation import validate_harm
             yield session._event("phase",
