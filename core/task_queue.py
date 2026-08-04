@@ -84,7 +84,7 @@ def start_worker():
     coro = _worker_loop()
     try:
         _worker_task = loop.create_task(coro)
-        log.info("任务队列 worker 已启动 (concurrent=%d)", _concurrent)
+        log.debug("任务队列 worker 已启动 (concurrent=%d)", _concurrent)
     except RuntimeError:
         # 显式关闭未消费的 coroutine，避免 "coroutine was never awaited" 警告
         coro.close()

@@ -424,6 +424,13 @@ class FastScanner:
         # 避免对已被 WAF 全量拦截的目标继续打数千次无效请求（实测 zzidc.com 拦截 1737 次仍在打）
         self._waf_blocked = False
         self._waf_block_threshold = 20  # 连续 20 次 403/418/429/503 即判定 WAF 封禁
+        # ★ 超时熔断：连续超时达到阈值后置 True，避免对不可达目标继续打无效请求
+        self._consecutive_timeout_count = 0
+        self._timeout_blocked = False
+        self._timeout_block_threshold = 10  # 连续 10 次超时即熔断
+        # ★ 并发信号量：限制同时在途的 HTTP 请求数，避免 gather 一次性创建数百协程
+        # 当 WAF/超时熔断后，等待中的协程进入 _request 时会看到标志位并直接返回 None
+        self._semaphore: asyncio.Semaphore | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -454,68 +461,93 @@ class FastScanner:
           深度绕过（编码/分块/注释变体）由 WAFBypassFuzzer 负责，
           本引擎仅做快速规则检测 + 限速保护。
         """
-        # ★ WAF 封禁早退：一旦全局封禁标志置位，后续所有请求直接返回 None
-        if self._waf_blocked:
+        # ★ WAF / 超时熔断早退：一旦全局封禁标志置位，后续所有请求直接返回 None
+        if self._waf_blocked or self._timeout_blocked:
             return None
 
-        client = await self._get_client()
-        # 去认证：移除 Cookie / Authorization
-        req_headers = dict(headers) if headers else {}
-        if drop_auth:
-            req_headers.pop("Cookie", None)
-            req_headers.pop("cookie", None)
-            req_headers.pop("Authorization", None)
-            req_headers.pop("authorization", None)
+        # ★ 并发信号量：限制同时在途的 HTTP 请求数
+        # gather 创建的协程在此排队，进入后才检查熔断标志，避免数百请求同时发出
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.max_workers)
+        async with self._semaphore:
+            # 二次检查：排队期间可能已被熔断
+            if self._waf_blocked or self._timeout_blocked:
+                return None
 
-        body_preview = (content[:200] if content else "-").replace("\n", "\\n")
-        try:
-            resp = await client.request(
-                method=method,
-                url=url,
-                headers=req_headers,
-                content=content,
-            )
-            async with self._lock:
-                self._total_requests += 1
-                # WAF 拦截检测
-                if resp.status_code in (403, 418, 429, 503):
-                    self._blocked_count += 1
-                    # ★ WAF 自适应降速：连续被拦截时增加延迟
-                    if self._blocked_count > 3 and self._blocked_count % 3 == 0:
-                        import asyncio
-                        delay = min(2.0, 0.5 * (self._blocked_count // 3))
-                        log.warning("[SCAN] WAF 拦截 %d 次，降速 %0.1fs",
-                                    self._blocked_count, delay)
-                        await asyncio.sleep(delay)
-                    # ★ WAF 全局封禁早退：拦截次数达到阈值，置全局标志中止所有后续请求
-                    # 原逻辑仅降速不中止，导致对 zzidc.com 拦截 1737 次仍在继续打
-                    if self._blocked_count >= self._waf_block_threshold and not self._waf_blocked:
-                        self._waf_blocked = True
+            client = await self._get_client()
+            # 去认证：移除 Cookie / Authorization
+            req_headers = dict(headers) if headers else {}
+            if drop_auth:
+                req_headers.pop("Cookie", None)
+                req_headers.pop("cookie", None)
+                req_headers.pop("Authorization", None)
+                req_headers.pop("authorization", None)
+
+            try:
+                resp = await client.request(
+                    method=method,
+                    url=url,
+                    headers=req_headers,
+                    content=content,
+                )
+
+                _need_sleep = 0.0
+                async with self._lock:
+                    self._total_requests += 1
+                    # 请求成功，重置连续超时计数
+                    self._consecutive_timeout_count = 0
+                    # WAF 拦截检测
+                    if resp.status_code in (403, 418, 429, 503):
+                        self._blocked_count += 1
+                        # ★ WAF 日志指数退避采样：仅在 3/10/30/100/300/1000 次时输出
+                        # 原逻辑每 3 次输出一条，拦截 576 次产生 192 条几乎相同的 WARNING
+                        _log_milestones = {3, 10, 30, 100, 300, 1000, 3000}
+                        if self._blocked_count in _log_milestones:
+                            delay = min(2.0, 0.5 * (self._blocked_count // 3))
+                            log.warning("[SCAN] WAF 拦截 %d 次，降速 %0.1fs",
+                                        self._blocked_count, delay)
+                            _need_sleep = delay
+                        # ★ WAF 全局封禁早退：拦截次数达到阈值，置全局标志中止所有后续请求
+                        if self._blocked_count >= self._waf_block_threshold and not self._waf_blocked:
+                            self._waf_blocked = True
+                            log.warning(
+                                "[SCAN] WAF 封禁：连续被拦截 %d 次（阈值 %d），中止该目标所有后续 payload",
+                                self._blocked_count, self._waf_block_threshold
+                            )
+
+                # ★ sleep 移到锁外执行，避免持锁期间阻塞其他协程
+                if _need_sleep > 0:
+                    await asyncio.sleep(_need_sleep)
+
+                log.info("[SCAN] %s | %s %s | payload=%s | => %d %s | body=%d",
+                         rule_tag, method, url, payload_tag,
+                         resp.status_code, resp.reason_phrase, len(resp.content))
+                return resp
+            except httpx.TimeoutException:
+                async with self._lock:
+                    self._timeout_count += 1
+                    self._consecutive_timeout_count += 1
+                    # ★ 超时熔断：连续超时达到阈值，中止该目标所有后续请求
+                    if (self._consecutive_timeout_count >= self._timeout_block_threshold
+                            and not self._timeout_blocked):
+                        self._timeout_blocked = True
                         log.warning(
-                            "[SCAN] WAF 封禁：连续被拦截 %d 次（阈值 %d），中止该目标所有后续 payload",
-                            self._blocked_count, self._waf_block_threshold
+                            "[SCAN] 超时熔断：连续超时 %d 次（阈值 %d），中止该目标所有后续 payload",
+                            self._consecutive_timeout_count, self._timeout_block_threshold
                         )
-
-            log.info("[SCAN] %s | %s %s | payload=%s | => %d %s | body=%d",
-                     rule_tag, method, url, payload_tag,
-                     resp.status_code, resp.reason_phrase, len(resp.content))
-            return resp
-        except httpx.TimeoutException:
-            async with self._lock:
-                self._timeout_count += 1
-            log.warning("[SCAN] %s | %s %s | payload=%s | => TIMEOUT",
-                        rule_tag, method, url, payload_tag)
-            return None
-        except httpx.HTTPStatusError as e:
-            log.warning("[SCAN] %s | %s %s | payload=%s | => HTTP_ERR %s",
-                        rule_tag, method, url, payload_tag, e.response.status_code)
-            return e.response
-        except Exception as e:
-            async with self._lock:
-                self._error_count += 1
-            log.debug("[SCAN] %s | %s %s | payload=%s | => FAIL %s",
-                      rule_tag, method, url, payload_tag, e)
-            return None
+                log.warning("[SCAN] %s | %s %s | payload=%s | => TIMEOUT",
+                            rule_tag, method, url, payload_tag)
+                return None
+            except httpx.HTTPStatusError as e:
+                log.warning("[SCAN] %s | %s %s | payload=%s | => HTTP_ERR %s",
+                            rule_tag, method, url, payload_tag, e.response.status_code)
+                return e.response
+            except Exception as e:
+                async with self._lock:
+                    self._error_count += 1
+                log.debug("[SCAN] %s | %s %s | payload=%s | => FAIL %s",
+                          rule_tag, method, url, payload_tag, e)
+                return None
 
     async def scan_target(
         self,
@@ -538,17 +570,32 @@ class FastScanner:
         self._total_requests = 0
         self._blocked_count = 0
         self._waf_blocked = False  # ★ 每个目标重置 WAF 封禁标志
+        self._consecutive_timeout_count = 0
+        self._timeout_blocked = False  # ★ 每个目标重置超时熔断标志
+        self._semaphore = asyncio.Semaphore(self.max_workers)  # ★ 每个目标重建信号量
         findings: list[VulnFinding] = []
 
-        # 并发执行所有启用的规则
-        tasks = []
+        # ★ 分批执行规则：每批 max_workers 个规则，批次间检查熔断标志
+        # 原逻辑一次性 gather 所有规则，每条规则内部又 gather 数十 payload，
+        # 导致数百协程同时在途，WAF 封禁后仍有大量在途请求返回 403 并刷日志
+        all_handlers = []
         for rule in all_rules:
             handler = getattr(self, f"_check_{rule}", None)
             if handler:
-                tasks.append(handler(target))
+                all_handlers.append(handler)
 
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        batch_size = min(3, len(all_handlers)) if all_handlers else 1
+        for i in range(0, len(all_handlers), batch_size):
+            # 批次间检查熔断标志，跳过剩余规则
+            if self._waf_blocked:
+                log.info("[SCAN] WAF 已封禁，跳过剩余 %d 个规则", len(all_handlers) - i)
+                break
+            if self._timeout_blocked:
+                log.info("[SCAN] 超时已熔断，跳过剩余 %d 个规则", len(all_handlers) - i)
+                break
+
+            batch = all_handlers[i:i + batch_size]
+            results = await asyncio.gather(*batch, return_exceptions=True)
             for result in results:
                 if isinstance(result, list):
                     findings.extend(result)
@@ -563,7 +610,7 @@ class FastScanner:
             findings=findings,
             elapsed=elapsed,
             total_requests=self._total_requests,
-            rules_run=len(tasks),
+            rules_run=len(all_handlers),
             blocked_count=self._blocked_count,
             timeout_count=self._timeout_count,
             error_count=self._error_count,
@@ -602,6 +649,8 @@ class FastScanner:
             "blocked": self._blocked_count,
             "timeout": self._timeout_count,
             "error": self._error_count,
+            "waf_blocked": self._waf_blocked,
+            "timeout_blocked": self._timeout_blocked,
         }
 
     async def _close(self):
@@ -847,7 +896,12 @@ class FastScanner:
     async def _check_info_disclosure(self, target: ScanTarget) -> list[VulnFinding]:
         """信息泄露检测：敏感路径 + 响应头"""
         findings = []
-        base_url = target.url.rstrip("/")
+        # ★ 使用站点根 URL 而非完整页面 URL 作为 base_url
+        # 原逻辑 target.url 可能是 https://example.com/Login/logout，
+        # 拼接 /.DS_Store 会得到 https://example.com/Login/logout/.DS_Store（无意义路径）
+        from urllib.parse import urlparse
+        parsed = urlparse(target.url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
 
         # 基线预检：先请求 target.url 本身，若基线就 5xx/404，说明该 base 路径已坏，
         # 后续拼接的所有敏感路径必然同样失败，整批跳过（原实现对 /Content/setting 等

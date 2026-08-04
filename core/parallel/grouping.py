@@ -91,6 +91,11 @@ async def _smart_group_features(
         log.info("功能点 ≤5 个，跳过 LLM 分组，直接使用代码分组")
         return _group_features_by_api_prefix(features)
 
+    # ★ LLM 未配置时直接使用代码分组（FAST 模式下 llm 为 None）
+    if llm is None:
+        log.info("LLM 未配置，使用代码分组")
+        return _group_features_by_api_prefix(features)
+
     # 构建功能点描述列表
     feature_map = {fp.id: fp for fp in features}
     feature_lines = []

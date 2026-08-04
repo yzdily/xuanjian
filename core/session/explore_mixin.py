@@ -380,6 +380,11 @@ class ExplorePhaseMixin:
         if not self.sitemap:
             return 0
 
+        # ★ LLM 未配置时跳过域名清洗（FAST 模式下 self.llm 为 None）
+        if self.llm is None:
+            log.info("LLM 未配置，跳过域名清洗")
+            return 0
+
         from urllib.parse import urlparse
         from collections import Counter
         from core.llm import Message

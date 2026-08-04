@@ -24,7 +24,7 @@ def attach() -> None:
         return
     bus.on(Events.CRYPTO_CAPTURED, _on_crypto_captured)
     _attached = True
-    log.info("CryptoReplay learner 已挂载到事件总线")
+    log.debug("CryptoReplay learner 已挂载到事件总线")
 
 
 def detach() -> None:

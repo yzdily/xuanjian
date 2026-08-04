@@ -36,6 +36,10 @@ from web._state import _pool, _sessions, STATE, get_session  # noqa: F401
 
 log = get_logger("server")
 
+# ★ 启动消息缓冲：收集模块级初始化结果，最终输出一条摘要日志
+# 原逻辑每个子模块挂载都输出一条 INFO，每次重启产生 15+ 行重复日志
+_startup_msgs: list[str] = []
+
 app = FastAPI(title="玄鉴 XuanJian 智能安全扫描器")
 
 
@@ -46,7 +50,7 @@ app = FastAPI(title="玄鉴 XuanJian 智能安全扫描器")
 try:
     from core.task_queue import init as _init_task_queue
     _init_task_queue(_pool, max_concurrent=3)
-    log.info("后台任务队列配置已加载 (max_concurrent=3)")
+    _startup_msgs.append("任务队列=3")
 except Exception as _ex:
     log.warning("任务队列配置加载失败（非致命）: %s", _ex)
 
@@ -57,7 +61,7 @@ async def _startup_task_queue_worker():
     try:
         from core.task_queue import start_worker
         start_worker()
-        log.info("后台任务队列 worker 已通过 startup 钩子启动")
+        log.debug("后台任务队列 worker 已通过 startup 钩子启动")
     except Exception as _ex:
         log.warning("任务队列 worker 启动失败（非致命）: %s", _ex)
 
@@ -70,7 +74,7 @@ async def _startup_task_queue_worker():
 try:
     from web.traffic_api import traffic_router, register_session_accessor
     app.include_router(traffic_router)
-    log.info("流量管理路由已挂载: /traffic, /api/traffic/*")
+    _startup_msgs.append("traffic")
 except Exception as _ex:
     log.warning("流量管理路由加载失败: %s", _ex)
 
@@ -80,7 +84,7 @@ try:
     from core.diff.register import attach as _attach_diff_events
     app.include_router(_diff_router)
     _attach_diff_events()
-    log.info("Sitemap Diff 路由已挂载: /sitemap-diff, /api/diff/*")
+    _startup_msgs.append("diff")
 except Exception as _ex:
     log.warning("Sitemap Diff 路由加载失败: %s", _ex)
 
@@ -90,7 +94,7 @@ try:
     from core.replay.register import attach as _attach_replay_events
     app.include_router(_replay_router)
     _attach_replay_events()
-    log.info("Replay Theater 路由已挂载: /replay-theater, /api/replay/*")
+    _startup_msgs.append("replay")
 except Exception as _ex:
     log.warning("Replay Theater 路由加载失败: %s", _ex)
 
@@ -100,7 +104,7 @@ try:
     from core.crypto_replay.register import attach as _attach_crypto_events
     app.include_router(_crypto_router)
     _attach_crypto_events()
-    log.info("Crypto Replay 路由已挂载: /crypto-templates, /api/crypto/*")
+    _startup_msgs.append("crypto")
 except Exception as _ex:
     log.warning("Crypto Replay 路由加载失败: %s", _ex)
 
@@ -135,7 +139,7 @@ try:
     app.include_router(_auth_router)
     app.include_router(_presets_router)
     app.include_router(_dashboard_router)
-    log.info("已挂载 13 个业务 router: memory/triggers/reports/skills/models/templates/packet/oob/system/sessions/auth/presets/dashboard")
+    _startup_msgs.append("13 routers")
 except Exception as _ex:
     log.error("业务 router 挂载失败: %s", _ex, exc_info=True)
 
@@ -151,7 +155,7 @@ except Exception as _ex:
 try:
     from core import auth as _auth
     _auth.init_default_user()
-    log.info("认证模块已初始化，默认用户: admin/admin")
+    _startup_msgs.append("auth=ok")
 except Exception as _ex:
     log.warning("认证模块初始化失败（非致命）: %s", _ex)
 
@@ -163,14 +167,13 @@ async def _startup_init_default_user():
         from core import auth as _auth
         _auth.init_default_user()
     except Exception as _ex:
-        log.warning("startup 初始化默认用户失败: %s", _ex)
+        log.warning("startup 初始化默认用户失败（非致命）: %s", _ex)
 
 
 # ★ 启动时把 SKILL.md frontmatter 合并到 config 全局映射
 try:
     _stats = _config.apply_skill_registry(get_registry())
-    log.info("SKILL registry 已合并: vuln_to_skill=%d, triggers=%d, synonyms=%d",
-             _stats["vuln_to_skill"], _stats["feature_triggers"], _stats["synonyms"])
+    _startup_msgs.append(f"skills={_stats['vuln_to_skill']}")
 except Exception as _ex:
     log.warning("SKILL registry 合并失败（将使用默认映射）: %s", _ex)
 
@@ -189,11 +192,14 @@ try:
     from web._state import _restore_session
     recovered = _restore_session()
     if recovered:
-        log.info("自动恢复会话成功: %s", recovered.task_id)
+        _startup_msgs.append(f"恢复会话={recovered.task_id}")
     else:
-        log.info("没有需要恢复的会话")
+        _startup_msgs.append("无待恢复会话")
 except Exception as _ex:
     log.warning("自动恢复会话异常（非致命）: %s", _ex)
+
+# ★ 输出启动摘要：将原本 15+ 行 INFO 合并为一条
+log.info("服务启动完成 | %s", " | ".join(_startup_msgs))
 
 
 # ============================================================

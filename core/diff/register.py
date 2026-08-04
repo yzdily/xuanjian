@@ -47,7 +47,7 @@ def attach() -> None:
         return
     bus.on(Events.CRAWL_SNAPSHOT_DONE, _on_crawl_snapshot_done)
     _attached = True
-    log.info("diff 模块已挂载到事件总线")
+    log.debug("diff 模块已挂载到事件总线")
 
 
 __all__ = ["attach"]

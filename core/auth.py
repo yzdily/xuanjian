@@ -393,7 +393,7 @@ def init_default_user() -> None:
     with _LOCK:
         users = _load()
         if _DEFAULT_USERNAME in users:
-            log.info("默认用户已存在，跳过初始化: %s", _DEFAULT_USERNAME)
+            log.debug("默认用户已存在，跳过初始化: %s", _DEFAULT_USERNAME)
             return
         password = _resolve_default_password()
         users[_DEFAULT_USERNAME] = {

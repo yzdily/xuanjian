@@ -23,7 +23,7 @@ def attach() -> None:
         bus.on(event_name, handler)
         _handlers_attached.append((event_name, handler))
     _attached = True
-    log.info("Replay recorder 已挂载 %d 个事件 handler", len(EVENT_HANDLERS))
+    log.debug("Replay recorder 已挂载 %d 个事件 handler", len(EVENT_HANDLERS))
 
 
 def detach() -> None:

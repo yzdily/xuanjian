@@ -95,6 +95,11 @@ async def _meta_analyze_checklist(
     from core.llm import Message
     from core.sitemap import CheckResult
 
+    # ★ LLM 未配置时跳过元分析（FAST 模式下 llm 为 None）
+    if llm is None:
+        log.info("LLM 未配置，跳过元分析")
+        return {"script_batch": [], "llm_required": []}
+
     # 构建 checklist 全景摘要（精简，不浪费 token）
     checklist_summary = []
     for fp in features:
