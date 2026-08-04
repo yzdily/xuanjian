@@ -48,3 +48,6 @@ start_err.txt
 # 目标清单（本地收集结果，不入仓库）
 target.csv
 targets.csv
+# 临时工作目录
+.workbuddy/
+test1.txt

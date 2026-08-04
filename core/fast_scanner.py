@@ -197,16 +197,14 @@ WEAK_CREDENTIALS = [
     ("oracle", "oracle"),
 ]
 
-# 命令注入特征
+# 命令注入特征（★ P2 收紧：移除 whoami/total 等过于宽泛的通用词）
 CMD_INJECTION_PATTERNS = [
-    r"uid=\d+\(.*\)\s+gid=\d+",
-    r"root:.*:0:0:",
-    r"total \d+",  # ls -la 输出
-    r"Volume Serial Number",
-    r"Directory of ",
-    r"COMMAND\s+PID\s+USER",
-    r"/bin/(ba)?sh",
-    r"whoami",
+    r"uid=\d+\(.*\)\s+gid=\d+",      # id 命令输出
+    r"root:.*:0:0:",                  # /etc/passwd 内容
+    r"Volume Serial Number is",       # Windows vol 命令
+    r"Directory of\s+[A-Z]:\\",       # Windows dir 命令
+    r"COMMAND\s+PID\s+USER",          # ps 命令输出
+    r"[a-zA-Z0-9_-]+@[a-zA-Z0-9.-]+", # whoami 输出域名格式（非通用词）
 ]
 
 # CORS 错误配置检测
@@ -272,6 +270,164 @@ PUBLIC_DATA_PATTERNS = [
 # 公开/无害 Content-Type：这类响应体一般不含敏感数据
 _PUBLIC_CONTENT_TYPES = ("text/html", "text/css", "application/javascript",
                          "image/", "font/", "text/plain")
+
+
+# ============================================================
+# ★ 假阳性过滤辅助（借鉴 api-pentest-extension 铁律框架）
+# ============================================================
+
+# 业务层拒绝特征：HTTP 200 但响应体含业务错误码 → 业务层已鉴权/已拒绝，
+# 不应判为未授权访问。这是历史报告中 ≥90% 误报的根因。
+BUSINESS_DENY_PATTERNS = [
+    # 业务码 401/403/500 + 未登录/未授权 message
+    r'"code"\s*:\s*(401|403|500|40100|40300|40001|40003)\b',
+    r'"(errorCode|errcode|err_code|status_code)"\s*:\s*(401|403|500)\b',
+    # 中英文拒绝消息
+    r'"(message|msg|errMsg|errmsg|error_msg)"\s*:\s*"(?:[^"]*?)'
+    r'(?:未登录|未授权|无权限|请登录|登录失效|身份验证失败|token无效|token已过期|'
+    r'权限不足|没有权限|access denied|unauthorized|please login|not authenticated|'
+    r'permission denied|token expired|invalid token|authentication failed)"',
+    r'"(success|status)"\s*:\s*false',
+    r'"(success|status)"\s*:\s*"false"',
+    r'\bcode["\']?\s*[:=]\s*["\']?(401|403)\b',  # 通用 code:401/403
+]
+
+# 空 data 特征：响应返回 200 但 data 为空 → 无实际数据泄露，不应判为未授权访问
+EMPTY_DATA_PATTERNS = [
+    r'"data"\s*:\s*null\b',
+    r'"data"\s*:\s*\[\s*\]',
+    r'"data"\s*:\s*""',
+    r'"data"\s*:\s*\{\s*\}',
+    r'"result"\s*:\s*null\b',
+    r'"result"\s*:\s*\[\s*\]',
+    r'"result"\s*:\s*""',
+    r'"records"\s*:\s*\[\s*\]',
+    r'"rows"\s*:\s*\[\s*\]',
+    r'"list"\s*:\s*\[\s*\]',
+]
+
+# WAF 拦截页特征：403/418/429/503 + 这些关键词 → 不算漏洞（WAF 拦截而非真实响应）
+WAF_BLOCK_KEYWORDS = [
+    "blocked", "firewall", "waf", "security", "intercepted",
+    "denied by", "request blocked", "已被拦截", "安全拦截",
+    "访问被拒绝", "已被防火墙", "拦截", "规则拦截",
+]
+
+
+def _is_business_deny(text: str) -> bool:
+    """检测响应体是否为业务层拒绝（HTTP 200 但业务码表示未登录/未授权）。
+
+    这是检测层防误报的核心：很多 API 返回 HTTP 200，但在响应体 JSON 中用
+    code/message 字段表示"用户未登录"或"无权限"。仅看状态码会大量误报。
+    """
+    if not text or len(text) < 5:
+        return False
+    for pat in BUSINESS_DENY_PATTERNS:
+        if re.search(pat, text, re.IGNORECASE):
+            return True
+    return False
+
+
+def _is_empty_data(text: str) -> bool:
+    """检测响应体是否为空 data（200 但 data:null/[] → 无实际数据泄露）。
+
+    参考 api-pentest-extension 铁律5：空 data 的 200 不算漏洞。
+    """
+    if not text or not text.strip():
+        return True
+    stripped = text.strip()
+    for pat in EMPTY_DATA_PATTERNS:
+        if re.search(pat, stripped, re.IGNORECASE):
+            # 仅当响应体较短时才认定为空 data（长响应可能只是某个字段为空）
+            if len(stripped) < 500:
+                return True
+    return False
+
+
+def _is_waf_block_page(resp) -> bool:
+    """检测响应是否为 WAF 拦截页（403/418/429/503 + 拦截关键词）。"""
+    if resp.status_code not in (403, 418, 429, 503):
+        return False
+    body = (resp.text or "").lower()
+    if not body:
+        return False
+    return any(kw in body for kw in WAF_BLOCK_KEYWORDS)
+
+
+def _normalize_body(body: str) -> str:
+    """归一化响应体：剥离动态内容，防止布尔盲注/响应对比误判。
+
+    参考 api-pentest-extension 的 _normalize_body()：
+    剥离时间戳、CSRF token、JWT、hash 等每次请求都变化的动态内容。
+    """
+    if not body:
+        return ""
+    s = body
+    s = re.sub(r'\b\d{10,13}\b', '', s)                    # Unix 时间戳
+    s = re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?', '', s)  # ISO 时间
+    s = re.sub(r'(csrf|nonce|_token|token|xsrf)["\']?\s*[:=]\s*["\']?'
+               r'[a-zA-Z0-9_\-]{16,}', '', s, flags=re.IGNORECASE)  # CSRF/token
+    s = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '', s)  # JWT
+    s = re.sub(r'\b[0-9a-f]{32,64}\b', '', s, flags=re.IGNORECASE)  # MD5/SHA hash
+    s = re.sub(r'\s+', ' ', s).strip()                      # 空白归一化
+    return s
+
+
+def _bodies_similar(text1: str, text2: str, threshold: float = 0.85) -> bool:
+    """归一化后比较两段文本相似度（长度比 + Jaccard token 相似度）。"""
+    n1, n2 = _normalize_body(text1), _normalize_body(text2)
+    if not n1 and not n2:
+        return True
+    if not n1 or not n2:
+        return False
+    # 长度比
+    len_ratio = min(len(n1), len(n2)) / max(len(n1), len(n2))
+    if len_ratio < 0.8:
+        return False
+    # Jaccard token 相似度（按空格切词）
+    tokens1 = set(n1.split())
+    tokens2 = set(n2.split())
+    if not tokens1 and not tokens2:
+        return True
+    if not tokens1 or not tokens2:
+        return False
+    jaccard = len(tokens1 & tokens2) / len(tokens1 | tokens2)
+    return jaccard >= threshold
+
+
+def _is_xss_executable_context(text: str, probe: str) -> bool:
+    """检查 XSS 探针是否出现在可执行上下文中（而非 HTML 注释/JSON 字符串/纯文本）。
+
+    参考 api-pentest-extension XSS 铁律5：探针在 HTML 注释中、纯 JSON 错误响应中
+    → 假阳性（不可执行）。只有出现在 HTML body/属性/JS 代码区才算可执行上下文。
+    """
+    if not text or not probe:
+        return False
+    idx = text.find(probe)
+    if idx < 0:
+        return False
+    # 检查探针前后上下文
+    before = text[max(0, idx - 100):idx]
+    after = text[idx + len(probe):idx + len(probe) + 100]
+    context = (before + after).lower()
+    # HTML 注释中 → 不可执行
+    if "<!--" in before and "-->" not in before:
+        return False
+    # 纯 JSON 响应（非 HTML）→ 不可执行
+    ct_lower = context.strip()
+    if (text.strip().startswith("{") and text.strip().endswith("}")
+            and "<" not in text[:idx]):
+        return False
+    # <script> 标签内 → JS 上下文（可执行）
+    if "<script" in before.lower() and "</script>" not in before.lower():
+        return True
+    # <textarea> / <title> 标签内 → 纯文本上下文（浏览器会转义，不可执行）
+    if "<textarea" in before.lower() and "</textarea>" not in before.lower():
+        return False
+    if "<title" in before.lower() and "</title>" not in before.lower():
+        return False
+    # 默认：在 HTML body 中 → 可执行上下文
+    return True
 
 
 def _body_contains_sensitive_data(text: str) -> bool:
@@ -718,6 +874,7 @@ class FastScanner:
                             evidence=resp.text[:500],
                             payload=payload,
                             fix_suggestion="使用参数化查询/预编译语句，禁止拼接SQL",
+                            evidence_quality="body_confirmed",
                         ))
                         break  # 一个payload命中即可，不重复报
 
@@ -732,21 +889,78 @@ class FastScanner:
                         rule_tag="SQLi", payload_tag=f"{param_name}=false_condition",
                     )
                     if false_resp and resp:
+                        # ★ P1 防误报：归一化后比较，剥离时间戳/CSRF token/JWT 等动态内容
+                        true_norm = _normalize_body(resp.text)
+                        false_norm = _normalize_body(false_resp.text)
+                        baseline_norm = _normalize_body(baseline_text)
+                        true_len = len(true_norm)
+                        false_len = len(false_norm)
+                        baseline_len_n = len(baseline_norm)
                         # True 条件响应与基线相似，False 条件响应不同
-                        true_len = len(resp.text)
-                        false_len = len(false_resp.text)
-                        if abs(true_len - baseline_len) < 50 and abs(false_len - baseline_len) > 200:
-                            findings.append(VulnFinding(
-                                vuln_type="SQL注入",
-                                severity="critical",
-                                url=test_url,
-                                method="GET",
-                                detail=f"参数 '{param_name}' 存在布尔盲注，"
-                                       f"True条件响应长度={true_len}，False条件={false_len}，基线={baseline_len}",
-                                evidence=f"True: {resp.text[:200]}\nFalse: {false_resp.text[:200]}",
-                                payload=payload,
-                                fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
-                            ))
+                        true_similar = _bodies_similar(resp.text, baseline_text)
+                        false_similar = _bodies_similar(resp.text, false_resp.text)
+                        if true_similar and not false_similar:
+                            # ★ 铁律2：True/False 响应必须有差异（状态码或归一化长度差 > 10）
+                            if (resp.status_code != false_resp.status_code
+                                    or abs(true_len - false_len) > 10):
+                                findings.append(VulnFinding(
+                                    vuln_type="SQL注入",
+                                    severity="critical",
+                                    url=test_url,
+                                    method="GET",
+                                    detail=f"参数 '{param_name}' 存在布尔盲注，"
+                                           f"True条件响应与基线相似(归一化)，False条件不同，"
+                                           f"True长度={true_len}，False长度={false_len}，基线={baseline_len_n}",
+                                    evidence=f"True: {resp.text[:200]}\nFalse: {false_resp.text[:200]}",
+                                    payload=payload,
+                                    fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
+                                    evidence_quality="body_confirmed",
+                                ))
+
+                # ★ P1 时间盲注检测：测量响应延迟，延迟≥4s 且二次复现才算确认
+                if "时间盲注" in inj_type:
+                    time_payloads = [
+                        ("1; WAITFOR DELAY '0:0:4'--", "MSSQL"),
+                        ("1' AND SLEEP(4)-- -", "MySQL"),
+                        ("1' AND pg_sleep(4)--", "PostgreSQL"),
+                    ]
+                    for time_payload, db_type in time_payloads:
+                        t_params = dict(target.params)
+                        t_params[param_name] = time_payload
+                        t_url = self._build_url(target.url, t_params)
+                        t0_req = time.time()
+                        t_resp = await self._request(
+                            "GET", t_url,
+                            headers={**target.auth_headers, **target.headers},
+                            rule_tag="SQLi-Time", payload_tag=f"{param_name}={time_payload}",
+                        )
+                        if not t_resp:
+                            continue
+                        elapsed1 = time.time() - t0_req
+                        if elapsed1 >= 3.5:
+                            # ★ 铁律3：二次复现，排除网络抖动
+                            t0_replay = time.time()
+                            t_resp2 = await self._request(
+                                "GET", t_url,
+                                headers={**target.auth_headers, **target.headers},
+                                rule_tag="SQLi-Time-replay", payload_tag=f"{param_name}={time_payload}",
+                            )
+                            elapsed2 = time.time() - t0_replay
+                            if t_resp2 and elapsed2 >= 3.5:
+                                findings.append(VulnFinding(
+                                    vuln_type="SQL注入",
+                                    severity="critical",
+                                    url=test_url,
+                                    method="GET",
+                                    detail=f"参数 '{param_name}' 存在时间盲注（{db_type}），"
+                                           f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥3.5s）",
+                                    evidence=f"Payload: {time_payload}\n"
+                                             f"第一次延迟: {elapsed1:.1f}s\n第二次延迟: {elapsed2:.1f}s",
+                                    payload=time_payload,
+                                    fix_suggestion="使用参数化查询，禁止拼接SQL",
+                                    evidence_quality="body_confirmed",
+                                ))
+                                break  # 一个 DB 类型命中即可
 
         # === POST 表单 body 注入 ===
         if target.method == "POST" and target.body and "=" in target.body:
@@ -782,6 +996,7 @@ class FastScanner:
                                 evidence=resp.text[:500],
                                 payload=payload,
                                 fix_suggestion="使用参数化查询/预编译语句，禁止拼接SQL",
+                                evidence_quality="body_confirmed",
                             ))
                             break
 
@@ -818,6 +1033,7 @@ class FastScanner:
                                         evidence=resp.text[:500],
                                         payload=payload,
                                         fix_suggestion="使用参数化查询/预编译语句，禁止拼接SQL",
+                                        evidence_quality="body_confirmed",
                                     ))
                                     break
             except (json.JSONDecodeError, ValueError):
@@ -849,6 +1065,8 @@ class FastScanner:
                 encoded = resp.text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
                 if xss_probe in encoded:
                     # 未编码，存在 XSS
+                    # ★ P1：确定证据质量——检查是否在可执行上下文中（HTML/JS），还是被注释/JSON 包裹
+                    is_exec_context = _is_xss_executable_context(resp.text, xss_probe)
                     findings.append(VulnFinding(
                         vuln_type="XSS",
                         severity="high",
@@ -858,6 +1076,7 @@ class FastScanner:
                         evidence=resp.text[:500],
                         payload=xss_probe,
                         fix_suggestion="对用户输入进行HTML编码，使用CSP策略",
+                        evidence_quality="body_confirmed" if is_exec_context else "header_only",
                     ))
 
         # POST 表单 XSS
@@ -880,6 +1099,7 @@ class FastScanner:
                 if resp and xss_probe in resp.text:
                     encoded = resp.text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
                     if xss_probe in encoded:
+                        is_exec_context = _is_xss_executable_context(resp.text, xss_probe)
                         findings.append(VulnFinding(
                             vuln_type="XSS",
                             severity="high",
@@ -889,6 +1109,7 @@ class FastScanner:
                             evidence=resp.text[:500],
                             payload=xss_probe,
                             fix_suggestion="对用户输入进行HTML编码",
+                            evidence_quality="body_confirmed" if is_exec_context else "header_only",
                         ))
 
         return findings
@@ -967,6 +1188,9 @@ class FastScanner:
                 return None
             # ★ 多因素验证：仅看 200 不够，必须内容匹配预期指纹才算真泄露
             if resp.status_code == 200 and len(resp.text) > 10:
+                # ★ P0 防误报：业务层拒绝（如 /eval.php 返回 {"code":500,"message":"用户未登录"}）
+                if _is_business_deny(resp.text):
+                    return None
                 matched, quality = _verify_sensitive_path_content(path, resp.text)
                 if not matched:
                     # 内容未匹配指纹 → 多为 SPA 兜底页/默认页，跳过
@@ -1030,9 +1254,18 @@ class FastScanner:
             auth_len = len(auth_resp.text)
             noauth_len = len(noauth_resp.text)
             noauth_ct = noauth_resp.headers.get("content-type", "")
-            # 内容相似度 > 80%
-            if abs(auth_len - noauth_len) < max(auth_len * 0.2, 100):
-                noauth_text = noauth_resp.text or ""
+            noauth_text = noauth_resp.text or ""
+            # ★ P0 防误报铁律1：业务层拒绝 → HTTP 200 但响应体含
+            # "code:500, message:用户未登录" 等业务拒绝码 → 业务层已鉴权，不是未授权访问
+            if _is_business_deny(noauth_text):
+                log.info("[SCAN] Unauth | 去认证 200 但响应体为业务层拒绝(已鉴权)，跳过: %s", target.url)
+                pass
+            # ★ P0 防误报铁律2：空 data → 200 但 data:null/[] → 无数据泄露，不算漏洞
+            elif _is_empty_data(noauth_text):
+                log.info("[SCAN] Unauth | 去认证 200 但响应体为空 data，跳过: %s", target.url)
+                pass
+            # 内容相似度 > 80%（归一化后比较）
+            elif abs(auth_len - noauth_len) < max(auth_len * 0.2, 100):
                 # ★ 多因素验证：只看长度/状态码会大量误报公开接口
                 if _is_public_data(noauth_text, noauth_ct):
                     # 公开数据（公告/商品/SPA 壳/静态资源）→ 不算漏洞
@@ -1111,6 +1344,13 @@ class FastScanner:
             is_success = any(ind in resp_text for ind in success_indicators)
             is_failure = any(ind in resp_text for ind in failure_indicators)
 
+            # ★ P1 防误报：排除 "error":null / "error":"" 等空 error 字段误匹配
+            #   原逻辑 {"error":null,"token":"xxx"} 会因 "error" 命中 failure_indicators 而漏报
+            if is_failure:
+                # 检查 error 是否实际为空值（null/""/0/false）
+                if re.search(r'"error"\s*:\s*(?:null|""|0|false)', resp_text):
+                    is_failure = False
+
             if is_success and not is_failure:
                 findings.append(VulnFinding(
                     vuln_type="弱口令",
@@ -1121,6 +1361,7 @@ class FastScanner:
                     evidence=resp.text[:500],
                     payload=f"{username}:{password}",
                     fix_suggestion="强制密码复杂度策略，禁用默认凭据",
+                    evidence_quality="body_confirmed",
                 ))
                 break  # 一个成功即可
 
@@ -1147,6 +1388,7 @@ class FastScanner:
                         evidence=resp2.text[:500],
                         payload=f"{username}:{password}",
                         fix_suggestion="强制密码复杂度策略，禁用默认凭据",
+                        evidence_quality="body_confirmed",
                     ))
                     break
 
@@ -1189,6 +1431,10 @@ class FastScanner:
         #    公开数据/静态资源即使 CORS 宽松也无法窃取有价值信息。
         resp_text = resp.text or ""
         resp_ct = resp.headers.get("content-type", "")
+        # ★ P0 防误报：业务层拒绝 / 空 data → 即使 CORS 宽松也无实际危害
+        if _is_business_deny(resp_text) or _is_empty_data(resp_text):
+            log.info("[SCAN] CORS | CORS 配置错误但响应体为业务拒绝/空 data，跳过: %s", target.url)
+            return findings
         if _body_contains_sensitive_data(resp_text):
             findings.append(VulnFinding(
                 vuln_type="CORS配置错误",
@@ -1241,8 +1487,9 @@ class FastScanner:
             "..%252f..%252f..%252fetc%252fpasswd",
         ]
 
-        passwd_patterns = [r"root:.*:0:0:", r"\[fonts\]"]
-        winini_patterns = [r"\[fonts\]", r"\[extensions\]"]
+        # ★ P2：收紧特征——[fonts] 同时出现在两个列表中导致歧义，改用更精确的指纹
+        passwd_patterns = [r"root:.*:0:0:", r"bin:.*:1:1:", r"daemon:.*:2:2:"]
+        winini_patterns = [r"\[fonts\]", r"\[extensions\]", r"for 16-bit"]
 
         for param_name in target.params:
             for payload in payloads:
@@ -1257,6 +1504,9 @@ class FastScanner:
                 )
                 if not resp:
                     continue
+                # ★ P2：WAF 拦截页 → 跳过
+                if _is_waf_block_page(resp):
+                    continue
 
                 for pattern in passwd_patterns + winini_patterns:
                     if re.search(pattern, resp.text):
@@ -1269,6 +1519,7 @@ class FastScanner:
                             evidence=resp.text[:300],
                             payload=payload,
                             fix_suggestion="对文件路径参数进行严格白名单校验",
+                            evidence_quality="body_confirmed",
                         ))
                         break
 
@@ -1300,18 +1551,30 @@ class FastScanner:
                 )
                 if not resp:
                     continue
+                # ★ P2：WAF 拦截页 → 跳过，不算命令执行
+                if _is_waf_block_page(resp):
+                    continue
 
+                # ★ P2：收紧特征——要求 payload 命令输出特征，而非仅匹配通用词
+                # 原逻辑 whoami/total/bin/sh 等过于宽泛，正常文档页会误匹配
                 for pattern in CMD_INJECTION_PATTERNS:
-                    if re.search(pattern, resp.text):
+                    if re.search(pattern, resp.text, re.IGNORECASE):
+                        # ★ 铁律1：仅 payload 原样反射（无命令输出）= 假阳性
+                        # 必须有命令执行输出特征，而非 payload 本身被回显
+                        cmd_output = re.search(pattern, resp.text, re.IGNORECASE)
+                        if cmd_output and cmd_output.group(0) in payload:
+                            # 匹配到的是 payload 本身，不是命令输出 → 跳过
+                            continue
                         findings.append(VulnFinding(
                             vuln_type="命令注入",
                             severity="critical",
                             url=test_url,
                             method="GET",
-                            detail=f"参数 '{param_name}' 存在命令注入，响应中匹配到命令执行特征",
+                            detail=f"参数 '{param_name}' 存在命令注入，响应中匹配到命令执行特征: {pattern}",
                             evidence=resp.text[:300],
                             payload=payload,
                             fix_suggestion="禁止直接拼接系统命令，使用安全的 API 调用",
+                            evidence_quality="body_confirmed",
                         ))
                         break
 
@@ -1344,8 +1607,11 @@ class FastScanner:
                 )
                 if not resp:
                     continue
+                # ★ P2：WAF 拦截页 → 跳过
+                if _is_waf_block_page(resp):
+                    continue
 
-                # AWS metadata 特征
+                # AWS metadata 特征（强证据）
                 if "ami-id" in resp.text or "instance-id" in resp.text:
                     findings.append(VulnFinding(
                         vuln_type="SSRF",
@@ -1356,6 +1622,7 @@ class FastScanner:
                         evidence=resp.text[:500],
                         payload=payload,
                         fix_suggestion="对 URL 参数进行白名单校验，禁止访问内网地址",
+                        evidence_quality="body_confirmed",
                     ))
                 elif "root:.*:0:0:" in resp.text:
                     findings.append(VulnFinding(
@@ -1367,21 +1634,33 @@ class FastScanner:
                         evidence=resp.text[:300],
                         payload=payload,
                         fix_suggestion="对 URL 参数进行白名单校验，禁止 file:// 协议",
+                        evidence_quality="body_confirmed",
                     ))
                 elif resp.status_code == 200 and len(resp.text) > 100:
-                    # 检查是否返回了内网信息
-                    if "127.0.0.1" in resp.text or "localhost" in resp.text:
-                        if payload not in resp.text:  # 不是反射
-                            findings.append(VulnFinding(
-                                vuln_type="SSRF",
-                                severity="high",
-                                url=test_url,
-                                method="GET",
-                                detail=f"参数 '{param_name}' 疑似 SSRF，响应中包含内网信息",
-                                evidence=resp.text[:300],
-                                payload=payload,
-                                fix_suggestion="对 URL 参数进行白名单校验",
-                            ))
+                    # ★ P2：收紧——仅 "127.0.0.1"/"localhost" 字符串过于宽泛，
+                    # 正常说明文档/错误页也会命中。要求更具体的内网服务特征
+                    ssrf_evidence_patterns = [
+                        r"<title>\s*(?:Apache|nginx|IIS|Tomcat|Default)",  # 内网 web 服务标题
+                        r"<h1>\s*(?:Welcome|It works|Test Page|Apache)",
+                        r"Server:\s*\w+",  # HTTP 头中的 Server 信息
+                        r"X-Powered-By:",
+                        r"<address>\s*(?:Apache|nginx)",
+                    ]
+                    has_ssrf_evidence = any(re.search(p, resp.text, re.IGNORECASE)
+                                           for p in ssrf_evidence_patterns)
+                    # 同时要求 payload 没有被原样反射
+                    if has_ssrf_evidence and payload not in resp.text:
+                        findings.append(VulnFinding(
+                            vuln_type="SSRF",
+                            severity="high",
+                            url=test_url,
+                            method="GET",
+                            detail=f"参数 '{param_name}' 疑似 SSRF，响应中包含内网服务特征",
+                            evidence=resp.text[:300],
+                            payload=payload,
+                            fix_suggestion="对 URL 参数进行白名单校验",
+                            evidence_quality="body_confirmed",
+                        ))
 
         return findings
 

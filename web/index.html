@@ -617,6 +617,28 @@
   .report-card .report-meta { font-size: 12px; color: var(--text-muted); }
   .report-card .report-actions { display: flex; gap: 8px; margin-top: 4px; }
 
+  /* ============ 报告卡片批量操作 ============ */
+  .report-card { position: relative; }
+  .report-card .card-checkbox {
+    position: absolute; top: 10px; right: 10px;
+    width: 16px; height: 16px; cursor: pointer; accent-color: #3b82f6;
+    opacity: 0; transition: opacity .15s; z-index: 2;
+  }
+  #page-reports.batch-mode .card-checkbox,
+  .report-card:hover .card-checkbox { opacity: 1; }
+  .report-card.selected { border-color: #3b82f6; background: var(--bg-hover); }
+  .report-card .report-del-btn { margin-left: auto; }
+  .checkbox-mini { width: 16px; height: 16px; cursor: pointer; accent-color: #3b82f6; flex-shrink: 0; }
+  .report-batch-bar {
+    display: none; align-items: center; gap: 8px; font-size: 13px;
+    padding: 10px 14px; margin-bottom: 16px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg); color: var(--text-secondary);
+  }
+  .report-batch-bar.show { display: flex; }
+  .report-batch-bar .batch-count { font-weight: 600; color: #3b82f6; }
+  .report-batch-bar .batch-spacer { flex: 1; }
+
   /* ============ 设置项 ============ */
   .setting-item {
     display: flex; align-items: center; justify-content: space-between;
@@ -1474,7 +1496,20 @@
             <h2>报告中心</h2>
             <p>生成、预览和下载安全测试报告</p>
           </div>
-          <button class="btn btn-primary" onclick="refreshReports()">🔄 刷新报告</button>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" id="reportBatchToggle" onclick="toggleReportBatchMode()">☑️ 多选</button>
+            <button class="btn btn-primary" onclick="refreshReports()">🔄 刷新报告</button>
+          </div>
+        </div>
+
+        <!-- 批量操作条 -->
+        <div class="report-batch-bar" id="reportBatchBar">
+          <input type="checkbox" class="checkbox-mini" id="reportSelectAll" onchange="toggleReportSelectAll(this.checked)" />
+          <span>已选 <span class="batch-count" id="reportBatchCount">0</span> 个任务</span>
+          <span class="batch-spacer"></span>
+          <button class="btn" onclick="batchExportReportsZip()">📦 打包下载</button>
+          <button class="btn btn-danger" onclick="batchDeleteReports()">🗑️ 批量删除</button>
+          <button class="btn" onclick="toggleReportBatchMode()">✕</button>
         </div>
 
         <div class="grid-3" id="reportsList">
@@ -1833,6 +1868,8 @@ let _sessions = [];
 let _targets = [];
 let _vulns = [];
 let _reports = [];
+let selectedReports = new Set();
+let reportBatchMode = false;
 let _scanLogs = [];
 
 // 认证 & 主题状态
@@ -3290,6 +3327,7 @@ function renderReports() {
         <h3>暂无报告</h3>
         <p>完成扫描后，可在此处查看和下载生成的报告</p>
       </div>`;
+    syncReportBatchBar();
     return;
   }
   let html = '';
@@ -3297,8 +3335,11 @@ function renderReports() {
     const kinds = [];
     if (r.files?.realtime) kinds.push('实时报告');
     if (r.files?.proven) kinds.push('已证明漏洞');
+    const isSel = selectedReports.has(r.task_id);
     html += `
-      <div class="report-card">
+      <div class="report-card ${isSel ? 'selected' : ''}" data-task="${escapeHtml(r.task_id)}">
+        <input type="checkbox" class="checkbox-mini card-checkbox" ${isSel ? 'checked' : ''}
+          onclick="event.stopPropagation()" onchange="toggleReportSelect(${jsStr(r.task_id)}, this.checked)" />
         <div class="report-title">${escapeHtml(r.target || r.task_id)}</div>
         <div class="report-meta">
           Task: ${r.task_id}<br>
@@ -3310,10 +3351,12 @@ function renderReports() {
           <button class="btn" onclick='previewReport(${jsStr(r.task_id)}, "realtime")'>👁 预览</button>
           <button class="btn" onclick='downloadReport(${jsStr(r.task_id)}, "realtime")'>⬇ 下载</button>
           ${r.files?.proven ? `<button class="btn" onclick='previewReport(${jsStr(r.task_id)}, "proven")'>🎯 已证明</button>` : ''}
+          <button class="btn btn-danger report-del-btn" onclick='deleteReportOne(${jsStr(r.task_id)})'>🗑️ 删除</button>
         </div>
       </div>`;
   }
   container.innerHTML = html;
+  syncReportBatchBar();
 }
 
 async function previewReport(taskId, kind) {
@@ -3336,6 +3379,119 @@ function downloadReport(taskId, kind) {
 
 function closePreview() {
   document.getElementById('previewPanel').classList.remove('show');
+}
+
+// ==================== 报告中心批量操作 ====================
+function toggleReportBatchMode() {
+  reportBatchMode = !reportBatchMode;
+  document.getElementById('page-reports').classList.toggle('batch-mode', reportBatchMode);
+  const toggle = document.getElementById('reportBatchToggle');
+  if (toggle) toggle.classList.toggle('btn-primary', reportBatchMode);
+  if (!reportBatchMode) selectedReports.clear();
+  renderReports();
+  syncReportBatchBar();
+}
+
+function toggleReportSelect(taskId, checked) {
+  if (checked) selectedReports.add(taskId); else selectedReports.delete(taskId);
+  document.querySelectorAll('#reportsList .report-card').forEach(c => {
+    if (c.dataset.task === taskId) c.classList.toggle('selected', checked);
+  });
+  syncReportBatchBar();
+}
+
+function toggleReportSelectAll(checked) {
+  const ids = Array.from(document.querySelectorAll('#reportsList .report-card .card-checkbox'))
+    .map(cb => (cb.getAttribute('onchange') || '').match(/'([^']+)'/)?.[1])
+    .filter(Boolean);
+  if (checked) ids.forEach(id => selectedReports.add(id));
+  else ids.forEach(id => selectedReports.delete(id));
+  renderReports();
+}
+
+function syncReportBatchBar() {
+  const bar = document.getElementById('reportBatchBar');
+  if (!bar) return;
+  bar.classList.toggle('show', reportBatchMode || selectedReports.size > 0);
+  const cnt = document.getElementById('reportBatchCount');
+  if (cnt) cnt.textContent = selectedReports.size;
+  const all = document.getElementById('reportSelectAll');
+  if (all) {
+    const total = document.querySelectorAll('#reportsList .report-card .card-checkbox').length;
+    all.checked = total > 0 && selectedReports.size === total;
+    all.indeterminate = selectedReports.size > 0 && selectedReports.size < total;
+  }
+}
+
+async function batchDeleteReports() {
+  if (selectedReports.size === 0) { toast('请先勾选任务', 'error'); return; }
+  const tasks = Array.from(selectedReports);
+  if (!confirm(`确定批量删除 ${tasks.length} 个任务的所有报告？此操作不可恢复！`)) return;
+  try {
+    const resp = await fetch('/api/reports/batch-delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_ids: tasks }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      const okCnt = (data.results || []).filter(r => r.ok).length;
+      const failCnt = (data.results || []).length - okCnt;
+      toast(`✓ 删除完成：成功 ${okCnt} · 失败 ${failCnt}（共 ${data.deleted} 个文件）`, failCnt === 0 ? 'ok' : 'error');
+    } else {
+      toast(`✗ 批量删除失败: ${data.error || '未知错误'}`, 'error');
+    }
+  } catch (e) {
+    toast(`✗ 批量删除失败: ${e.message}`, 'error');
+  }
+  selectedReports.clear();
+  reportBatchMode = false;
+  document.getElementById('page-reports').classList.remove('batch-mode');
+  const toggle = document.getElementById('reportBatchToggle');
+  if (toggle) toggle.classList.remove('btn-primary');
+  await refreshReports();
+}
+
+async function deleteReportOne(taskId) {
+  if (!confirm(`确定删除任务 ${taskId} 的所有报告？此操作不可恢复！`)) return;
+  try {
+    const resp = await fetch(`/api/reports/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) toast(`✓ 已删除 ${data.deleted} 个报告文件`, 'ok');
+    else toast(`✗ 删除失败: ${data.error || '未知错误'}`, 'error');
+  } catch (e) {
+    toast(`✗ 删除失败: ${e.message}`, 'error');
+  }
+  await refreshReports();
+}
+
+async function batchExportReportsZip() {
+  if (selectedReports.size === 0) { toast('请先勾选任务', 'error'); return; }
+  const tasks = Array.from(selectedReports);
+  toast('⏳ 正在打包...', 'ok');
+  try {
+    const resp = await fetch('/api/reports/batch-download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_ids: tasks }),
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      toast(`✗ 打包失败: ${errData.error || resp.statusText}`, 'error');
+      return;
+    }
+    const blob = await resp.blob();
+    const count = resp.headers.get('X-Report-Count') || '?';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reports_batch_${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`✓ 已下载 ZIP（含 ${count} 份报告）`, 'ok');
+  } catch (e) {
+    toast(`✗ 打包下载失败: ${e.message}`, 'error');
+  }
 }
 
 // ==================== 设置 ====================

@@ -62,8 +62,25 @@
 
 - **智能渗透**：浏览器驱动 + 流量拦截改包 + 业务理解 + JS 深度分析 + 前端加密突破
 - **危害验证**：独立 LLM 审核员验证漏洞真实危害，按 SRC 标准去误报
+- **检测层假阳性铁律**：FastScanner 在检测阶段即执行硬规则过滤，不依赖事后 LLM 裁决（详见下文）
 - **补测机制**：扫描全量流量，发现遗漏的新 API 自动补测
 - **可扩展**：用户可自定义 SKILL，支持任意漏洞类型
+
+### 🚫 假阳性防护体系
+
+借鉴 [api-pentest-extension](https://github.com/yzdily/api-pentest-extension) 的「假阳性判定铁律」框架，在检测层（而非事后 LLM 裁决）执行确定性过滤，确保即使 FAST 模式跳过危害验证也能有效去误报：
+
+| 防护层 | 机制 | 覆盖漏洞类型 |
+|--------|------|-------------|
+| **业务错误码解析** | HTTP 200 但响应体含 `code:500`/`message:用户未登录` 等业务拒绝码 → 不报未授权访问 | 未授权访问、CORS、信息泄露 |
+| **空 data 检测** | 200 但 `data:null`/`data:[]` → 无数据泄露，不报漏洞 | 未授权访问、CORS |
+| **WAF 拦截页识别** | 403/418/429/503 + `blocked`/`firewall`/`拦截` 关键词 → 跳过，不算漏洞 | 目录穿越、命令注入、SSRF |
+| **响应归一化** | 布尔盲注比较前剥离时间戳/JWT/CSRF token/hash 等动态内容 | SQL 注入 |
+| **时间盲注二次复现** | 延迟≥3.5s 且必须二次复现才算确认，排除网络抖动 | SQL 注入 |
+| **XSS 可执行上下文** | 探针在 HTML 注释/纯 JSON/textarea 中 → 降级为弱证据 | XSS |
+| **证据质量分级** | 所有漏洞设置 `body_confirmed`/`header_only` 标签，供二次裁决参考 | 全部 9 类漏洞 |
+| **命令注入特征收紧** | 移除 `whoami`/`total` 等通用词，要求命令输出特征 + 排除 payload 反射 | 命令注入 |
+| **SSRF 特征收紧** | 弱证据分支从仅匹配 `"127.0.0.1"` 字符串 → 要求内网服务特征（Apache/nginx 标题等） | SSRF |
 
 ### 🔌 多入口
 
@@ -138,7 +155,7 @@ cd burp-plugin && ./gradlew jar
 | **Phase 2a** | HTTP 漏洞测试（SQLi / IDOR / 未授权 …） | 3 个子 Agent 并行 |
 | **Phase 2b** | 浏览器漏洞测试（XSS / CSRF …） | 主 Agent |
 | **Phase 2.55** | 补测（扫描遗漏的 API） | SupplementalTestAgent |
-| **Phase 2.6** | 危害验证（去误报） | HarmValidator |
+| **Phase 2.6** | 危害验证（去误报：检测层铁律 + LLM 审核员双重过滤） | HarmValidator |
 | **Phase 3** | 汇总报告（覆盖矩阵 + 漏洞详情 + 修复建议） | 主 Agent |
 
 > 详细架构文档：[ARCHITECTURE.md](docs/ARCHITECTURE.md) / [ARCHITECTURE_DETAILED.md](docs/ARCHITECTURE_DETAILED.md)
@@ -169,6 +186,7 @@ skills_my/
 |------|:-----------:|:-------------------:|:-------------------------:|
 | 业务逻辑理解 | ✅ LLM 深度理解 | ❌ | 🟡 仅建议 |
 | 自动构造 Payload | ✅ | ✅ 误报多 | ❌ |
+| 检测层假阳性铁律 | ✅ 硬规则过滤 | ❌ | ❌ |
 | 危害验证去误报 | ✅ 独立审核 | ❌ | ❌ |
 | 浏览器交互 | ✅ Playwright | ❌ | ❌ |
 | 前端加密突破 | ✅ CryptoHook | ❌ | ❌ |
@@ -186,6 +204,7 @@ skills_my/
 │   ├── crawler/       #   Playwright 爬虫
 │   ├── xss/           #   XSS 专项引擎
 │   ├── parallel/      #   并行调度
+│   ├── harm_validation/ #  危害验证 + 假阳性过滤（LLM 审核员）
 │   └── sitemap/       #   站点地图 + Checklist
 ├── web/               # Web UI + FastAPI
 ├── mcp_servers/       # MCP 工具服务
@@ -193,7 +212,7 @@ skills_my/
 ├── crypto_hook/       # Frida 前端加密拦截
 ├── skills_my/         # 方法论知识库
 ├── docs/              # 项目文档
-├── tests/             # 单元测试
+├── tests/             # 单元测试（含假阳性防护测试 71 用例）
 └── data/              # 运行时数据 (gitignored)
 ```
 
