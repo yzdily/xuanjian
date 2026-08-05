@@ -1222,11 +1222,70 @@ class FeatureGenMixin:
 
     # ---- API 存活检测与幽灵端点过滤 ----
 
+    # catch-all 路由常见特征：登录页/SPA fallback/验证码生成器
+    _CATCH_ALL_HTML_PATTERNS = [
+        "<title>登录", "<title>login", "<title>登入",
+        'id="app"', 'id="root"', 'id="__next"',
+        "<form.*password", "<form.*登录", "<form.*login",
+    ]
+    _CATCH_ALL_MIN_HTML_LEN = 500  # HTML 壳最小长度
+
+    @staticmethod
+    def _is_catch_all_response(status: int, body: str, content_type: str = "") -> bool:
+        """检测响应是否为 catch-all 路由的兜底响应（登录页/SPA fallback/验证码生成器）。
+
+        判定条件（满足任一）：
+        1. 200 + HTML + 含登录页/SPA 入口特征
+        2. 200 + JSON + 含验证码生成器特征（errcode + array + small）
+        3. 200 + HTML + 长度与已知登录页壳相近且含 form/login 关键词
+        """
+        import re as _re
+
+        if status != 200:
+            return False
+
+        body_stripped = body.strip()
+        if not body_stripped:
+            return False
+
+        ct = (content_type or "").lower()
+
+        # JSON 验证码生成器检测：响应含 errcode + array + small = 验证码 catch-all
+        if "json" in ct or body_stripped.startswith("{"):
+            try:
+                import json as _json
+                j = _json.loads(body_stripped[:2000])
+                if isinstance(j, dict):
+                    keys = set(j.keys())
+                    # 验证码生成器特征：errcode + (array 或 y) + small/normal/img
+                    if "errcode" in keys and (
+                        "array" in keys or "y" in keys
+                    ) and any(k in keys for k in ("small", "normal", "img", "imgx")):
+                        return True
+            except (ValueError, TypeError):
+                pass
+            return False
+
+        # HTML catch-all 检测
+        if "html" in ct or body_stripped[0] in "<!" or "<html" in body_stripped[:500].lower():
+            if len(body_stripped) < FeatureGenMixin._CATCH_ALL_MIN_HTML_LEN:
+                return False
+            body_lower = body_stripped[:3000].lower()
+            # 登录页特征
+            for pattern in FeatureGenMixin._CATCH_ALL_HTML_PATTERNS:
+                if _re.search(pattern, body_lower, _re.IGNORECASE):
+                    return True
+            # SPA fallback 特征：<div id="app"> + <script> 且无业务数据
+            if ('id="app"' in body_lower or 'id="root"' in body_lower) and "<script" in body_lower:
+                return True
+
+        return False
+
     @staticmethod
     async def api_liveness_check(url: str, timeout: float = 5.0) -> bool:
         """通过 HEAD/GET 请求验证 API 端点是否存活。
 
-        返回 True 表示端点可访问（非 404/非连接拒绝），False 表示幽灵端点。
+        返回 True 表示端点可访问（非 404/非连接拒绝/非 catch-all 兜底），False 表示幽灵端点。
         """
         import httpx as _httpx
 
@@ -1240,17 +1299,29 @@ class FeatureGenMixin:
                 resp = await client.head(clean_url, follow_redirects=True)
                 if resp.status_code == 404:
                     return False
-                if resp.status_code < 500:
+                if resp.status_code < 400 or resp.status_code == 405:
+                    # 200/302/405 需进一步检查是否为 catch-all 兜底
+                    if resp.status_code == 200:
+                        # HEAD 无 body，需 GET 确认
+                        resp = await client.get(clean_url, follow_redirects=True)
+                        if resp.status_code == 404:
+                            return False
+                        body = resp.text[:3000]
+                        ct = resp.headers.get("content-type", "")
+                        if FeatureGenMixin._is_catch_all_response(resp.status_code, body, ct):
+                            return False
                     return True
-                resp = await client.get(clean_url, follow_redirects=True)
-                if resp.status_code == 404:
-                    return False
+                if resp.status_code >= 500:
+                    resp = await client.get(clean_url, follow_redirects=True)
+                    if resp.status_code == 404:
+                        return False
+                    return True
                 return True
         except (_httpx.HTTPError, _httpx.TimeoutException, OSError):
             return True  # 网络异常时保守存活
 
     async def filter_phantom_features(self, max_workers: int = 10) -> dict:
-        """批量检测所有功能点关联 API 的存活状态，将 404 幽灵端点标记为 ghost。
+        """批量检测所有功能点关联 API 的存活状态，将 404 幽灵端点和 catch-all 兜底端点标记为 ghost。
 
         Returns:
             {"checked": int, "ghost_found": int, "ghost_details": list[str]}
@@ -1291,7 +1362,7 @@ class FeatureGenMixin:
                 ghost_details.append(f"{fp.name} ({', '.join(fp.related_apis[:2])})")
 
         if ghost_count > 0:
-            log.info("幽灵端点过滤: 检测 %d 个 API, 发现 %d 个幽灵端点 (%s)",
+            log.info("幽灵端点过滤: 检测 %d 个 API, 发现 %d 个幽灵端点/catch-all兜底 (%s)",
                      checked, ghost_count, "; ".join(ghost_details[:10]))
             self.save()
 

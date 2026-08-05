@@ -287,22 +287,69 @@ async def solve_image_captcha(page: Page, max_retries: int = 2) -> bool:
 def _maybe_eval_arithmetic(text: str) -> str:
     """处理简单算术验证码，如 '3+5' → '8'。
 
-    仅支持加减乘除，防止 eval 安全风险。
+    仅支持加减乘除，使用安全的栈式求值算法，不使用 eval。
     """
-    # 只允许数字和 +-*/
     import re
-    if not re.match(r'^[\d+\-*/()]+$', text):
+    # 只允许数字、运算符和括号
+    if not re.match(r'^[\d+\-*/().]+$', text):
         return text
-    # 长度太长不像算术题
-    if len(text) > 12:
+    if len(text) > 20:  # 限制长度
         return text
+    
     try:
-        result = eval(text)  # noqa: S307 — 仅允许数字和运算符
-        if isinstance(result, (int, float)) and abs(result) < 10000:
-            return str(int(result))
+        # 使用 token 化 + 栈式求值，不支持 eval
+        # 简化实现：仅支持整数加减乘除
+        tokens = re.findall(r'\d+|[+\-*/()]', text)
+        
+        # 转换为后缀表达式（Shunting-yard 算法简化版）
+        def to_postfix(tokens):
+            prec = {'+': 1, '-': 1, '*': 2, '/': 2}
+            output = []
+            ops = []
+            for t in tokens:
+                if t.isdigit():
+                    output.append(int(t))
+                elif t in prec:
+                    while ops and ops[-1] != '(' and prec.get(ops[-1], 0) >= prec[t]:
+                        output.append(ops.pop())
+                    ops.append(t)
+                elif t == '(':
+                    ops.append(t)
+                elif t == ')':
+                    while ops and ops[-1] != '(':
+                        output.append(ops.pop())
+                    if ops:
+                        ops.pop()  # pop '('
+            while ops:
+                output.append(ops.pop())
+            return output
+        
+        def eval_postfix(postfix):
+            stack = []
+            for t in postfix:
+                if isinstance(t, int):
+                    stack.append(t)
+                else:
+                    if len(stack) < 2:
+                        return text
+                    b, a = stack.pop(), stack.pop()
+                    if t == '+':
+                        stack.append(a + b)
+                    elif t == '-':
+                        stack.append(a - b)
+                    elif t == '*':
+                        stack.append(a * b)
+                    elif t == '/':
+                        if b == 0:
+                            return text
+                        stack.append(a // b)
+            return str(stack[0]) if stack else text
+        
+        postfix = to_postfix(tokens)
+        result = eval_postfix(postfix)
+        return result
     except Exception:
-        pass
-    return text
+        return text
 
 
 # ── 滑块验证码识别 ──────────────────────────────────────────

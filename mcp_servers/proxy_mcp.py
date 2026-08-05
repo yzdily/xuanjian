@@ -17,9 +17,17 @@ import uuid
 import asyncio
 import contextvars
 import httpx
+import ipaddress
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+from urllib.parse import urlparse
 from mcp.server.fastmcp import FastMCP
+
+from core.config import (
+    MAX_RESPONSE_BODY_SIZE,
+    DEFAULT_HTTP_TIMEOUT,
+    MAX_ERROR_MESSAGE_SIZE,
+)
 
 # ★ 2026-05-29: 用 contextvars 传递当前 task_id，让流量持久化时能标记归属任务
 _current_task_id: contextvars.ContextVar[str] = contextvars.ContextVar(
@@ -105,6 +113,9 @@ def _persist_flow_to_file(flow: FlowRecord) -> None:
 
     失败静默：流量持久化不应阻塞主请求逻辑。
     """
+    import logging
+    _log = logging.getLogger("proxy")
+    
     flow_file = os.getenv(
         "PROXY_FLOW_FILE",
         str(Path(__file__).parent.parent / "data" / "pentest_agent_flows.jsonl"),
@@ -130,9 +141,9 @@ def _persist_flow_to_file(flow: FlowRecord) -> None:
         Path(flow_file).parent.mkdir(parents=True, exist_ok=True)
         with open(flow_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:
+    except Exception as e:
         # 永远不要让持久化失败影响业务调用
-        pass
+        _log.warning("流量持久化失败: %s (flow_id=%s)", e, flow.id)
 
 # ============================================================
 # mitmproxy addon（在独立进程中运行）
@@ -165,8 +176,8 @@ def _get_response_body(flow):
         if "charset=" in ct:
             charset = ct.split("charset=")[-1].split(";")[0].strip().strip('"').strip("'")
         if charset:
-            return content.decode(charset, errors="replace")[:10000]
-        return content.decode("utf-8", errors="replace")[:10000]
+            return content.decode(charset, errors="replace")[:MAX_RESPONSE_BODY_SIZE]
+        return content.decode("utf-8", errors="replace")[:MAX_RESPONSE_BODY_SIZE]
     except Exception:
         return ""
 
@@ -181,7 +192,7 @@ class FlowRecorder:
             "request_body": flow.request.get_text() or "",
             "status_code": flow.response.status_code,
             "response_headers": dict(flow.response.headers),
-            "response_body": _get_response_body(flow)[:10000],
+            "response_body": _get_response_body(flow)[:MAX_RESPONSE_BODY_SIZE],
             "content_type": flow.response.headers.get("content-type", "") if flow.response else "",
         }
         with open(FLOW_FILE, "a") as f:
@@ -216,10 +227,12 @@ def _load_new_flows():
                 data = json.loads(line)
                 flow = FlowRecord(**data)
                 _store.add(flow)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                import logging
+                logging.getLogger("proxy").warning("流量记录解析失败: %s (line=%.50s)", e, line)
+    except Exception as e:
+        import logging
+        logging.getLogger("proxy").warning("加载新流量失败: %s", e)
 
 
 # ============================================================
@@ -388,7 +401,7 @@ async def proxy_replay(flow_id: str, modifications: dict | None = None,
     headers.pop("Content-Length", None)
 
     # 发送请求
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+    async with httpx.AsyncClient(verify=False, timeout=DEFAULT_HTTP_TIMEOUT) as client:
         resp = await client.request(method=method, url=url, headers=headers, content=body)
 
     # 记录新流量
@@ -401,7 +414,7 @@ async def proxy_replay(flow_id: str, modifications: dict | None = None,
         request_body=body,
         status_code=resp.status_code,
         response_headers=dict(resp.headers),
-        response_body=resp.text[:10000],
+        response_body=resp.text[:MAX_RESPONSE_BODY_SIZE],
         content_type=resp.headers.get("content-type", ""),
     )
     _store.add(new_flow)
@@ -409,7 +422,7 @@ async def proxy_replay(flow_id: str, modifications: dict | None = None,
     return (
         f"重放结果 [{new_flow.id}]:\n"
         f"  {method} {url} → {resp.status_code}\n"
-        f"  Response ({len(resp.text)} chars):\n{resp.text[:2000]}"
+        f"  Response ({len(resp.text)} chars):\n{resp.text[:MAX_ERROR_MESSAGE_SIZE]}"
     )
 
 
@@ -432,8 +445,9 @@ def _build_auth_headers() -> dict:
                 for k, v in custom.items():
                     if isinstance(k, str) and isinstance(v, (str, int, float)):
                         headers[k] = str(v)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger("proxy").warning("PENTEST_INJECT_HEADERS JSON 解析失败: %s", e)
 
     # Cookie
     if inject_cookies:
@@ -447,11 +461,43 @@ def _build_auth_headers() -> dict:
 
 
 def _check_ssrf(url: str) -> str | None:
-    """检查 URL 是否指向内网/云元数据等危险地址。返回 None=安全，否则返回拒绝原因。
-
-    TODO: 目前已禁用所有 SSRF 检查（直接返回 None），等白名单功能实现后再恢复。
-    """
-    return None
+    """检查 URL 是否指向内网/云元数据等危险地址。返回 None=安全，否则返回拒绝原因。"""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            return "无效的 URL：缺少主机名"
+        
+        # 云元数据地址（AWS/GCP/Azure/阿里云）
+        CLOUD_METADATA_HOSTS = [
+            "169.254.169.254",  # AWS/GCP/Azure
+            "metadata.google.internal",
+            "metadata.azure.internal",
+            "100.100.100.100",  # 阿里云
+        ]
+        if host in CLOUD_METADATA_HOSTS:
+            return f"禁止访问云元数据地址: {host}"
+        
+        # 内网 IP 段
+        try:
+            ip = ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                # 检查是否允许访问内网（从环境变量配置）
+                ssrf_allow_private = os.getenv("SSRF_ALLOW_PRIVATE", "false").lower() == "true"
+                if not ssrf_allow_private:
+                    return f"禁止访问内网地址: {host}"
+        except ValueError:
+            # 不是 IP，可能是域名，尝试 DNS 解析后检查
+            # 这里暂时跳过域名检查，实际生产环境应进行 DNS 解析后检查
+            pass
+        
+        # file:// 协议
+        if parsed.scheme == "file":
+            return "禁止使用 file:// 协议"
+        
+        return None  # 安全
+    except Exception as e:
+        return f"URL 解析失败: {e}"
 
 
 @mcp.tool()
@@ -494,18 +540,18 @@ async def proxy_send_request(method: str, url: str, headers: dict | None = None,
     try:
         try:
             from curl_cffi.requests import AsyncSession
-            async with AsyncSession(impersonate="chrome131", verify=False, timeout=30) as client:
+            async with AsyncSession(impersonate="chrome131", verify=False, timeout=DEFAULT_HTTP_TIMEOUT) as client:
                 resp = await client.request(method=method, url=url, headers=final_headers,
                                             data=body.encode() if body else None)
                 resp_status = resp.status_code
                 resp_headers = dict(resp.headers)
-                resp_text = resp.text[:10000] if resp.text else ""
+                resp_text = resp.text[:MAX_RESPONSE_BODY_SIZE] if resp.text else ""
         except ImportError:
-            async with httpx.AsyncClient(verify=False, timeout=30) as client:
+            async with httpx.AsyncClient(verify=False, timeout=DEFAULT_HTTP_TIMEOUT) as client:
                 resp = await client.request(method=method, url=url, headers=final_headers, content=body or None)
                 resp_status = resp.status_code
                 resp_headers = dict(resp.headers)
-                resp_text = resp.text[:10000]
+                resp_text = resp.text[:MAX_RESPONSE_BODY_SIZE]
     except Exception as net_err:
         # 网络层错误（DNS/连接/超时/TLS）一律转成结构化字符串返回，
         # 不要抛 traceback 把整个 tool 调用打死 —— Agent 需要拿到反馈才能换策略。
@@ -622,7 +668,7 @@ async def proxy_batch_send(
                 request_body=req_body,
                 status_code=resp.status_code,
                 response_headers=dict(resp.headers),
-                response_body=resp.text[:5000],
+                response_body=resp.text[:MAX_RESPONSE_BODY_SIZE],
                 content_type=resp.headers.get("content-type", ""),
             )
             _store.add(flow)
@@ -630,7 +676,7 @@ async def proxy_batch_send(
             return {
                 "idx": idx, "flow_id": flow.id, "status": resp.status_code,
                 "length": len(resp.text), "time_ms": int(elapsed * 1000),
-                "body_preview": resp.text[:200],
+                "body_preview": resp.text[:MAX_ERROR_MESSAGE_SIZE],
             }
         except Exception as e:
             return {"idx": idx, "flow_id": None, "status": "error", "error": str(e)}
@@ -639,11 +685,11 @@ async def proxy_batch_send(
     # ★ 优先 curl_cffi 模拟 Chrome TLS 指纹
     try:
         from curl_cffi.requests import AsyncSession
-        async with AsyncSession(impersonate="chrome131", verify=False, timeout=30) as client:
+        async with AsyncSession(impersonate="chrome131", verify=False, timeout=DEFAULT_HTTP_TIMEOUT) as client:
             tasks = [_send_one(i, client) for i in range(count)]
             results = await asyncio.gather(*tasks)
     except ImportError:
-        async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        async with httpx.AsyncClient(verify=False, timeout=DEFAULT_HTTP_TIMEOUT) as client:
             tasks = [_send_one(i, client) for i in range(count)]
             results = await asyncio.gather(*tasks)
 

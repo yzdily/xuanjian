@@ -9,6 +9,34 @@
 from __future__ import annotations
 
 import json
+import re
+
+
+def _extract_params_from_evidence(evidence: str) -> str:
+    """从证据请求包中提取参数名列表，用于漏洞报告「参数」字段。"""
+    if not evidence:
+        return "-"
+    params: list[str] = []
+    text = str(evidence)
+    # URL query params
+    for m in re.finditer(r'[?&](\w+)=', text):
+        p = m.group(1)
+        if p and p not in params:
+            params.append(p)
+    # POST body params (non-JSON): key=value
+    for m in re.finditer(r'(?:^|\n)(\w+)=', text):
+        p = m.group(1)
+        if p and p not in params and p not in ("HTTP", "GET", "POST", "PUT", "DELETE"):
+            params.append(p)
+    # JSON body params
+    for m in re.finditer(r'"(\w+)"\s*:', text):
+        p = m.group(1)
+        if p and p not in params and p not in (
+            "Content-Type", "Content-Length", "Host", "User-Agent",
+            "Accept", "Cookie", "Authorization", "Connection",
+        ):
+            params.append(p)
+    return " / ".join(params) if params else "-"
 
 
 def render_to_markdown(hv_result: dict) -> str:
@@ -80,55 +108,97 @@ def render_to_markdown(hv_result: dict) -> str:
                 "medium": "🟡 中危",
                 "low": "🔵 低危",
                 "no_value": "⚪",
-            }.get(level, "🟡")
+            }.get(level, "🟡 中危")
             title = orig.get("title", "") or vd.get("vuln_id", "")
             harm_story = vd.get("harm_story", "")
-            lines.append(f"#### 漏洞 5.2.{i} [{level_emoji}] {title}")
-            lines.append("")
-            if harm_story:
-                lines.append(f"**故事**: {harm_story}")
-                lines.append("")
-            lines.append("| 维度 | 内容 |")
-            lines.append("|------|------|")
-            lines.append(f"| 原漏洞 ID | `{vd.get('vuln_id', '')}` |")
-            lines.append(f"| 漏洞类型 | {orig.get('vuln_type', '')} |")
-            lines.append(f"| 接口 | `{orig.get('url', '')}` |")
-            lines.append(f"| 证据强度 | {vd.get('evidence_strength', '')} |")
+            vtype = orig.get("vuln_type", "") or "未知"
+            url = orig.get("url", "") or ""
+            detail = (orig.get("detail", "") or "")[:500]
+            impact_text = harm_story or detail or "（详见描述）"
+            params_str = _extract_params_from_evidence(
+                orig.get("evidence_request") or orig.get("payload") or ""
+            )
             broken = vd.get("broken_promises", []) or []
-            if broken:
-                lines.append(f"| 打破的业务承诺 | {', '.join(str(p) for p in broken)} |")
             platforms = vd.get("would_be_accepted_by", []) or []
-            if platforms:
-                lines.append(f"| 估计收录平台 | {', '.join(str(p) for p in platforms)} |")
-            lines.append(f"| 修复优先级 | {vd.get('fix_priority', '')} |")
+
+            lines.append(f"#### 5.2.{i} [{vtype}] {title}")
             lines.append("")
-            # 折叠原始证据
-            req = orig.get("evidence_request") or orig.get("payload") or ""
-            resp = orig.get("evidence_response") or ""
+            lines.append("| 项目 | 内容 |")
+            lines.append("|------|------|")
+            lines.append(f"| 等级 | {level_emoji} |")
+            lines.append(f"| 类型 | {vtype} |")
+            lines.append(f"| URL | `{url}` |")
+            lines.append(f"| 参数 | {params_str} |")
+            lines.append(f"| 影响 | {impact_text} |")
+            lines.append("")
+
+            # 复现步骤
+            lines.append("复现步骤:")
+            lines.append("")
             repro = orig.get("reproduce_steps") or ""
-            if req or resp or repro:
-                lines.append("<details><summary>原始证据 (报告 A 第 3 章)</summary>")
+            poc_note = vd.get("poc_note", "")
+            if repro:
+                lines.append(str(repro)[:800])
                 lines.append("")
-                if repro:
-                    lines.append("**复现步骤**:")
-                    lines.append("")
-                    lines.append(repro[:800])
-                    lines.append("")
-                if req:
-                    lines.append("**请求 / Payload**:")
-                    lines.append("")
-                    lines.append("```")
-                    lines.append(str(req)[:1500])
-                    lines.append("```")
-                    lines.append("")
-                if resp:
-                    lines.append("**响应**:")
-                    lines.append("")
-                    lines.append("```")
-                    lines.append(str(resp)[:1500])
-                    lines.append("```")
-                    lines.append("")
-                lines.append("</details>")
+            elif poc_note:
+                lines.append(str(poc_note)[:800])
+                lines.append("")
+            else:
+                lines.append("（无复现步骤记录）")
+                lines.append("")
+
+            # 请求
+            lines.append("请求:")
+            lines.append("")
+            req = orig.get("evidence_request") or orig.get("payload") or ""
+            if req:
+                lines.append("```http")
+                lines.append(str(req)[:1500])
+                lines.append("```")
+                lines.append("")
+            else:
+                lines.append("（无请求包）")
+                lines.append("")
+
+            # 响应
+            lines.append("响应:")
+            lines.append("")
+            resp = orig.get("evidence_response") or ""
+            if resp:
+                lines.append("```http")
+                lines.append(str(resp)[:1500])
+                lines.append("```")
+                lines.append("")
+            else:
+                lines.append("（无响应包）")
+                lines.append("")
+
+            # 截图
+            lines.append("截图: （如有）")
+            lines.append("")
+
+            # 修复建议
+            lines.append("修复建议:")
+            lines.append("")
+            fix_suggestion = orig.get("fix_suggestion", "") or ""
+            if fix_suggestion:
+                lines.append(str(fix_suggestion)[:1500])
+                lines.append("")
+            else:
+                lines.append("（未提供修复建议）")
+                lines.append("")
+
+            # 附加信息（折叠）
+            extra_parts = []
+            if broken:
+                extra_parts.append(f"打破的业务承诺: {', '.join(str(p) for p in broken)}")
+            if platforms:
+                extra_parts.append(f"估计收录平台: {', '.join(str(p) for p in platforms)}")
+            extra_parts.append(f"证据强度: {vd.get('evidence_strength', '')}")
+            extra_parts.append(f"修复优先级: {vd.get('fix_priority', '')}")
+            extra_parts.append(f"原漏洞 ID: `{vd.get('vuln_id', '')}`")
+            if extra_parts:
+                lines.append(f"<details><summary>附加信息</summary>\n\n{'  '.join(extra_parts)}\n\n</details>")
                 lines.append("")
             lines.append("---")
             lines.append("")
@@ -259,6 +329,10 @@ def _render_checklist_vulns_block(vulns: list[dict]) -> list[str]:
     for i, v in enumerate(vulns_sorted, 1):
         vt = v.get("vuln_type", "") or "未知"
         sev = v.get("severity", "") or "medium"
+        sev_emoji = {
+            "critical": "🔴 严重", "high": "🟠 高危",
+            "medium": "🟡 中危", "low": "🔵 低危", "info": "⚪ 信息",
+        }.get(sev.lower(), "🟡 中危")
         url = v.get("url", "") or ""
         feature = v.get("feature", "") or ""
         detail = v.get("detail", "") or ""
@@ -266,38 +340,68 @@ def _render_checklist_vulns_block(vulns: list[dict]) -> list[str]:
         evidence_resp = v.get("evidence_response", "") or ""
         fix = v.get("fix_suggestion", "") or ""
         repro = v.get("reproduce_steps", "") or ""
+        params_str = _extract_params_from_evidence(evidence_req)
+        impact_text = detail or f"功能点 {feature} 存在 {vt} 漏洞"
 
-        lines.append(f"### {i}. [{sev}] {vt}")
+        lines.append(f"### 5.{i} [{vt}] {feature}")
         lines.append("")
-        if feature:
-            lines.append(f"- **功能点**: {feature}")
-        if url:
-            lines.append(f"- **URL**: `{url}`")
-        if detail:
-            lines.append(f"- **测试详情**: {detail}")
+        lines.append("| 项目 | 内容 |")
+        lines.append("|------|------|")
+        lines.append(f"| 等级 | {sev_emoji} |")
+        lines.append(f"| 类型 | {vt} |")
+        lines.append(f"| URL | `{url}` |")
+        lines.append(f"| 参数 | {params_str} |")
+        lines.append(f"| 影响 | {impact_text} |")
+        lines.append("")
+
+        # 复现步骤
+        lines.append("复现步骤:")
+        lines.append("")
         if repro:
-            lines.append(f"- **复现步骤**: {repro}")
+            lines.append(str(repro)[:800])
+            lines.append("")
+        else:
+            lines.append("（未提供复现步骤）")
+            lines.append("")
+
+        # 请求
+        lines.append("请求:")
+        lines.append("")
         if evidence_req:
-            lines.append("")
-            lines.append("<details><summary>证据请求（点击展开）</summary>")
-            lines.append("")
             lines.append("```http")
             lines.append(evidence_req)
             lines.append("```")
             lines.append("")
-            lines.append("</details>")
+        else:
+            lines.append("（无请求包）")
+            lines.append("")
+
+        # 响应
+        lines.append("响应:")
+        lines.append("")
         if evidence_resp:
-            lines.append("")
-            lines.append("<details><summary>证据响应（点击展开）</summary>")
-            lines.append("")
             lines.append("```http")
             lines.append(evidence_resp)
             lines.append("```")
             lines.append("")
-            lines.append("</details>")
-        if fix:
-            lines.append(f"- **修复建议**: {fix}")
+        else:
+            lines.append("（无响应包）")
+            lines.append("")
+
+        # 截图
+        lines.append("截图: （如有）")
         lines.append("")
+
+        # 修复建议
+        lines.append("修复建议:")
+        lines.append("")
+        if fix:
+            lines.append(str(fix)[:800])
+            lines.append("")
+        else:
+            lines.append("（未提供修复建议）")
+            lines.append("")
+
         lines.append("---")
         lines.append("")
 
@@ -520,44 +624,82 @@ def render_proven_only(
                 vt = orig.get("vuln_type", "") or "未知"
                 url = orig.get("url", "") or ""
                 sev = orig.get("severity_original", "") or "medium"
+                sev_emoji = {
+                    "critical": "🔴 严重", "high": "🟠 高危",
+                    "medium": "🟡 中危", "low": "🔵 低危", "info": "⚪ 信息",
+                }.get(sev.lower(), "🟡 中危")
                 detail = (orig.get("detail", "") or "")[:400]
                 evidence_req = (orig.get("evidence_request", "") or "")[:500]
                 evidence_resp = (orig.get("evidence_response", "") or "")[:500]
                 fix = (orig.get("fix_suggestion", "") or "")[:300]
                 harm = vd.get("harm_story", "") or ""
                 vid = vd.get("vuln_id", "") or ""
+                params_str = _extract_params_from_evidence(evidence_req)
+                impact_text = harm or detail or "（未经危害验证，需人工复核）"
 
-                body.append(f"### {i}. [{sev}] {vt}")
+                body.append(f"### 5.{i} [{vt}] 待人工复核")
                 body.append("")
-                if url:
-                    body.append(f"- **URL**: `{url}`")
-                if vid:
-                    body.append(f"- **漏洞 ID**: `{vid}`")
-                if harm:
-                    body.append(f"- **审核员意见**: {harm}")
-                if detail:
-                    body.append(f"- **测试详情**: {detail}")
+                body.append("| 项目 | 内容 |")
+                body.append("|------|------|")
+                body.append(f"| 等级 | {sev_emoji} |")
+                body.append(f"| 类型 | {vt} |")
+                body.append(f"| URL | `{url}` |")
+                body.append(f"| 参数 | {params_str} |")
+                body.append(f"| 影响 | {impact_text} |")
+                body.append("")
+
+                # 复现步骤
+                body.append("复现步骤:")
+                body.append("")
+                repro = (orig.get("reproduce_steps", "") or "")[:500]
+                if repro:
+                    body.append(repro)
+                    body.append("")
+                else:
+                    body.append("（未提供复现步骤）")
+                    body.append("")
+
+                # 请求
+                body.append("请求:")
+                body.append("")
                 if evidence_req:
-                    body.append("")
-                    body.append("<details><summary>证据请求（点击展开）</summary>")
-                    body.append("")
                     body.append("```http")
                     body.append(evidence_req)
                     body.append("```")
                     body.append("")
-                    body.append("</details>")
+                else:
+                    body.append("（无请求包）")
+                    body.append("")
+
+                # 响应
+                body.append("响应:")
+                body.append("")
                 if evidence_resp:
-                    body.append("")
-                    body.append("<details><summary>证据响应（点击展开）</summary>")
-                    body.append("")
                     body.append("```http")
                     body.append(evidence_resp)
                     body.append("```")
                     body.append("")
-                    body.append("</details>")
-                if fix:
-                    body.append(f"- **修复建议**: {fix}")
+                else:
+                    body.append("（无响应包）")
+                    body.append("")
+
+                # 截图
+                body.append("截图: （如有）")
                 body.append("")
+
+                # 修复建议
+                body.append("修复建议:")
+                body.append("")
+                if fix:
+                    body.append(fix)
+                    body.append("")
+                else:
+                    body.append("（未提供修复建议）")
+                    body.append("")
+
+                if vid:
+                    body.append(f"> 漏洞 ID: `{vid}`")
+                    body.append("")
                 body.append("---")
                 body.append("")
         else:
@@ -596,7 +738,7 @@ def render_proven_only(
     lines.append("---")
     lines.append("")
 
-    # 逐个漏洞详情 — HackerOne 赏金报告风格
+    # 逐个漏洞详情 — 标准漏洞报告格式
     lines.append("## 漏洞详情")
     lines.append("")
     for i, vd in enumerate(accepted, 1):
@@ -610,111 +752,139 @@ def render_proven_only(
             "no_value": "⚪",
         }.get(level, "🟡 中危")
         title = orig.get("title", "") or vd.get("vuln_id", "")
-        url = orig.get("url", "")
-        vtype = orig.get("vuln_type", "")
+        url = orig.get("url", "") or ""
+        vtype = orig.get("vuln_type", "") or "未知"
         vid = vd.get("vuln_id", "")
-
-        # ===== Description (HackerOne 风格) =====
-        lines.append(f"### 漏洞 {i}：[{level_emoji}] {title}")
-        lines.append("")
-        lines.append("#### Description")
-        lines.append("")
         harm_story = vd.get("harm_story", "")
-        detail = orig.get("detail", "")
-        desc_text = harm_story or detail or vtype or "（无描述）"
-        lines.append(desc_text)
-        if url:
-            lines.append(f"\n**漏洞接口**: `{url}`")
-        if vtype:
-            lines.append(f"**漏洞类型**: {vtype}")
+        detail = orig.get("detail", "") or ""
+        impact_text = harm_story or detail or vtype or "（无描述）"
+        evidence_req = orig.get("evidence_request") or ""
+        evidence_resp = orig.get("evidence_response") or ""
+        poc_req_fallback = vd.get("poc_request") or ""
+        poc_resp_fallback = vd.get("poc_response") or ""
+        params_str = _extract_params_from_evidence(evidence_req or poc_req_fallback)
+        fix_suggestion = orig.get("fix_suggestion", "") or ""
+
+        # 标题行
+        lines.append(f"### 5.{i} [{vtype}] {title}")
         lines.append("")
 
-        # ===== Steps to Reproduce =====
-        lines.append("#### Steps to Reproduce")
+        # 信息表
+        lines.append("| 项目 | 内容 |")
+        lines.append("|------|------|")
+        lines.append(f"| 等级 | {level_emoji} |")
+        lines.append(f"| 类型 | {vtype} |")
+        lines.append(f"| URL | `{url}` |")
+        lines.append(f"| 参数 | {params_str} |")
+        lines.append(f"| 影响 | {impact_text} |")
+        lines.append("")
+
+        # 复现步骤
+        lines.append("复现步骤:")
         lines.append("")
         repro = orig.get("reproduce_steps") or ""
         poc_note = vd.get("poc_note", "")
         if repro:
-            lines.append(repro[:3000])
+            lines.append(str(repro)[:3000])
+            lines.append("")
         elif poc_note:
-            lines.append(poc_note[:1000])
+            lines.append(str(poc_note)[:1000])
+            lines.append("")
         else:
             lines.append("（无复现步骤记录）")
-        lines.append("")
+            lines.append("")
 
-        # ===== Proof of Concept — 完整请求包 & 响应包 =====
+        # 请求
+        lines.append("请求:")
+        lines.append("")
         raw_traces = vd.get("_raw_traces") or []
-        full_request = orig.get("evidence_request") or ""
-        full_response = orig.get("evidence_response") or ""
-        poc_req_fallback = vd.get("poc_request") or ""
-        poc_resp_fallback = vd.get("poc_response") or ""
+        full_request = evidence_req
+        full_response = evidence_resp
+        has_request_shown = False
 
         if raw_traces:
             for ti, rt in enumerate(raw_traces):
                 req_text = rt.get("request", "")
-                resp_text = rt.get("response", "")
-                poc_label = f"PoC #{ti + 1}" if len(raw_traces) > 1 else "PoC"
-
                 if req_text:
-                    lines.append(f"**{poc_label} — 完整请求包**:")
+                    poc_label = f"PoC #{ti + 1}" if len(raw_traces) > 1 else "PoC"
+                    lines.append(f"**{poc_label}**:")
                     lines.append("")
                     lines.append("```http")
                     lines.append(str(req_text)[:5000])
                     lines.append("```")
                     lines.append("")
+                    has_request_shown = True
+        else:
+            req_to_show = full_request or poc_req_fallback
+            if req_to_show:
+                lines.append("```http")
+                lines.append(str(req_to_show)[:5000])
+                lines.append("```")
+                lines.append("")
+                has_request_shown = True
 
+        if not has_request_shown:
+            lines.append("（无请求包）")
+            lines.append("")
+
+        # 响应
+        lines.append("响应:")
+        lines.append("")
+        has_response_shown = False
+
+        if raw_traces:
+            for ti, rt in enumerate(raw_traces):
+                resp_text = rt.get("response", "")
                 if resp_text:
-                    lines.append(f"**{poc_label} — 完整响应包**:")
+                    poc_label = f"PoC #{ti + 1}" if len(raw_traces) > 1 else "PoC"
+                    lines.append(f"**{poc_label}**:")
                     lines.append("")
                     lines.append("```http")
                     lines.append(str(resp_text)[:5000])
                     lines.append("```")
                     lines.append("")
+                    has_response_shown = True
         else:
-            req_to_show = full_request or poc_req_fallback
             resp_to_show = full_response or poc_resp_fallback
-
-            if req_to_show:
-                is_full = bool(full_request)
-                label = "完整请求包" if is_full else "请求摘要（缺少完整数据包）"
-                lines.append(f"**{label}**:")
-                lines.append("")
-                lines.append("```http")
-                lines.append(str(req_to_show)[:5000])
-                lines.append("```")
-                lines.append("")
-
             if resp_to_show:
-                is_full = bool(full_response)
-                label = "完整响应包" if is_full else "响应摘要（缺少完整数据包）"
-                lines.append(f"**{label}**:")
-                lines.append("")
                 lines.append("```http")
                 lines.append(str(resp_to_show)[:5000])
                 lines.append("```")
                 lines.append("")
+                has_response_shown = True
 
-        # ===== Impact =====
-        lines.append("#### Impact")
-        lines.append("")
-        broken = vd.get("broken_promises", []) or []
-        impact_parts = []
-        if harm_story:
-            impact_parts.append(harm_story)
-        if broken:
-            impact_parts.append(f"打破的业务承诺: {', '.join(str(p) for p in broken)}")
-        if impact_parts:
-            lines.append("\n\n".join(impact_parts))
-        else:
-            lines.append("（详见 Description）")
-        lines.append("")
-
-        # ===== Remediation =====
-        fix_suggestion = orig.get("fix_suggestion", "") or ""
-        if fix_suggestion:
-            lines.append("#### Remediation")
+        if not has_response_shown:
+            lines.append("（无响应包）")
             lines.append("")
+
+        # 截图
+        lines.append("截图: （如有）")
+        lines.append("")
+
+        # 修复建议
+        lines.append("修复建议:")
+        lines.append("")
+        if fix_suggestion:
             lines.append(str(fix_suggestion)[:1500])
+            lines.append("")
+        else:
+            lines.append("（未提供修复建议）")
+            lines.append("")
+
+        # 附加信息（折叠）
+        broken = vd.get("broken_promises", []) or []
+        platforms = vd.get("would_be_accepted_by", []) or []
+        extra_parts = []
+        if broken:
+            extra_parts.append(f"打破的业务承诺: {', '.join(str(p) for p in broken)}")
+        if platforms:
+            extra_parts.append(f"估计收录平台: {', '.join(str(p) for p in platforms)}")
+        extra_parts.append(f"证据强度: {vd.get('evidence_strength', '')}")
+        extra_parts.append(f"修复优先级: {vd.get('fix_priority', '')}")
+        if vid:
+            extra_parts.append(f"原漏洞 ID: `{vid}`")
+        if extra_parts:
+            lines.append(f"<details><summary>附加信息</summary>\n\n{'  '.join(extra_parts)}\n\n</details>")
             lines.append("")
 
         lines.append("---")

@@ -280,7 +280,7 @@ class ChatLoopMixin:
             self.current_context.add_user(user_message)
             messages = self.current_context.get_messages()
             try:
-                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS)
+                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:explore")
             except Exception as e:
                 yield self._event("system", f"LLM 调用出错: {e}")
                 return
@@ -399,7 +399,7 @@ class ChatLoopMixin:
                 messages = self.current_context.get_messages()
                 # ★ 与 report 分支风格统一：LLM 闲聊回复也加异常兜底
                 try:
-                    response = await asyncio.to_thread(self.llm.chat, messages)
+                    response = await asyncio.to_thread(self.llm.chat, messages, caller="main:chat")
                 except Exception as e:
                     yield self._event("system", f"LLM 调用出错: {e}")
                     return
@@ -1234,7 +1234,7 @@ class ChatLoopMixin:
                         yield self._event("thinking", f"Phase 1 登录准备 — 第 {login_round} 轮")
                         try:
                             messages = self.current_context.get_messages()
-                            response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS)
+                            response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:login")
                         except Exception as e:
                             yield self._event("system", f"LLM 调用出错: {e}")
                             break
@@ -1555,7 +1555,7 @@ class ChatLoopMixin:
 
             try:
                 messages = self.current_context.get_messages()
-                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS)
+                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test")
             except Exception as e:
                 err_str = str(e).lower()
                 err_type = type(e).__name__.lower()
@@ -1596,7 +1596,7 @@ class ChatLoopMixin:
                     await asyncio.sleep(_wait_sec)
                     try:
                         messages = self.current_context.get_messages()
-                        response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS)
+                        response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test")
                         _retried_ok = True
                         yield self._event("system",
                             f"✅ LLM API 重试成功（第 {_llm_retry_count} 次）")

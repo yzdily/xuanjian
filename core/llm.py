@@ -132,26 +132,6 @@ def _xor_stream(data: bytes, key: bytes, nonce: bytes) -> bytes:
 
 
 # ============================================================
-# 当前 task_id 上下文（用于 LLMMonitor 自动归属）
-# ============================================================
-# 由 AgentSession 在 chat() 入口设置，LLMMonitor.record() 自动读取，
-# 无需修改任何 LLM 调用方代码。
-_current_task_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "current_task_id", default=""
-)
-
-
-def set_current_task(task_id: str):
-    """设置当前请求所属的 task_id。"""
-    _current_task_id.set(task_id or "")
-
-
-def get_current_task() -> str:
-    """获取当前请求所属的 task_id。"""
-    return _current_task_id.get()
-
-
-# ============================================================
 # LLM 使用监控
 # ============================================================
 

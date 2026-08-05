@@ -12,6 +12,12 @@ import asyncio
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
+from core.config import (
+    MAX_JS_FILE_SIZE,
+    HTTP_PROXY_CHECK_TIMEOUT,
+    MAX_RESPONSE_BODY_SIZE,
+)
+
 mcp = FastMCP("browser")
 
 # 全局 Playwright 实例
@@ -89,8 +95,8 @@ async def _refresh_session_injection_if_needed(page) -> None:
                                 for (const [k, v] of Object.entries(items || {})) localStorage.setItem(k, v);
                             } catch(e) {}
                         }""", ls_items)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[browser] ⚠️ localStorage 注入到当前页面失败: {e}")
                     print(f"[browser] 🔑 已刷新 {len(ls_items)} 个 localStorage 项: {', '.join(list(ls_items.keys())[:5])}")
             except Exception as lse:
                 print(f"[browser] ⚠️ INJECT_LOCAL_STORAGE 解析失败: {lse}")
@@ -145,7 +151,7 @@ async def _check_proxy(proxy_url: str) -> bool:
     ]
     for url in test_urls:
         try:
-            async with httpx.AsyncClient(proxy=proxy_url, timeout=3) as c:
+            async with httpx.AsyncClient(proxy=proxy_url, timeout=HTTP_PROXY_CHECK_TIMEOUT) as c:
                 resp = await c.get(url, follow_redirects=True)
                 # 任何 HTTP 响应（包括 4xx/5xx）都说明代理能转发流量
                 if resp.status_code > 0:
@@ -502,8 +508,8 @@ async def browser_click(selector: str) -> str:
             el = await page.query_selector(selector)
             if el:
                 text = (await el.inner_text()).strip()[:50]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[browser] ⚠️ 获取元素文本失败: {e}")
 
     # ---- 策略 2：用 text= 精确文本匹配 ----
     if text:
@@ -1023,7 +1029,7 @@ async def js_analyze_selected(js_urls_csv: str) -> str:
             js_name = js_url.split('/')[-1].split('?')[0]
             try:
                 resp = await client.get(js_url)
-                content = resp.text[:500000]  # 单文件最大 500KB
+                content = resp.text[:MAX_JS_FILE_SIZE]  # 单文件最大尺寸限制
                 js_file_sizes[js_name] = len(resp.text)
 
                 # ★ 缓存关键业务 JS 内容（供末尾提取代码片段给 LLM 分析）

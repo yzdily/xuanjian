@@ -57,8 +57,8 @@ def _load_or_generate_secret() -> str:
             _SECRET_KEY = _SECRET_FILE.read_text(encoding="utf-8").strip()
             if _SECRET_KEY:
                 return _SECRET_KEY
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("读取签名密钥文件失败: %s", e, exc_info=True)
     # 生成 32 字节随机密钥
     _SECRET_KEY = secrets.token_hex(32)
     try:
@@ -366,8 +366,8 @@ def _resolve_default_password() -> str:
             pw = pw_file.read_text(encoding="utf-8").strip()
             if pw:
                 return pw
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("读取默认密码文件失败: %s", e)
     # 3) 随机生成 + 持久化
     alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     pw = "".join(secrets.choice(alphabet) for _ in range(12))

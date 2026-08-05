@@ -1465,7 +1465,7 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                             full=f"[{wid}/{inner.get('feature', '')}] {tf}")
                     elif inner_type == "worker_message":
                         yield session._event("system",
-                            f"[{wid}] {inner.get('content', '')[:300]}")
+                            f"[{wid}] {inner.get('content', '')}")
                     elif inner_type == "worker_done":
                         yield session._event("system",
                             f"✅ 补测 Agent [{wid}] 完成: {inner.get('summary', '')}")

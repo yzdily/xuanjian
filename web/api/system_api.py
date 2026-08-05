@@ -36,13 +36,13 @@ async def health():
     except Exception as e:
         checks["llm"] = {"ok": False, "error": str(e)}
 
-    proxy_url = os.getenv("BROWSER_PROXY", "http://127.0.0.1:8080")
+    proxy_url = os.getenv("BROWSER_PROXY", "http://127.0.0.1:18080")
     try:
         import asyncio
         import urllib.parse
         parsed = urllib.parse.urlparse(proxy_url)
         proxy_host = parsed.hostname or "127.0.0.1"
-        proxy_port = parsed.port or 8080
+        proxy_port = parsed.port or 18080
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(proxy_host, proxy_port), timeout=1.5
         )

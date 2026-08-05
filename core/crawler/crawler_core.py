@@ -2369,7 +2369,10 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         # ★ 渗透测试场景：登录页降级策略
         # 登录页（CAS/SSO/传统登录表单）几乎无可点击菜单，点击"登录"按钮只会触发表单提交
         # 和页面跳转，浪费爬虫预算。检测到登录页时跳过 Phase B/C，只保留已提取的 API/JS/表单。
+        # ★ 2026-08-05: 注册页不再误判为登录页 — 注册页虽有 password 输入框，
+        # 但可能包含验证码 API、手机号查重 API 等高价值接口，不应跳过菜单/按钮点击。
         _is_login_page = False
+        _is_register_page = False
         try:
             _has_password_input = await page.evaluate(
                 "() => !!document.querySelector('input[type=password]')"
@@ -2377,10 +2380,19 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
             _url_lower = url.lower()
             _login_url_kws = ("/login", "/signin", "/sign-in", "/cas/", "/sso", "/oauth",
                               "/auth", "/account/login", "/user/login", "/登录")
-            _is_login_page = _has_password_input or any(kw in _url_lower for kw in _login_url_kws)
+            _register_url_kws = ("/register", "/signup", "/sign-up", "/join",
+                                 "/注册", "/sign_up")
+            _is_register_page = any(kw in _url_lower for kw in _register_url_kws)
+            # 只有非注册页才检查 password 输入框，避免注册页被误判
+            _is_login_page = (not _is_register_page and _has_password_input) or \
+                             (not _is_register_page and any(kw in _url_lower for kw in _login_url_kws))
         except Exception:
             pass
-        if _is_login_page:
+        if _is_register_page:
+            self._report(
+                f"  [{url[:40]}] 📝 检测到注册页面，保留菜单/按钮点击（仅跳过提交类按钮）"
+            )
+        elif _is_login_page:
             self._report(
                 f"  [{url[:40]}] 🔐 检测到登录页面，跳过菜单/按钮点击 "
                 f"(省略 {len(unique_menu_items)} 菜单 + {len(non_menu_items)} 按钮)，仅提取 API/表单"
@@ -2427,6 +2439,24 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     f"按价值排序后前 5: {top5_str}"
                 )
             unique_menu_items = _ranked
+
+            # ★ 2026-08-05: 跳过低价值静态菜单（score ≤ -60）
+            # 企业文化/人才招聘/联系我们/法律条款等纯静态页面几乎不可能触发 API，
+            # 每个浪费 5s 等待。当存在更高价值菜单时，直接跳过这些项。
+            from core.crawler.menu_ranker import score_menu as _score_fn
+            _low_score_threshold = -60
+            _has_high_value = any(_score_fn(m, mode=_menu_mode) > 0 for m in unique_menu_items)
+            if _has_high_value:
+                _skipped_low = [m for m in unique_menu_items if _score_fn(m, mode=_menu_mode) <= _low_score_threshold]
+                if _skipped_low:
+                    unique_menu_items = [m for m in unique_menu_items if _score_fn(m, mode=_menu_mode) > _low_score_threshold]
+                    _skipped_names = "、".join(f"「{m.get('text', '')[:15]}」" for m in _skipped_low[:5])
+                    if len(_skipped_low) > 5:
+                        _skipped_names += f" 等{len(_skipped_low)}个"
+                    self._report(
+                        f"  [{url[:40]}] ⏭️ 跳过 {len(_skipped_low)} 个低价值静态菜单 "
+                        f"(score≤{_low_score_threshold}): {_skipped_names}"
+                    )
         except Exception as _e:
             # 排序失败不影响爬取，回退到原顺序
             self._report(f"  [{url[:40]}] ⚠️ 菜单排序失败，回退原顺序: {type(_e).__name__}")
@@ -2447,6 +2477,17 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         #   - 0.5s 静默期内没有任何 in-scope 请求 → 静态/锚点跳转，立刻退出
         #   - 有 in-scope 请求 → 等到 0.8s 内不再有新业务请求 / 上限 4s（保慢业务）
         #   - 第三方 SDK 请求（不在 in-scope）不计入等待，避免 mutinyhq/linkedin 拖累
+        # ★ 2026-08-05: 低价值菜单（score<0）缩短静默期到 2s，高价值保持 5s
+        def _get_wait_params(menu_item: dict) -> dict:
+            """根据菜单评分返回自适应等待参数。"""
+            try:
+                from core.crawler.menu_ranker import score_menu as _sm
+                _s = _sm(menu_item, mode=_menu_mode)
+                if _s < 0:
+                    return {"initial_quiet_s": 2.0, "max_wait_s": 5.0}
+            except Exception:
+                pass
+            return {}  # 使用默认值
         async def _smart_wait_business_xhr(
             captured_ref: list,
             before_idx: int,
@@ -2796,7 +2837,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                         continue
                     clicked_count += 1
                     # ★ v3: 业务请求自适应等待（替代 sleep+networkidle）
-                    await _smart_wait_business_xhr(captured, before)
+                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
                 else:
                     # 先尝试重新获取元素（SPA 中 DOM 可能已更新）
                     try:
@@ -2859,7 +2900,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     # - 静态/锚点跳转：~0.5s 退出（旧版要 5.8s）
                     # - 业务 XHR 触发：等到业务请求 settle，最长 4s
                     # - 第三方 SDK 不计入，避免 mutinyhq/linkedin/ccm 拖累
-                    await _smart_wait_business_xhr(captured, before)
+                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
 
             except Exception:
                 # ★ v4.3: click 异常 → SPA 可能正在渲染，等 1s 再继续下一轮
@@ -3165,7 +3206,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     await page.click(selector, timeout=3000)
                     clicked_count += 1
                     _selector_consecutive_fail = 0
-                    await _smart_wait_business_xhr(captured, before)
+                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
                     trigger_context = {
                         "page_url": page.url,
                         "element_text": menu_text,

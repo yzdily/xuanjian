@@ -22,6 +22,26 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import httpx
+
+
+# ============================================================
+# 共享 HTTP 客户端（连接池复用）
+# ============================================================
+_http_client: httpx.AsyncClient | None = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """获取共享的 HTTP 客户端（连接池复用）。"""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _http_client
+
 
 class FuzzResult(Enum):
     """Fuzz 结果枚举"""
@@ -222,8 +242,6 @@ class BaseFuzzer:
         timeout: float = 0,
     ) -> dict[str, Any]:
         """发送 HTTP 请求，返回 {status, headers, body, elapsed, error}。"""
-        import httpx
-
         timeout = timeout or self.default_timeout
         kwargs: dict[str, Any] = {
             "method": method.upper(),
@@ -239,16 +257,16 @@ class BaseFuzzer:
 
         t0 = time.time()
         try:
-            async with httpx.AsyncClient(verify=False) as client:
-                resp = await client.request(**kwargs)
-                return {
-                    "status": resp.status_code,
-                    "headers": dict(resp.headers),
-                    "body": resp.text[:10000],
-                    "body_length": len(resp.text),
-                    "elapsed": time.time() - t0,
-                    "error": None,
-                }
+            client = await get_http_client()
+            resp = await client.request(**kwargs)
+            return {
+                "status": resp.status_code,
+                "headers": dict(resp.headers),
+                "body": resp.text[:10000],
+                "body_length": len(resp.text),
+                "elapsed": time.time() - t0,
+                "error": None,
+            }
         except Exception as e:
             return {
                 "status": 0,

@@ -20,6 +20,7 @@ import zlib
 import logging
 
 from mitmproxy import tls
+from core.config import MAX_RESPONSE_BODY_SIZE
 
 
 FLOW_FILE = os.getenv("PROXY_FLOW_FILE", "/tmp/pentest_agent_flows.jsonl")
@@ -118,8 +119,8 @@ def _get_response_body(flow):
             content = gzip.decompress(content)
         elif "deflate" in ce:
             content = zlib.decompress(content)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug("响应体解压失败: %s (url=%s)", e, flow.request.pretty_url[:100])
 
     # 2) 解码（优先用 charset，否则 utf-8 + replace）
     try:
@@ -128,9 +129,10 @@ def _get_response_body(flow):
         if "charset=" in ct:
             charset = ct.split("charset=")[-1].split(";")[0].strip().strip('"').strip("'")
         if charset:
-            return content.decode(charset, errors="replace")[:10000]
-        return content.decode("utf-8", errors="replace")[:10000]
-    except Exception:
+            return content.decode(charset, errors="replace")[:MAX_RESPONSE_BODY_SIZE]
+        return content.decode("utf-8", errors="replace")[:MAX_RESPONSE_BODY_SIZE]
+    except Exception as e:
+        logging.debug("响应体解码失败: %s (url=%s)", e, flow.request.pretty_url[:100])
         return ""
 
 # 忽略的静态资源后缀
@@ -225,8 +227,8 @@ class FlowRecorder:
         try:
             with open(FLOW_FILE, "a") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning("流量记录写入失败: %s (url=%s)", e, url[:100])
 
 
 addons = [TlsPassthrough(), FlowRecorder()]

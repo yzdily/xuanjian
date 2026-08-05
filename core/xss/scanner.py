@@ -458,7 +458,7 @@ class XssScanner:
                     auth_headers=self.auth_headers,
                     cookies=self.cookies,
                     on_progress=lambda m: blind_events.append(m),
-                    wait_for_callback_seconds=30,
+                    wait_for_callback_seconds=self.config.get("blind_xss_timeout", 300),  # 5 minutes default
                 )
                 blind_task = asyncio.create_task(blind_scanner.scan_write_points(write_targets))
                 while not blind_task.done():

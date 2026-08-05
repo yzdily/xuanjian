@@ -340,7 +340,22 @@ ELEMENT_VULN_MAP: dict[str, list[str]] = {
 
 # ---- 运行时常量 ----
 
-MAX_TOOL_RESULT = 6000       # 工具结果注入上下文前的截断阈值
+# ★ 响应截断阈值（统一管理，避免魔法数字）
+MAX_RESPONSE_BODY_SIZE = 10000      # HTTP 响应体截断阈值（单次请求）
+MAX_ERROR_MESSAGE_SIZE = 300        # 错误信息截断阈值
+MAX_TOOL_RESULT = 6000              # 工具结果注入上下文前的截断阈值
+MAX_API_DOC_SIZE = 500000           # API 文档最大尺寸（Swagger/GraphQL 等）
+MAX_JS_FILE_SIZE = 500000           # JS 文件最大尺寸（Source Map/JS 审计）
+MAX_REPORT_TEXT_SIZE = 80000        # 报告文本最大尺寸
+
+# ★ 超时配置（统一管理）
+DEFAULT_HTTP_TIMEOUT = 30.0         # 默认 HTTP 请求超时（秒）
+DEFAULT_BROWSER_TIMEOUT = 60.0      # 默认浏览器操作超时（秒）
+DEFAULT_TOOL_EXECUTION_TIMEOUT = 60.0  # 默认工具执行超时（秒）
+HTTP_CONNECT_TIMEOUT = 8.0          # HTTP 连接超时（秒）
+HTTP_PROXY_CHECK_TIMEOUT = 3.0      # 代理检查超时（秒）
+BROWSER_PAGE_LOAD_TIMEOUT = 30000   # 浏览器页面加载超时（毫秒）
+BROWSER_ELEMENT_WAIT_TIMEOUT = 5000 # 浏览器元素等待超时（毫秒）
 MAX_WORKERS = 5              # Phase 2 最大并行子 Agent 数（并发限制）
 MAX_FEATURES_PER_GROUP = 8   # 每组子 Agent 最多分配的功能点数（防止上下文爆炸）
 WORKER_MAX_ROUNDS = 100      # 子 Agent 每个功能点的最大轮数

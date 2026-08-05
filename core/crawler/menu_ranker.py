@@ -83,12 +83,16 @@ _COMPANY_KEYWORDS = (
     "partners", "partner program", "partnership", "alliances",
     "customers", "case study", "case studies", "testimonials",
     "success story", "success stories",
+    "culture", "corporate culture",
+    "franchise", "join as partner",
     # 中文
     "关于", "关于我们", "公司介绍", "公司简介", "我们的故事", "团队",
     "招聘", "职业", "加入我们", "工作机会",
     "新闻", "媒体", "新闻中心", "新闻动态", "奖项",
     "投资者", "投资者关系",
     "合作伙伴", "合作", "客户", "客户案例", "案例", "成功案例",
+    "企业文化", "文化", "愿景", "使命",
+    "加盟", "合伙人", "招商",
 )
 
 # 内容营销类（-60）

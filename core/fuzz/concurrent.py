@@ -19,6 +19,24 @@ from core.log import get_logger
 log = get_logger("fuzz.concurrent")
 
 
+# ============================================================
+# 共享 HTTP 客户端（连接池复用）
+# ============================================================
+_http_client: httpx.AsyncClient | None = None
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """获取共享的 HTTP 客户端（连接池复用）。"""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            verify=False,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _http_client
+
+
 @dataclass
 class ConcurrentResult:
     """并发请求的结果集"""
@@ -95,16 +113,16 @@ async def send_concurrent(
                 if body:
                     kwargs["content"] = body.encode("utf-8", errors="replace")
 
-                async with httpx.AsyncClient(verify=False) as client:
-                    resp = await client.request(**kwargs)
-                    return {
-                        "index": idx,
-                        "status": resp.status_code,
-                        "headers": dict(resp.headers),
-                        "body": resp.text[:5000],
-                        "elapsed": time.time() - t_start,
-                        "error": None,
-                    }
+                client = await get_http_client()
+                resp = await client.request(**kwargs)
+                return {
+                    "index": idx,
+                    "status": resp.status_code,
+                    "headers": dict(resp.headers),
+                    "body": resp.text[:5000],
+                    "elapsed": time.time() - t_start,
+                    "error": None,
+                }
             except Exception as e:
                 return {
                     "index": idx,

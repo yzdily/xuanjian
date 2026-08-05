@@ -15,9 +15,11 @@ from core.session.advance_mixin import AdvancePhaseMixin
 from core.session.report_mixin import ReportMixin
 from core.session.utils_mixin import UtilsMixin
 from core.session.chat_loop import ChatLoopMixin
+from core.session.approval_mixin import ApprovalMixin
 
 
 class AgentSession(
+    ApprovalMixin,
     ChatLoopMixin,
     HermesMixin,
     IdlePhaseMixin,

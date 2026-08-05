@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
+from core.config import MAX_REPORT_TEXT_SIZE
+
 mcp = FastMCP("custom_report")
 
 NOTE_DIR = Path(os.getenv("NOTE_PATH", "./data/notes"))
@@ -52,7 +54,7 @@ def _get_active_template() -> dict | None:
                 return {
                     "id": item["id"],
                     "name": item["name"],
-                    "content": text_path.read_text(encoding="utf-8")[:80000],
+                    "content": text_path.read_text(encoding="utf-8")[:MAX_REPORT_TEXT_SIZE],
                 }
     return None
 

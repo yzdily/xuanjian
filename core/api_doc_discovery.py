@@ -20,6 +20,8 @@ from urllib.parse import urlparse, urljoin
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from core.config import MAX_API_DOC_SIZE, HTTP_CONNECT_TIMEOUT
+
 if TYPE_CHECKING:
     from core.sitemap import Sitemap
 
@@ -451,16 +453,16 @@ async def _safe_get(url: str, http_client=None, auth_headers: dict | None = None
     try:
         if http_client:
             headers = dict(auth_headers or {})
-            resp = await http_client.get(url, headers=headers, timeout=8)
+            resp = await http_client.get(url, headers=headers, timeout=HTTP_CONNECT_TIMEOUT)
             if resp.status_code == 200:
-                return resp.text[:500000]  # 限制最大 500K
+                return resp.text[:MAX_API_DOC_SIZE]  # 限制最大尺寸
         else:
             import httpx
-            async with httpx.AsyncClient(verify=False, timeout=8, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=HTTP_CONNECT_TIMEOUT, follow_redirects=True) as client:
                 headers = dict(auth_headers or {})
                 resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
-                    return resp.text[:500000]
+                    return resp.text[:MAX_API_DOC_SIZE]
     except Exception:
         pass
     return None
@@ -470,15 +472,15 @@ async def _safe_post(url: str, body: str, http_client=None, headers: dict | None
     """安全 POST 请求，返回响应文本或 None。"""
     try:
         if http_client:
-            resp = await http_client.post(url, content=body, headers=headers or {}, timeout=8)
+            resp = await http_client.post(url, content=body, headers=headers or {}, timeout=HTTP_CONNECT_TIMEOUT)
             if resp.status_code == 200:
-                return resp.text[:500000]
+                return resp.text[:MAX_API_DOC_SIZE]
         else:
             import httpx
-            async with httpx.AsyncClient(verify=False, timeout=8, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=HTTP_CONNECT_TIMEOUT, follow_redirects=True) as client:
                 resp = await client.post(url, content=body, headers=headers or {})
                 if resp.status_code == 200:
-                    return resp.text[:500000]
+                    return resp.text[:MAX_API_DOC_SIZE]
     except Exception:
         pass
     return None

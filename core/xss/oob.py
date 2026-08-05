@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Optional
@@ -350,3 +351,183 @@ class BlindXssScanner:
                     f"{json.dumps(hits[0], ensure_ascii=False)[:300]}"
                 )
         return hit_count
+
+
+# ============================================================
+# OOBCallback - 增强的带外回调管理器
+# ============================================================
+class OOBCallback:
+    """带外回调管理器（支持持久化和 Interactsh 集成）
+    
+    功能：
+    1. token→target 映射持久化到 SQLite
+    2. 可配置的回调等待时间（默认 5 分钟）
+    3. Interactsh 集成（可选）
+    """
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        import sqlite3
+        from pathlib import Path
+        
+        self._db_path = Path("data/oob_callbacks.db")
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize SQLite for persistence
+        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS callbacks (
+                token TEXT PRIMARY KEY,
+                target_url TEXT,
+                created_at REAL,
+                triggered_at REAL,
+                details TEXT
+            )
+        """)
+        self._conn.commit()
+        
+        self._callbacks: dict[str, asyncio.Future] = {}
+        self._service_url = os.getenv("OOB_SERVICE_URL", "")
+        self._initialized = True
+    
+    @classmethod
+    def get_instance(cls) -> "OOBCallback":
+        """获取单例实例"""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    async def get_callback_url(self, service_url: str | None = None) -> str:
+        """获取回调 URL
+        
+        Args:
+            service_url: 可选的 OOB 服务 URL，如未提供则使用环境变量或 Interactsh
+            
+        Returns:
+            回调 URL，格式如 https://oob.example.com/cb/{token}
+        """
+        token = uuid.uuid4().hex[:16]
+        
+        if service_url or self._service_url:
+            base = service_url or self._service_url
+            return f"{base.rstrip('/')}/cb/{token}"
+        
+        # Fallback to Interactsh
+        try:
+            import interactsh
+            client = interactsh.Client()
+            return client.register()
+        except ImportError:
+            log.warning("未安装 interactsh，使用自建服务")
+            return f"http://oob.local/cb/{token}"
+    
+    def persist_token(self, token: str, target_url: str) -> None:
+        """持久化 token→target 映射
+        
+        Args:
+            token: OOB token
+            target_url: 目标 URL
+        """
+        self._conn.execute(
+            "INSERT OR REPLACE INTO callbacks (token, target_url, created_at) VALUES (?, ?, ?)",
+            (token, target_url, time.time())
+        )
+        self._conn.commit()
+    
+    async def wait_for_callback(
+        self,
+        token: str,
+        timeout: float = 300,  # 5 minutes default
+    ) -> bool:
+        """等待回调
+        
+        Args:
+            token: OOB token
+            timeout: 超时时间（秒），默认 5 分钟
+            
+        Returns:
+            是否收到回调
+        """
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        self._callbacks[token] = future
+        
+        try:
+            await asyncio.wait_for(future, timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._callbacks.pop(token, None)
+    
+    def trigger_callback(self, token: str, details: dict = None) -> None:
+        """触发回调（由外部服务调用）
+        
+        Args:
+            token: OOB token
+            details: 回调详情
+        """
+        # Update database
+        self._conn.execute(
+            "UPDATE callbacks SET triggered_at = ?, details = ? WHERE token = ?",
+            (time.time(), json.dumps(details or {}), token)
+        )
+        self._conn.commit()
+        
+        # Trigger waiting future
+        future = self._callbacks.get(token)
+        if future and not future.done():
+            future.set_result(True)
+    
+    def get_pending_tokens(self) -> list[dict]:
+        """获取所有待处理的 token
+        
+        Returns:
+            待处理 token 列表
+        """
+        cursor = self._conn.execute(
+            "SELECT token, target_url, created_at FROM callbacks WHERE triggered_at IS NULL"
+        )
+        return [
+            {"token": row[0], "target_url": row[1], "created_at": row[2]}
+            for row in cursor.fetchall()
+        ]
+    
+    def get_triggered_tokens(self, since: float = 0) -> list[dict]:
+        """获取已触发的 token
+        
+        Args:
+            since: 起始时间戳
+            
+        Returns:
+            已触发 token 列表
+        """
+        cursor = self._conn.execute(
+            "SELECT token, target_url, created_at, triggered_at, details FROM callbacks WHERE triggered_at >= ?",
+            (since,)
+        )
+        return [
+            {
+                "token": row[0],
+                "target_url": row[1],
+                "created_at": row[2],
+                "triggered_at": row[3],
+                "details": json.loads(row[4]) if row[4] else {}
+            }
+            for row in cursor.fetchall()
+        ]
+    
+    def close(self) -> None:
+        """关闭数据库连接"""
+        if self._conn:
+            self._conn.close()

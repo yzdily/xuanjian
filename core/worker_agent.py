@@ -821,7 +821,7 @@ class WorkerAgent:
             try:
                 messages = self.context.get_messages()
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(self.llm.chat, messages, tools),
+                    asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}"),
                     timeout=_LLM_CALL_TIMEOUT,
                 )
             except Exception as e:
@@ -854,7 +854,7 @@ class WorkerAgent:
                         try:
                             messages = self.context.get_messages()
                             response = await asyncio.wait_for(
-                                asyncio.to_thread(self.llm.chat, messages, tools),
+                                asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}"),
                                 timeout=_LLM_CALL_TIMEOUT,
                             )
                             _retried_ok = True
@@ -870,9 +870,17 @@ class WorkerAgent:
             self.context.add_assistant(response)
 
             if response.content:
-                yield {"type": "worker_message", "worker": self.worker_id,
-                       "feature": self.feature.name if self.feature else self.group_name,
-                       "content": response.content[:200]}
+                # ★ 过滤无意义的推理文本（"Let me examine..." / "I'll work through..." 等）
+                # 只在有实质内容时才推送，避免前端被废话刷屏
+                _content = response.content.strip()
+                _is_boilerplate = any(
+                    _content.lower().startswith(p)
+                    for p in ("let me ", "i'll ", "i will ", "now let me ", "first, let me ")
+                ) and len(_content) < 150
+                if not _is_boilerplate:
+                    yield {"type": "worker_message", "worker": self.worker_id,
+                           "feature": self.feature.name if self.feature else self.group_name,
+                           "content": _content[:800]}
 
             if response.tool_calls:
                 # ★ 反内卷跟踪：本轮是否有 checklist_mark

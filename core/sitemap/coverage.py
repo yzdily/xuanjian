@@ -14,6 +14,49 @@ from core.sitemap.constants import CHECK_RESULT_ICON
 log = logging.getLogger("pentest_agent.sitemap")
 
 
+def _normalize_vuln_key(fp: FeaturePoint, vuln_type: str) -> str:
+    """归一化漏洞去重 key。
+
+    当同一漏洞类型影响同一 URL 路径模式下的多个端点时
+    （如 catch-all 路由 /Home/GetVerificationCode/* 的验证码答案泄露），
+    使用归一化路径模式作为 key，避免重复报告 N 次。
+
+    策略：
+    1. 从 related_apis 提取第一个 API URL
+    2. 将路径最后一段替换为 * （如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*）
+    3. 结合漏洞类型生成 key
+    4. 无 API 时退回到功能点名 + 漏洞类型
+    """
+    from urllib.parse import urlparse
+
+    # 尝试从 related_apis 提取 URL 路径模式
+    for api in (fp.related_apis or []):
+        url_part = api.split(" ", 1)[-1] if " " in api else api
+        if not url_part.startswith("http"):
+            continue
+        try:
+            pu = urlparse(url_part)
+            path = pu.path.rstrip("/")
+            if not path or path == "/":
+                continue
+            # 将路径分段，替换最后一段为 *
+            # 如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*
+            # 如 /api/user/list → /api/user/*
+            parts = [p for p in path.split("/") if p]
+            if len(parts) >= 2:
+                # 保留前 N-1 段，最后一段替换为 *（归一化路径变体）
+                # 如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*
+                # 如 /api/user/list → /api/user/*
+                norm_path = "/" + "/".join(parts[:-1]) + "/*"
+                return f"{pu.netloc.lower()}{norm_path}|{vuln_type}"
+        except Exception:
+            pass
+        break  # 只检查第一个 API
+
+    # 退回功能名 + 漏洞类型
+    return f"{fp.name}|{vuln_type}"
+
+
 class CoverageMixin:
     """覆盖率统计、覆盖矩阵、checklist 查询。"""
 
@@ -124,10 +167,15 @@ class CoverageMixin:
         # ★ 同时统计已确认(vulnerable)与疑似(needs_review)，避免报告头部
         # "发现漏洞"只算 confirmed、把疑似项完全隐藏，导致用户误以为 0 漏洞。
         # 疑似项 severity 后缀 "(疑似)" 便于报告区分展示。
+        # ★ 跨端点同源漏洞合并：当同一漏洞类型影响同一 URL 路径模式下的多个端点时
+        # （如 catch-all 路由 /Home/GetVerificationCode/* 的验证码答案泄露），
+        # 合并为一条记录，避免重复报告 N 次。
         for f in active:
             for c in f.checklist:
                 if c.result == CheckResult.VULNERABLE:
-                    dedup_key = f"{f.name}|{c.vuln_type}"
+                    # 归一化去重 key：提取 URL 路径模式 + 漏洞类型
+                    norm_key = _normalize_vuln_key(f, c.vuln_type)
+                    dedup_key = f"{norm_key}|confirmed"
                     if dedup_key not in seen_vulns:
                         seen_vulns.add(dedup_key)
                         sev = c.severity or ("critical" if f.priority.value in ("critical",) else "high")
@@ -139,7 +187,8 @@ class CoverageMixin:
                             "status": "confirmed",
                         })
                 elif c.result == CheckResult.NEEDS_REVIEW:
-                    dedup_key = f"{f.name}|{c.vuln_type}|suspected"
+                    norm_key = _normalize_vuln_key(f, c.vuln_type)
+                    dedup_key = f"{norm_key}|suspected"
                     if dedup_key not in seen_vulns:
                         seen_vulns.add(dedup_key)
                         sev = c.severity or "medium"

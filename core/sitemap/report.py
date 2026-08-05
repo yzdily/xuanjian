@@ -364,8 +364,50 @@ class ReportMixin:
 
     # ---- 报告子章节渲染 ----
 
+    @staticmethod
+    def _extract_params(evidence_request: str, fp) -> str:
+        """从证据请求包或功能点 API 中提取参数名列表。"""
+        params: list[str] = []
+        # 1. 从 evidence_request 解析
+        if evidence_request:
+            lines = evidence_request.split("\n")
+            for line in lines:
+                line = line.strip()
+                # URL query params: GET /path?param1=val&param2=val
+                if "?" in line and ("GET" in line or "POST" in line):
+                    url_part = line.split("?", 1)[-1].split(" ", 1)[0]
+                    for pair in url_part.split("&"):
+                        if "=" in pair:
+                            p = pair.split("=", 1)[0]
+                            if p and p not in params:
+                                params.append(p)
+                # POST body params: param1=val&param2=val (非 JSON)
+                if "=" in line and "{" not in line and "<" not in line:
+                    for pair in line.split("&"):
+                        if "=" in pair:
+                            p = pair.split("=", 1)[0]
+                            if p and p not in params and not p.startswith("HTTP") and not p.startswith("--"):
+                                params.append(p)
+            # JSON body params
+            import re
+            json_matches = re.findall(r'"(\w+)"\s*:', evidence_request)
+            for p in json_matches:
+                if p not in params and p not in ("Content-Type", "Content-Length", "Host", "User-Agent", "Accept", "Cookie", "Authorization"):
+                    params.append(p)
+        # 2. 从 API endpoint params 补充
+        if fp and hasattr(fp, 'related_apis') and fp.related_apis:
+            # 尝试从 sitemap.apis 获取参数（fp 本身没有 params，但 APIEndpoint 有）
+            pass
+        return " / ".join(params) if params else "-"
+
     def _render_vuln_details(self, lines: list[str]) -> None:
-        """渲染漏洞详情章节（3.1 已确认 + 3.2 疑似）。"""
+        """渲染漏洞详情章节（3.1 已确认 + 3.2 疑似）。
+
+        格式遵循标准漏洞报告模板：
+        5.X [漏洞类型] 漏洞标题
+        项目 / 内容（等级、类型、URL、参数、影响）
+        复现步骤 / 请求 / 响应 / 截图 / 修复建议
+        """
         from core.sitemap.models import Priority
 
         vuln_details = []
@@ -387,63 +429,76 @@ class ReportMixin:
             for i, (fp, c) in enumerate(vuln_details, 1):
                 tested_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(c.tested_at)) if c.tested_at else "未知"
                 sev = SEVERITY_LABEL.get(c.severity, "⚪ 未定级")
+                vuln_url = fp.related_apis[0] if fp.related_apis else (fp.page_url or "")
+                params_str = self._extract_params(c.evidence_request or "", fp)
+                detail_text = c.detail.strip() if c.detail else "（未提供影响描述）"
 
-                lines.append(f"### 漏洞 {i}: [{c.vuln_type}] {fp.name}")
+                lines.append(f"#### 3.1.{i} [{c.vuln_type}] {fp.name}")
                 lines.append("")
                 lines.append(f"| 项目 | 内容 |")
                 lines.append(f"|------|------|")
-                lines.append(f"| **漏洞等级** | {sev} |")
-                lines.append(f"| **漏洞类型** | {c.vuln_type} |")
-                lines.append(f"| **功能点** | {fp.name} |")
-                lines.append(f"| **页面** | {fp.page_url} |")
-                if fp.related_apis:
-                    lines.append(f"| **漏洞 URL** | {fp.related_apis[0]} |")
-                lines.append(f"| **发现时间** | {tested_time} |")
+                lines.append(f"| 等级 | {sev} |")
+                lines.append(f"| 类型 | {c.vuln_type} |")
+                lines.append(f"| URL | `{vuln_url}` |")
+                lines.append(f"| 参数 | {params_str} |")
+                lines.append(f"| 影响 | {detail_text} |")
                 lines.append("")
 
-                detail_text = c.detail.strip() if c.detail else ""
-                if detail_text:
-                    lines.append(f"**影响说明**：{detail_text}")
-                else:
-                    lines.append(f"**影响说明**：（Agent 未提供详细描述）")
+                # 复现步骤
+                lines.append("复现步骤:")
                 lines.append("")
-
                 if c.reproduce_steps:
-                    lines.append("**复现步骤**：")
-                    lines.append("")
                     raw_steps = c.reproduce_steps.replace("\\n", "\n")
                     for step_line in raw_steps.split("\n"):
-                        lines.append(step_line.strip())
+                        if step_line.strip():
+                            lines.append(step_line.strip())
                     lines.append("")
                 else:
-                    lines.append("> ⚠️ Agent 未提供复现步骤")
+                    lines.append("（未提供复现步骤）")
                     lines.append("")
 
+                # 请求
+                lines.append("请求:")
+                lines.append("")
                 if c.evidence_request:
-                    lines.append("**请求包**：")
                     lines.append("```http")
                     lines.append(c.evidence_request)
                     lines.append("```")
                     lines.append("")
+                elif c.evidence_flow_id:
+                    lines.append(f"> 证据 flow_id: `{c.evidence_flow_id}`（可通过 proxy_get_flow_detail 查看完整数据包）")
+                    lines.append("")
+                else:
+                    lines.append("（无请求包）")
+                    lines.append("")
+
+                # 响应
+                lines.append("响应:")
+                lines.append("")
                 if c.evidence_response:
-                    lines.append("**响应包**：")
                     lines.append("```http")
                     lines.append(c.evidence_response)
                     lines.append("```")
                     lines.append("")
-                if not c.evidence_request and c.evidence_flow_id:
-                    lines.append(f"> 证据 flow_id: `{c.evidence_flow_id}`（可通过 proxy_get_flow_detail 查看完整数据包）")
+                else:
+                    lines.append("（无响应包）")
                     lines.append("")
 
+                # 截图
+                lines.append("截图: （如有）")
+                lines.append("")
+
+                # 修复建议
+                lines.append("修复建议:")
+                lines.append("")
                 if c.fix_suggestion:
-                    lines.append("**修复建议**：")
-                    lines.append("")
                     raw_fix = c.fix_suggestion.replace("\\n", "\n")
                     for fix_line in raw_fix.split("\n"):
-                        lines.append(fix_line.strip())
+                        if fix_line.strip():
+                            lines.append(fix_line.strip())
                     lines.append("")
                 else:
-                    lines.append("> ⚠️ Agent 未提供修复建议")
+                    lines.append("（未提供修复建议）")
                     lines.append("")
 
                 lines.append("---")
@@ -459,50 +514,74 @@ class ReportMixin:
                 for i, (fp, c) in enumerate(review_details, 1):
                     tested_time = time.strftime("%Y-%m-%d %H:%M", time.localtime(c.tested_at)) if c.tested_at else "未知"
                     sev = SEVERITY_LABEL.get(c.severity, "⚪ 未定级")
+                    vuln_url = fp.related_apis[0] if fp.related_apis else (fp.page_url or "")
+                    params_str = self._extract_params(c.evidence_request or "", fp)
+                    detail_text = c.detail.strip() if c.detail else "（未提供怀疑依据）"
 
-                    lines.append(f"#### 疑似 {i}: [{c.vuln_type}] {fp.name}")
+                    lines.append(f"#### 3.2.{i} [{c.vuln_type}] {fp.name}")
                     lines.append("")
                     lines.append(f"| 项目 | 内容 |")
                     lines.append(f"|------|------|")
-                    lines.append(f"| **疑似类型** | {c.vuln_type} |")
-                    lines.append(f"| **风险等级（候选）** | {sev} |")
-                    lines.append(f"| **功能点** | {fp.name} |")
-                    lines.append(f"| **页面** | {fp.page_url} |")
-                    if fp.related_apis:
-                        lines.append(f"| **可疑 URL** | {fp.related_apis[0]} |")
-                    lines.append(f"| **检测时间** | {tested_time} |")
+                    lines.append(f"| 等级 | {sev} |")
+                    lines.append(f"| 类型 | {c.vuln_type} |")
+                    lines.append(f"| URL | `{vuln_url}` |")
+                    lines.append(f"| 参数 | {params_str} |")
+                    lines.append(f"| 影响 | {detail_text} |")
                     lines.append("")
 
-                    detail_text = c.detail.strip() if c.detail else ""
-                    if detail_text:
-                        lines.append(f"**Agent 的怀疑依据**：{detail_text}")
-                        lines.append("")
-                    else:
-                        lines.append("> Agent 未给出怀疑依据，请结合证据数据包人工判断")
-                        lines.append("")
-
+                    # 复现步骤
+                    lines.append("复现步骤:")
+                    lines.append("")
                     if c.reproduce_steps:
-                        lines.append("**已尝试的复现步骤**：")
-                        lines.append("")
                         for step_line in c.reproduce_steps.replace("\\n", "\n").split("\n"):
                             if step_line.strip():
                                 lines.append(step_line.strip())
                         lines.append("")
+                    else:
+                        lines.append("（未提供复现步骤）")
+                        lines.append("")
 
+                    # 请求
+                    lines.append("请求:")
+                    lines.append("")
                     if c.evidence_request:
-                        lines.append("**请求包**：")
                         lines.append("```http")
                         lines.append(c.evidence_request)
                         lines.append("```")
                         lines.append("")
+                    elif c.evidence_flow_id:
+                        lines.append(f"> 证据 flow_id: `{c.evidence_flow_id}`（可通过 proxy_get_flow_detail 查看完整数据包）")
+                        lines.append("")
+                    else:
+                        lines.append("（无请求包）")
+                        lines.append("")
+
+                    # 响应
+                    lines.append("响应:")
+                    lines.append("")
                     if c.evidence_response:
-                        lines.append("**响应包**：")
                         lines.append("```http")
                         lines.append(c.evidence_response)
                         lines.append("```")
                         lines.append("")
-                    if not c.evidence_request and c.evidence_flow_id:
-                        lines.append(f"> 证据 flow_id: `{c.evidence_flow_id}`（可通过 proxy_get_flow_detail 查看完整数据包）")
+                    else:
+                        lines.append("（无响应包）")
+                        lines.append("")
+
+                    # 截图
+                    lines.append("截图: （如有）")
+                    lines.append("")
+
+                    # 修复建议
+                    lines.append("修复建议:")
+                    lines.append("")
+                    if c.fix_suggestion:
+                        for fix_line in c.fix_suggestion.replace("\\n", "\n").split("\n"):
+                            if fix_line.strip():
+                                lines.append(fix_line.strip())
+                        lines.append("")
+                    else:
+                        lines.append("（未提供修复建议）")
                         lines.append("")
 
                     lines.append("**人工确认建议**：")

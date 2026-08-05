@@ -183,8 +183,8 @@ try:
     register_session_accessor(  # type: ignore[name-defined]
         lambda: _sessions.get(STATE["current_session_id"]) if STATE["current_session_id"] else None
     )
-except Exception:
-    pass
+except Exception as e:
+    log.warning("注册 session 访问器失败: %s", e)
 
 
 # ★ 启动时自动恢复最近一次未完成的会话
@@ -451,8 +451,8 @@ async def chat(request: Request):
             if not terminal_seen and not in_report_followup:
                 try:
                     await eq.put(session._event("done", "任务流程结束"))
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("[task:%s] 发送 done 事件失败: %s", task_id, e)
         except asyncio.CancelledError:
             log.info("[task:%s] 后台任务被停止", task_id)
             try:
@@ -461,8 +461,8 @@ async def chat(request: Request):
                     "reason": "user_aborted",
                     "message": "任务已被用户中断，发送消息可继续",
                 }, ensure_ascii=False)))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[task:%s] 发送 task_aborted 事件失败: %s", task_id, e)
         except Exception as e:
             log.error("[task:%s] 后台任务异常: %s", task_id, e, exc_info=True)
             try:
@@ -472,13 +472,13 @@ async def chat(request: Request):
                     "error": str(e)[:300],
                     "message": "后台任务异常，发送消息可重试",
                 }, ensure_ascii=False)))
-            except Exception:
-                pass
+            except Exception as eq_err:
+                log.warning("[task:%s] 发送 task_failed 事件失败: %s", task_id, eq_err)
         finally:
             try:
                 await eq.put(None)  # 结束信号
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[task:%s] 发送结束信号失败: %s", task_id, e)
 
     # 启动后台任务（session 级，不受 SSE 连接生命周期影响）
     bg_task = asyncio.create_task(producer())

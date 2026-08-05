@@ -670,3 +670,94 @@ def _save_report_file(task_id: str, ext: str, content: str) -> Path:
     path.write_text(content, encoding="utf-8")
     log.info("报告已保存: %s", path)
     return path
+
+
+# ============================================================
+# 误报管理 API
+# ============================================================
+
+@router.post("/api/reports/{task_id}/false-positive")
+async def mark_false_positive(
+    task_id: str,
+    vuln_type: str,
+    url_pattern: str,
+    reason: str = "",
+):
+    """标记漏洞为误报
+    
+    用户可以将特定漏洞标记为误报，系统会生成过滤规则，
+    后续扫描将自动排除类似的误报。
+    
+    Args:
+        task_id: 任务 ID
+        vuln_type: 漏洞类型（如 "SQL注入", "XSS", "信息泄露" 等）
+        url_pattern: URL 匹配模式（支持正则表达式）
+        reason: 误报原因说明（可选）
+        
+    Returns:
+        {"status": "ok", "rule_id": "..."} 成功时返回规则 ID
+    """
+    from core.false_positive_manager import get_fp_manager
+    
+    manager = get_fp_manager()
+    rule = manager.mark_as_false_positive(
+        vuln_type=vuln_type,
+        url_pattern=url_pattern,
+        reason=reason,
+    )
+    
+    return {"status": "ok", "rule_id": rule.id}
+
+
+@router.get("/api/reports/false-positives")
+async def list_false_positives(vuln_type: str = ""):
+    """获取误报规则列表
+    
+    Args:
+        vuln_type: 可选，按漏洞类型筛选
+        
+    Returns:
+        {"rules": [...], "count": N}
+    """
+    from core.false_positive_manager import get_fp_manager
+    
+    manager = get_fp_manager()
+    rules = manager.get_rules(vuln_type=vuln_type if vuln_type else None)
+    
+    return {
+        "rules": [
+            {
+                "id": r.id,
+                "vuln_type": r.vuln_type,
+                "pattern": r.pattern,
+                "reason": r.reason,
+                "created_at": r.created_at,
+                "created_by": r.created_by,
+                "hit_count": r.hit_count,
+            }
+            for r in rules
+        ],
+        "count": len(rules),
+    }
+
+
+@router.delete("/api/reports/false-positives/{rule_id}")
+async def delete_false_positive(rule_id: str):
+    """删除误报规则
+    
+    Args:
+        rule_id: 规则 ID
+        
+    Returns:
+        {"status": "ok"} 成功删除
+        {"status": "error", "message": "..."} 规则不存在
+    """
+    from core.false_positive_manager import get_fp_manager
+    
+    manager = get_fp_manager()
+    deleted = manager.delete_rule(rule_id)
+    
+    if deleted:
+        return {"status": "ok"}
+    else:
+        return {"status": "error", "message": f"规则 {rule_id} 不存在"}
