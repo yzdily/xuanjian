@@ -183,14 +183,55 @@ class SmartModeSelector:
 
     @staticmethod
     def select_mode(features: dict) -> ScanMode:
-        """根据目标特征选择扫描模式"""
-        # 小目标 / API → 快速
-        if features.get("is_api") or features.get("page_size", 0) < 5000:
+        """根据目标特征选择扫描模式（多因子评分增强版）。
+
+        评分维度：
+        - 认证复杂度：有认证 → 至少 STANDARD（需要登录爬取+浏览器操作）
+        - 业务价值：支付/转账/上传关键词 → 强制 DEEP
+        - 页面大小 + 静态内容：小且纯静态 → FAST
+        - SPA + JS 复杂度：需要 LLM 分析 API → STANDARD 起步
+
+        与旧逻辑的区别：
+        - 旧逻辑只看 page_size<5KB 或 is_api → FAST，忽略认证和价值
+        - 新逻辑支持返回 DEEP（旧逻辑永不返回 DEEP）
+        """
+        page_size = features.get("page_size", 0)
+        is_api = features.get("is_api", False)
+        is_spa = features.get("is_spa", False)
+        has_auth = features.get("has_auth", False)
+        url = features.get("url", "").lower()
+
+        # ★ 因子1：高危业务关键词 → 强制 DEEP
+        high_value_keywords = [
+            "pay", "payment", "transfer", "upload", "order",
+            "account", "wallet", "trade", "withdraw",
+        ]
+        has_high_value = any(kw in url for kw in high_value_keywords)
+
+        # ★ 因子2：认证复杂度
+        if has_auth:
+            # 有认证 → 至少 STANDARD（需要登录态爬取+浏览器操作）
+            if has_high_value or is_spa:
+                return ScanMode.DEEP
+            return ScanMode.STANDARD
+
+        # ★ 因子3：纯 API 接口或小静态页面 → FAST
+        if is_api and page_size < 5000:
             return ScanMode.FAST
 
-        # 大型 SPA / 有认证 → 标准
-        if features.get("is_spa") or features.get("has_auth"):
+        # ★ 因子4：页面大但纯静态（无 SPA 特征，JS 少）→ 仍可 FAST
+        if page_size < 5000 and not is_spa:
+            return ScanMode.FAST
+
+        # ★ 因子5：SPA + 大量 JS → 需要 LLM 分析 API → STANDARD 起步
+        if is_spa:
+            if has_high_value or page_size > 50000:
+                return ScanMode.DEEP
             return ScanMode.STANDARD
+
+        # ★ 因子6：大页面 + 有价值 → DEEP
+        if has_high_value and page_size > 5000:
+            return ScanMode.DEEP
 
         # 默认 → 标准
         return ScanMode.STANDARD
@@ -323,6 +364,11 @@ class ScanStrategyConfig:
     crawl_fast_mode: bool
     fast_scan_workers: int
     total_timeout: int
+    # ★ 修复：chat_loop 在 fast 模式下读取 _crawl_cfg.crawl_timeout 缩短爬虫硬超时，
+    #   此前该字段仅存在于 ScanConfig 而未透传到本适配器，导致
+    #   'ScanStrategyConfig' object has no attribute 'crawl_timeout' 崩溃
+    crawl_timeout: int = 300
+    fast_scan_timeout: int = 120
 
     @classmethod
     def from_scan_config(cls, cfg: ScanConfig) -> "ScanStrategyConfig":
@@ -336,6 +382,8 @@ class ScanStrategyConfig:
             crawl_fast_mode=cfg.crawl_fast_mode,
             fast_scan_workers=cfg.fast_scan_workers,
             total_timeout=cfg.total_timeout,
+            crawl_timeout=cfg.crawl_timeout,
+            fast_scan_timeout=cfg.fast_scan_timeout,
         )
 
 
@@ -343,6 +391,7 @@ def get_scan_strategy(user_mode: str) -> ScanStrategyConfig:
     """根据用户选择的模式返回策略配置（供 orchestrator 调用）"""
     mode_map = {
         "fast": ScanMode.FAST,
+        "quick": ScanMode.FAST,   # ★ 兼容前端 quick 别名
         "standard": ScanMode.STANDARD,
         "deep": ScanMode.DEEP,
         "smart": ScanMode.SMART,

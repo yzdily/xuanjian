@@ -115,7 +115,7 @@ def finish_scan(task_id: str, metrics: dict | None = None) -> None:
     if metrics:
         conn.execute(
             "UPDATE scans SET status = 'finished', finished_at = ?, metrics_json = ?, updated_at = ? WHERE task_id = ?",
-            ("finished", json.dumps(metrics, ensure_ascii=False), now, task_id),
+            (now, json.dumps(metrics, ensure_ascii=False), now, task_id),
         )
     else:
         conn.execute(

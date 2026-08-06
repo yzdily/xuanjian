@@ -64,24 +64,23 @@ class ExplorePhaseMixin:
         return False
 
     async def _passive_recon(self, url: str) -> list:
-        """被动侦察：目标不可达时仅做信息收集。
+        """被动侦察：目标不可达时做信息收集 + dirsearch 风格目录爆破。
 
-        - DNS/WHOIS 查询
-        - 子域名枚举（基于常见前缀）
-        - 目录/文件探测（基于字典）
-        - JS 文件分析（如果能获取到）
+        流程：
+        1. 轻量元信息探测（robots.txt / sitemap.xml / security.txt）
+        2. 目录/文件爆破（core.dir_scanner.DirectoryScanner）：
+           - 主机连接级不可达时自动跳过，不浪费字典请求
+           - 命中路径回写 sitemap（add_page / add_api），供下游 FastScanner 测试
+           - 敏感路径产出 info_disclosure 发现
         """
-        import asyncio
         import httpx
-        from urllib.parse import urlparse, urljoin
+        from urllib.parse import urljoin
         from core.log import get_logger
         _log = get_logger("session.explore")
 
         findings: list[dict] = []
-        parsed = urlparse(url)
-        base_domain = parsed.netloc
 
-        # 1. 尝试获取 robots.txt / sitemap.xml
+        # 1. 轻量元信息探测（robots.txt / sitemap.xml / security.txt）
         common_files = ["/robots.txt", "/sitemap.xml", "/.well-known/security.txt"]
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(8.0), follow_redirects=True, verify=False,
@@ -101,25 +100,89 @@ class ExplorePhaseMixin:
                 except Exception:
                     pass
 
-            # 2. 常见后台路径探测
-            admin_paths = [
-                "/admin", "/login", "/api", "/swagger-ui.html",
-                "/v2/api-docs", "/actuator", "/actuator/health",
-            ]
-            for path in admin_paths:
-                try:
-                    target_url = urljoin(url, path)
-                    resp = await client.get(target_url)
-                    if resp.status_code == 200:
-                        findings.append({
-                            "type": "accessible_path",
-                            "url": target_url,
-                            "detail": f"路径可访问 ({resp.status_code})",
-                        })
-                        if self.sitemap:
-                            self.sitemap.add_page(target_url, title=path)
-                except Exception:
-                    pass
+        # 2. dirsearch 风格目录/文件爆破（核心增强）
+        dir_summary: dict = {
+            "host_unreachable": False,
+            "wildcard_detected": False,
+            "discovered": [],
+            "sensitive": [],
+            "total_requests": 0,
+            "elapsed": 0.0,
+        }
+        try:
+            from core.dir_scanner import DirectoryScanner
+
+            # 认证头：目标不可达时通常无有效会话，best-effort 从已有属性提取
+            auth_headers = getattr(self, "auth_headers", None) or {}
+
+            def _on_progress(msg: str):
+                _log.info("[DirScan] %s", msg)
+
+            scanner = DirectoryScanner(
+                max_workers=20, timeout=8.0,
+                recursive=True, max_depth=2,
+            )
+            dir_result = await scanner.scan(
+                url, auth_headers=auth_headers, on_progress=_on_progress,
+            )
+
+            dir_summary["host_unreachable"] = dir_result.host_unreachable
+            dir_summary["wildcard_detected"] = dir_result.wildcard_detected
+            dir_summary["total_requests"] = dir_result.total_requests
+            dir_summary["elapsed"] = round(dir_result.elapsed, 2)
+            # ★ 诊断字段
+            dir_summary["connect_errors"] = dir_result.connect_errors
+            dir_summary["timeout_errors"] = dir_result.timeout_errors
+            dir_summary["critical_path_fallback"] = dir_result.critical_path_fallback
+
+            # 回写 sitemap + 转 finding
+            already_seen = {"/robots.txt", "/sitemap.xml", "/.well-known/security.txt"}
+            for entry in dir_result.entries:
+                if entry.path in already_seen:
+                    continue
+                dir_summary["discovered"].append({
+                    "path": entry.path, "status": entry.status,
+                    "length": entry.length, "title": entry.title,
+                    "content_type": entry.content_type,
+                })
+                if self.sitemap:
+                    self.sitemap.add_page(entry.url, title=entry.title or entry.path)
+                    # API-like 路径补建为 API，供下游 FastScanner 测试
+                    if self._is_api_like_path(entry.path, entry.content_type):
+                        try:
+                            self.sitemap.add_api("GET", entry.url, discovered_by="dir_scan")
+                        except Exception:
+                            pass
+                findings.append({
+                    "type": "accessible_path",
+                    "url": entry.url,
+                    "detail": f"目录扫描发现: {entry.path} (HTTP {entry.status}, "
+                              f"{entry.length}B, {entry.content_type})",
+                })
+
+            for f in dir_result.findings:
+                dir_summary["sensitive"].append({
+                    "vuln_type": f.vuln_type, "severity": f.severity, "url": f.url,
+                })
+                findings.append({
+                    "type": "info_disclosure",
+                    "url": f.url,
+                    "detail": f"{f.vuln_type}: {f.detail}",
+                    "severity": f.severity,
+                })
+
+            _log.info(
+                "目录扫描完成: 发现 %d 个路径, %d 个敏感泄露 (请求 %d, 耗时 %.1fs, "
+                "host_unreachable=%s, wildcard=%s)",
+                dir_result.discovered_count, dir_result.sensitive_count,
+                dir_result.total_requests, dir_result.elapsed,
+                dir_result.host_unreachable, dir_result.wildcard_detected,
+            )
+        except Exception as e:
+            _log.warning("目录扫描失败（非致命）: %s", e, exc_info=True)
+
+        # 暴露摘要供 chat_loop 渲染
+        self._dir_scan_summary = dir_summary
 
         if self.sitemap:
             try:
@@ -129,6 +192,19 @@ class ExplorePhaseMixin:
 
         _log.info("被动侦察完成: 发现 %d 条信息", len(findings))
         return findings
+
+    @staticmethod
+    def _is_api_like_path(path: str, content_type: str) -> bool:
+        """判断目录扫描命中的路径是否像 API 端点（用于回写 sitemap.apis）。"""
+        p = path.lower()
+        ct = (content_type or "").lower()
+        if "json" in ct or "xml" in ct:
+            return True
+        api_markers = (
+            "/api", "swagger", "openapi", "graphql", "api-docs",
+            "actuator", "/v1/", "/v2/", "/v3/",
+        )
+        return any(m in p for m in api_markers)
 
     def _extract_api_samples_from_traffic(self, traffic_text: str) -> None:
         """从 proxy_get_traffic 的返回文本中提取 flow_id，再从 FlowStore 获取完整请求样本。"""
@@ -380,8 +456,8 @@ class ExplorePhaseMixin:
         if not self.sitemap:
             return 0
 
-        # ★ LLM 未配置时跳过域名清洗（FAST 模式下 self.llm 为 None）
-        if self.llm is None:
+        # ★ LLM 未配置或不可调用时跳过域名清洗（FAST 模式下 self.llm 为 None）
+        if not callable(getattr(self.llm, "chat", None)):
             log.info("LLM 未配置，跳过域名清洗")
             return 0
 

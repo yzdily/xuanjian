@@ -3,7 +3,7 @@
   type: xss
   severity: high
   description: 检测用户输入被原样反射到页面中，未做HTML编码
-  probe: 'xuanjianxss<>"''"'
+  probe: "xuanjianxss<>\"'"
   detection:
     method: reflection
     check_encoding: true

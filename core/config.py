@@ -367,7 +367,7 @@ REPEAT_TOOL_THRESHOLD = 3    # 同一工具+相同参数连续重复 N 次，强
 
 # ★ 性能优化：并发与模式控制
 FAST_SCAN_MAX_WORKERS = 20   # 本地规则引擎并发数（纯 HTTP，不涉及 LLM，可激进）
-LLM_SCAN_MAX_WORKERS = 8     # LLM 分析并发数（受限于 LLM API 速率限制）
+LLM_SCAN_MAX_WORKERS = 3     # LLM 分析并发数（贴合常见 API 并发上限，避免 429 后大量重试）
 SKIP_BUSINESS_UNDERSTANDING = False   # True: 跳过 Phase 1 业务理解（减少 1 轮 LLM 调用）
 SKIP_META_ANALYSIS = False            # True: 跳过 Phase 2 LLM 元分析（直接按规则初筛 + 子 Agent）
 

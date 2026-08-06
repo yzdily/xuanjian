@@ -43,8 +43,25 @@ async def note_add(type: str, content: str, task_id: str = "default") -> str:
 
 
 @mcp.tool()
-async def note_read(type: str, task_id: str = "default") -> str:
-    """读取某类笔记的内容（最近 5000 字符）。"""
+async def note_read(type: str = "all", task_id: str = "default") -> str:
+    """读取某类笔记的内容（最近 5000 字符）。
+
+    type 允许省略，默认读取全部类型摘要，避免报告阶段模型调用
+    note_read({}) 时因工具声明与底层签名不一致产生无效报错。
+    """
+    if not type or type == "all":
+        sections = []
+        for ntype in ("info", "infer", "result"):
+            filepath = _get_task_file(ntype, task_id)
+            if filepath.exists():
+                content = filepath.read_text(encoding="utf-8")
+                if len(content) > 5000:
+                    content = f"(笔记共 {len(content)} 字符，显示最近部分)\n\n...{content[-5000:]}"
+                sections.append(f"### {ntype}\n\n{content}")
+            else:
+                sections.append(f"### {ntype}\n\n暂无 {ntype} 类型的笔记")
+        return "\n\n---\n\n".join(sections)
+
     filepath = _get_task_file(type, task_id)
     if not filepath.exists():
         return f"暂无 {type} 类型的笔记"

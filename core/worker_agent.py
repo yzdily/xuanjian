@@ -28,6 +28,16 @@ from core.log import get_logger
 
 log = get_logger("worker")
 
+# ★ 2026-08-05：Worker 专用压缩阈值，比默认 30 更激进
+# Worker 的静态 prompt（任务组+API样本）可达 24K+，每轮重发浪费严重；
+# 15 轮后压缩可把历史摘要化，后续轮次只发摘要+近期对话。
+WORKER_COMPRESS_THRESHOLD = 15
+
+# ★ 2026-08-05：高 skip 率熔断阈值
+# 当 skip 比例超过此值且未发现漏洞时，提前终止 worker 避免空转烧 token
+WORKER_SKIP_CIRCUIT_BREAKER_RATIO = 0.5
+WORKER_SKIP_CIRCUIT_BREAKER_MIN_ROUNDS = 3
+
 
 class WorkerAgent:
     """测试一组功能点的子 Agent。
@@ -343,7 +353,8 @@ class WorkerAgent:
 
             # ★ 注入 API 请求样本（从独立文件读取，区分真实流量和推测接口）
             # ★ 限制每个功能点的样本大小，防止上下文爆炸
-            MAX_SAMPLE_PER_FP = 8000  # 每个功能点最多 8K 字符的样本
+            # ★ 2026-08-05：从 8K 降至 4K，6 功能点组从 48K 降至 24K，显著减少 token 消耗
+            MAX_SAMPLE_PER_FP = 4000  # 每个功能点最多 4K 字符的样本
             sample_file = self.sitemap.get_sample_file_path(fp.id)
             if sample_file:
                 try:
@@ -820,8 +831,9 @@ class WorkerAgent:
             _LLM_CALL_TIMEOUT = 180
             try:
                 messages = self.context.get_messages()
+                # ★ max_retries=3：内层 LLMClient.chat() 负责 3 次指数退避重试
                 response = await asyncio.wait_for(
-                    asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}"),
+                    asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}", max_retries=3),
                     timeout=_LLM_CALL_TIMEOUT,
                 )
             except Exception as e:
@@ -853,8 +865,9 @@ class WorkerAgent:
                         await asyncio.sleep(_wait)
                         try:
                             messages = self.context.get_messages()
+                            # ★ max_retries=0：外层重试时内层不再重试，避免三层叠加（3×5=15 次→最多 3+5=8 次）
                             response = await asyncio.wait_for(
-                                asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}"),
+                                asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}", max_retries=0),
                                 timeout=_LLM_CALL_TIMEOUT,
                             )
                             _retried_ok = True
@@ -1115,8 +1128,65 @@ class WorkerAgent:
             else:
                 break
 
-            if self.context.should_compress():
+            # ★ 2026-08-05 优化1：Worker 专用压缩阈值（15 轮，比默认 30 更激进）
+            # Worker 静态 prompt（任务组+API样本）可达 24K+，每轮重发浪费严重
+            if self.context.turn_count >= WORKER_COMPRESS_THRESHOLD:
                 self.context.compress()
+
+            # ★ 2026-08-05 优化3：高 skip 率熔断
+            # 当 skip 比例超过 50% 且未发现漏洞时，提前终止避免空转烧 token
+            if round_num >= WORKER_SKIP_CIRCUIT_BREAKER_MIN_ROUNDS:
+                _total_checks = sum(len(fp.checklist) for fp in self.features)
+                _skip_count = sum(
+                    1 for fp in self.features for c in fp.checklist
+                    if c.result == CheckResult.SKIPPED
+                )
+                _vuln_count = sum(
+                    1 for fp in self.features for c in fp.checklist
+                    if c.result == CheckResult.VULNERABLE
+                )
+                if (_total_checks > 0
+                        and _skip_count / _total_checks >= WORKER_SKIP_CIRCUIT_BREAKER_RATIO
+                        and _vuln_count == 0):
+                    log.warning("[%s] skip 率熔断: %d/%d 项已 skip (%.0f%%)，0 漏洞，第 %d 轮提前终止",
+                                self.worker_id, _skip_count, _total_checks,
+                                _skip_count / _total_checks * 100, round_num)
+                    # 将剩余 pending 项标记为 skipped
+                    _circuit_skip = 0
+                    for fp in self.features:
+                        for c in fp.checklist:
+                            if c.result == CheckResult.PENDING:
+                                c.result = CheckResult.SKIPPED
+                                c.detail = "skip 率熔断：worker 高 skip 率提前终止，建议人工补测"
+                                _circuit_skip += 1
+                    self.completed = True
+                    yield {"type": "worker_message", "worker": self.worker_id,
+                           "feature": self.group_name,
+                           "content": f"🛑 skip 率熔断：{_skip_count}/{_total_checks} 项已 skip，0 漏洞，提前终止（跳过 {_circuit_skip} 个未测项）"}
+
+            # ★ 2026-08-05 优化6：无进展熔断
+            # 连续 20 轮没有新的 checklist 进展（无 VULNERABLE/needs_review 变更），提前终止
+            # 此前任务组「other」1 功能点跑满 100 轮（183 次调用），纯空转烧 token
+            if round_num >= 20 and round_num % 10 == 0:
+                _done_now = sum(
+                    1 for fp in self.features for c in fp.checklist
+                    if c.result in (CheckResult.VULNERABLE, CheckResult.NOT_VULN, CheckResult.NEEDS_REVIEW)
+                )
+                if _done_now == getattr(self, "_last_done_count", -1) and _done_now > 0:
+                    # 与 10 轮前相比无进展
+                    log.warning("[%s] 无进展熔断: %d 轮无新 checklist 进展（%d 项已完成），提前终止",
+                                self.worker_id, 10, _done_now)
+                    for fp in self.features:
+                        for c in fp.checklist:
+                            if c.result == CheckResult.PENDING:
+                                c.result = CheckResult.SKIPPED
+                                c.detail = "无进展熔断：worker 长时间无新进展，建议人工补测"
+                    self.completed = True
+                    yield {"type": "worker_message", "worker": self.worker_id,
+                           "feature": self.group_name,
+                           "content": f"🛑 无进展熔断：连续 10 轮无新进展，提前终止"}
+                    break
+                self._last_done_count = _done_now
 
         # 完成后标记所有功能点状态
         # ★ 根据 worker 退出原因区分 normal/error/anti_loop，

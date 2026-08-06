@@ -371,11 +371,16 @@ async def chat(request: Request):
         task_id = session.task_id
 
     # ★ 设置扫描模式（仅在新任务时生效，已有 session 不覆盖）
-    if session.phase == "idle" and scan_mode in ("batch", "realtime") and scan_mode != session.scan_mode:
-        session.set_scan_mode(scan_mode)
-        log.info("[task:%s] 扫描模式设置为: %s", task_id, scan_mode)
-    # ★ 记录用户选择的原始模式（含 smart），供 chat_loop 判断是否需要自动切换
-    session.user_scan_mode = scan_mode
+    # ★ "fast"/"quick" 模式：执行策略用 batch（并行批处理），深度模式标记为 fast（跳过 LLM）
+    _exec_mode = scan_mode
+    if scan_mode in ("fast", "quick"):
+        _exec_mode = "batch"
+    if session.phase == "idle" and _exec_mode in ("batch", "realtime") and _exec_mode != session.scan_mode:
+        session.set_scan_mode(_exec_mode)
+        log.info("[task:%s] 执行模式设置为: %s (深度模式: %s)", task_id, _exec_mode, scan_mode)
+    # ★ 记录用户选择的原始模式（含 smart/fast），供 chat_loop 判断是否跳过 LLM
+    # ★ 统一归一化：quick → fast，下游只需检查 == "fast"
+    session.user_scan_mode = "fast" if scan_mode in ("fast", "quick") else scan_mode
 
     # 设置 OOB callback URL（在 XSS scanner 启动前）
     if oob_callback_url:

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -40,6 +41,18 @@ from core.xss.oob import OOBCallback
 from core.false_positive_manager import is_false_positive
 
 log = get_logger("fast_scanner")
+
+
+DEFAULT_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/125.0 Safari/537.36 Edg/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+]
 
 
 # ============================================================
@@ -86,6 +99,7 @@ class ScanResult:
     blocked_count: int = 0
     timeout_count: int = 0
     error_count: int = 0
+    log_suppressed_count: int = 0
 
     @property
     def vuln_count(self) -> int:
@@ -106,6 +120,7 @@ class ScanResult:
             "blocked_count": self.blocked_count,
             "timeout_count": self.timeout_count,
             "error_count": self.error_count,
+            "log_suppressed_count": self.log_suppressed_count,
             "findings": [
                 {
                     "vuln_type": f.vuln_type,
@@ -344,6 +359,41 @@ def _is_empty_data(text: str) -> bool:
     if not text or not text.strip():
         return True
     stripped = text.strip()
+
+    # ★ 优先 JSON 层面判定：如果响应是合法 JSON 且是一个纯 API 包装器
+    # （仅含 data/result/records/rows/list 数据字段 + code/msg/status 等元数据字段），
+    # 且所有数据字段均为空值，则不论响应体长度都判定为空 data
+    # （修复原 500 字符阈值漏判长响应的问题）
+    try:
+        import json as _json
+        obj = _json.loads(stripped)
+        if isinstance(obj, dict):
+            _data_keys = ("data", "result", "records", "rows", "list")
+            _meta_keys = ("code", "msg", "message", "status", "success",
+                          "error", "errcode", "errno", "total", "count",
+                          "timestamp", "time", "request_id", "trace_id")
+            _has_any_data_key = False
+            _has_non_empty_data = False
+            _has_unknown_content_key = False
+            for key, val in obj.items():
+                if key in _data_keys:
+                    _has_any_data_key = True
+                    if val is not None and val != [] and val != {} and val != "":
+                        _has_non_empty_data = True
+                elif key not in _meta_keys:
+                    # 存在非数据、非元数据的字段（如 padding/描述/详情等）
+                    if val is not None and val != [] and val != {} and val != "":
+                        _has_unknown_content_key = True
+            # 存在非空数据字段 → 绝对不是空响应，直接返回 False
+            if _has_non_empty_data:
+                return False
+            # 存在数据字段、全部为空、且无其他内容字段 → 空响应
+            if (_has_any_data_key and not _has_non_empty_data
+                    and not _has_unknown_content_key):
+                return True
+    except (ValueError, TypeError):
+        pass
+
     for pat in EMPTY_DATA_PATTERNS:
         if re.search(pat, stripped, re.IGNORECASE):
             # 仅当响应体较短时才认定为空 data（长响应可能只是某个字段为空）
@@ -529,6 +579,10 @@ SENSITIVE_PATH_FINGERPRINTS = {
     # 依赖/清单
     "package.json": [r'"name"\s*:', r'"dependencies"\s*:'],
     "composer.json": [r'"name"\s*:', r'"require"\s*:'],
+    # 源码映射文件（source map）：泄露原始源码/文件路径，属内容级强证据
+    # 命中 version + sources/mappings/sourcesContent 即为真泄露，避免 SPA 兜底 200 误报
+    ".js.map": [r'"version"\s*:\s*3\b', r'"sources"\s*:', r'"mappings"\s*:', r'"sourcesContent"\s*:'],
+    "source.map": [r'"version"\s*:\s*3\b', r'"sources"\s*:', r'"mappings"\s*:'],
 }
 
 
@@ -579,16 +633,23 @@ class FastScanner:
         max_workers: int = 20,
         timeout: float = 10.0,
         proxy: str | None = None,
+        request_rate_limit: float = 5.0,
     ):
         self.max_workers = max_workers
         self.timeout = timeout
         self.proxy = proxy
+        self.request_rate_limit = max(0.0, request_rate_limit)
+        self._min_request_interval = (
+            1.0 / self.request_rate_limit if self.request_rate_limit > 0 else 0.0
+        )
         self._client: httpx.AsyncClient | None = None
         self._total_requests = 0
         self._blocked_count = 0
         self._timeout_count = 0
         self._error_count = 0
         self._lock = asyncio.Lock()
+        self._rate_lock = asyncio.Lock()
+        self._last_request_at = 0.0
         # ★ WAF 封禁标志：连续被拦截超过阈值后置 True，所有规则检测提前退出
         # 避免对已被 WAF 全量拦截的目标继续打数千次无效请求（实测 zzidc.com 拦截 1737 次仍在打）
         self._waf_blocked = False
@@ -597,12 +658,70 @@ class FastScanner:
         self._consecutive_timeout_count = 0
         self._timeout_blocked = False
         self._timeout_block_threshold = 10  # 连续 10 次超时即熔断
+        # ★ 2026-08-05：全局超时统计——跨目标累计超时次数，超过阈值后全局降速
+        # 此前 11,808 次超时说明扫描了几千个超时目标，每个都打 10 次才熔断
+        # scan_target 不重置这两个字段，使其跨目标累积
+        self._global_timeout_count = 0
+        self._global_timeout_slowdown = False  # 全局降速标志
+        self._global_timeout_threshold = 100  # 累计 100 次超时即触发全局降速
+        self._global_slowdown_delay = 0.5     # 降速后每个请求额外 sleep 0.5s
         # ★ 并发信号量：限制同时在途的 HTTP 请求数，避免 gather 一次性创建数百协程
         # 当 WAF/超时熔断后，等待中的协程进入 _request 时会看到标志位并直接返回 None
         self._semaphore: asyncio.Semaphore | None = None
+        # ★ 响应日志采样：同规则/状态/长度桶的重复响应只在里程碑输出，减少 500 噪声刷屏
+        self._response_log_counts: dict[str, int] = {}
+        self._response_log_suppressed = 0
         # ★ YAML 规则缓存：从 rules/*.yaml 加载的规则列表
         self._yaml_rules: list[dict] = []
         self._load_yaml_rules()
+
+    def _record_scan_response_log(
+        self,
+        rule_tag: str,
+        method: str,
+        url: str,
+        payload_tag: str,
+        resp: httpx.Response,
+    ) -> None:
+        """采样输出扫描响应日志，聚合同类 4xx/5xx 噪声。"""
+        from urllib.parse import urlparse
+
+        status = resp.status_code
+        length_bucket = len(resp.content) // 100
+        path = urlparse(url).path or "/"
+        parent = path.rsplit("/", 1)[0] or "/"
+        key = f"{rule_tag}|{method}|{parent}|{status}|{length_bucket}"
+        count = self._response_log_counts.get(key, 0) + 1
+        self._response_log_counts[key] = count
+
+        noisy_status = status >= 500 or status in (403, 404, 429)
+        milestones = {1, 2, 3, 10, 30, 100, 300, 1000}
+        if noisy_status and count not in milestones:
+            self._response_log_suppressed += 1
+            return
+
+        suffix = f" | same={count}" if count > 1 else ""
+        if noisy_status and count > 3:
+            suffix += f" | suppressed={self._response_log_suppressed}"
+        log.info("[SCAN] %s | %s %s | payload=%s | => %d %s | body=%d%s",
+                 rule_tag, method, url, payload_tag,
+                 resp.status_code, resp.reason_phrase, len(resp.content), suffix)
+
+    async def _throttle_before_request(self) -> None:
+        """请求前节流，避免 FastScanner 瞬时并发触发 WAF/限流。
+
+        request_rate_limit 默认 5 req/s；当已经出现 403/418/429/503 后，
+        按拦截次数轻微增加间隔，让后续规则有机会拿到真实响应而不是批量拦截页。
+        """
+        if self._min_request_interval <= 0:
+            return
+        async with self._rate_lock:
+            now = time.monotonic()
+            adaptive_extra = min(1.5, 0.1 * self._blocked_count)
+            wait_for = (self._last_request_at + self._min_request_interval + adaptive_extra) - now
+            if wait_for > 0:
+                await asyncio.sleep(wait_for)
+            self._last_request_at = time.monotonic()
 
     def _load_yaml_rules(self) -> None:
         """加载 YAML 规则文件到内存缓存。
@@ -713,9 +832,19 @@ class FastScanner:
             if self._waf_blocked or self._timeout_blocked:
                 return None
 
+            # ★ 2026-08-05：全局超时降速——跨目标累计超时过多时，每个请求额外 sleep
+            # 避免对大量不可达目标继续高速打无效请求（此前 11,808 次超时）
+            if self._global_timeout_slowdown:
+                await asyncio.sleep(self._global_slowdown_delay)
+
             client = await self._get_client()
             # 去认证：移除 Cookie / Authorization
             req_headers = dict(headers) if headers else {}
+            header_names = {str(k).lower() for k in req_headers}
+            if "user-agent" not in header_names:
+                req_headers["User-Agent"] = random.choice(DEFAULT_USER_AGENTS)
+            req_headers.setdefault("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            req_headers.setdefault("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
             if drop_auth:
                 req_headers.pop("Cookie", None)
                 req_headers.pop("cookie", None)
@@ -723,6 +852,7 @@ class FastScanner:
                 req_headers.pop("authorization", None)
 
             try:
+                await self._throttle_before_request()
                 resp = await client.request(
                     method=method,
                     url=url,
@@ -758,9 +888,7 @@ class FastScanner:
                 if _need_sleep > 0:
                     await asyncio.sleep(_need_sleep)
 
-                log.info("[SCAN] %s | %s %s | payload=%s | => %d %s | body=%d",
-                         rule_tag, method, url, payload_tag,
-                         resp.status_code, resp.reason_phrase, len(resp.content))
+                self._record_scan_response_log(rule_tag, method, url, payload_tag, resp)
                 return resp
             except httpx.TimeoutException:
                 async with self._lock:
@@ -773,6 +901,17 @@ class FastScanner:
                         log.warning(
                             "[SCAN] 超时熔断：连续超时 %d 次（阈值 %d），中止该目标所有后续 payload",
                             self._consecutive_timeout_count, self._timeout_block_threshold
+                        )
+                    # ★ 2026-08-05：全局超时统计——跨目标累积，超过阈值触发全局降速
+                    # 此前每个超时目标都打满 10 次才熔断，数千目标累计 11,808 次超时
+                    self._global_timeout_count += 1
+                    if (not self._global_timeout_slowdown
+                            and self._global_timeout_count >= self._global_timeout_threshold):
+                        self._global_timeout_slowdown = True
+                        log.warning(
+                            "[SCAN] 全局超时降速：累计超时 %d 次（阈值 %d），后续所有请求额外 sleep %.2fs",
+                            self._global_timeout_count, self._global_timeout_threshold,
+                            self._global_slowdown_delay
                         )
                 log.warning("[SCAN] %s | %s %s | payload=%s | => TIMEOUT",
                             rule_tag, method, url, payload_tag)
@@ -807,6 +946,7 @@ class FastScanner:
         ]
 
         t0 = time.time()
+        suppressed_before = self._response_log_suppressed
         self._total_requests = 0
         self._blocked_count = 0
         self._waf_blocked = False  # ★ 每个目标重置 WAF 封禁标志
@@ -858,6 +998,7 @@ class FastScanner:
             blocked_count=self._blocked_count,
             timeout_count=self._timeout_count,
             error_count=self._error_count,
+            log_suppressed_count=max(0, self._response_log_suppressed - suppressed_before),
         )
 
     async def scan_targets(
@@ -893,8 +1034,11 @@ class FastScanner:
             "blocked": self._blocked_count,
             "timeout": self._timeout_count,
             "error": self._error_count,
+            "log_suppressed": self._response_log_suppressed,
             "waf_blocked": self._waf_blocked,
             "timeout_blocked": self._timeout_blocked,
+            "global_timeout_count": self._global_timeout_count,
+            "global_slowdown": self._global_timeout_slowdown,
         }
 
     async def _close(self):
@@ -902,16 +1046,18 @@ class FastScanner:
             await self._client.aclose()
 
     def _filter_false_positives(self, findings: list[VulnFinding]) -> list[VulnFinding]:
-        """过滤误报
-        
-        检查用户标记的误报规则，排除已知误报。
-        
+        """过滤误报并去重
+
+        检查用户标记的误报规则，排除已知误报；
+        同时按 (vuln_type, url, method) 去重，保留 severity 最高 / evidence_quality 最强的一条。
+
         Args:
             findings: 原始发现列表
-            
+
         Returns:
-            过滤后的发现列表
+            过滤并去重后的发现列表
         """
+        # ---- Step 1: 过滤用户标记的误报 ----
         filtered = []
         for finding in findings:
             # 转换为 dict 格式供误报管理器检查
@@ -922,15 +1068,49 @@ class FastScanner:
                 "severity": finding.severity,
                 "detail": finding.detail,
             }
-            
+
             # 检查是否为用户标记的误报
             if is_false_positive(finding_dict):
                 log.debug(f"排除用户标记的误报: {finding.url} ({finding.vuln_type})")
                 continue
-            
+
             filtered.append(finding)
-        
-        return filtered
+
+        # ---- Step 2: 按 (vuln_type, url, method) 去重 ----
+        # ★ 修复：同一 URL + 同一漏洞类型 + 同一方法的发现只保留一条，
+        # 保留 severity 最高 / evidence_quality 最强的，避免重复条目污染报告
+        _severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+        _evidence_rank = {"body_confirmed": 3, "header_only": 2, "weak": 1, "": 0}
+
+        dedup_map: dict[str, VulnFinding] = {}
+        for finding in filtered:
+            # 归一化 URL：去除 query string 和 fragment，统一小写
+            norm_url = finding.url.split("?")[0].split("#")[0].lower().rstrip("/")
+            dedup_key = f"{finding.vuln_type}|{norm_url}|{finding.method}"
+
+            existing = dedup_map.get(dedup_key)
+            if existing is None:
+                dedup_map[dedup_key] = finding
+                continue
+
+            # 比较 severity，保留更高的
+            existing_sev = _severity_rank.get(existing.severity or "", 0)
+            new_sev = _severity_rank.get(finding.severity or "", 0)
+            if new_sev > existing_sev:
+                dedup_map[dedup_key] = finding
+            elif new_sev == existing_sev:
+                # severity 相同时比较 evidence_quality
+                existing_ev = _evidence_rank.get(getattr(existing, "evidence_quality", "") or "", 0)
+                new_ev = _evidence_rank.get(getattr(finding, "evidence_quality", "") or "", 0)
+                if new_ev > existing_ev:
+                    dedup_map[dedup_key] = finding
+
+        deduped = list(dedup_map.values())
+        if len(deduped) < len(filtered):
+            log.info("[SCAN] 去重: %d → %d (去除 %d 条重复发现)",
+                     len(filtered), len(deduped), len(filtered) - len(deduped))
+
+        return deduped
 
     # ============================================================
     # 规则实现
@@ -1250,20 +1430,37 @@ class FastScanner:
                         if true_similar and not false_similar:
                             if (true_resp.status_code != false_resp.status_code
                                     or abs(true_len - false_len) > 10):
-                                findings.append(VulnFinding(
-                                    vuln_type="SQL注入",
-                                    severity="critical",
-                                    url=target.url,
-                                    method="POST",
-                                    detail=f"POST 参数 '{param_name}' 存在布尔盲注，"
-                                           f"True条件响应与基线相似(归一化)，False条件不同，"
-                                           f"True长度={true_len}，False长度={false_len}，基线={baseline_len_n}",
-                                    evidence=f"True: {true_resp.text[:200]}\nFalse: {false_resp.text[:200]}",
-                                    payload=true_payload,
-                                    fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
-                                    evidence_quality="body_confirmed",
-                                ))
-                                break  # 一个参数命中即可
+                                # ★ P0 防误报（与 GET 路径对齐）：
+                                # False 不同很可能是因为 payload 中的特殊字符触发了
+                                # WAF 拦截/路由错误/服务端异常，而非 SQL 逻辑差异。
+                                _is_false_waf_or_error = (
+                                    _is_waf_block_page(false_resp)
+                                    or false_len < max(baseline_len_n * 0.1, 10)
+                                    or false_resp.status_code in (403, 404, 418, 429, 500, 502, 503)
+                                )
+                                _false_similar_baseline = _bodies_similar(
+                                    false_resp.text, baseline_text)
+                                if _false_similar_baseline:
+                                    # True≈基线 + False≈基线 → 参数完全被忽略，不是注入
+                                    pass
+                                elif _is_false_waf_or_error:
+                                    log.info("[SCAN] SQLi-POST | True≈基线 + False=WAF/错误页，跳过: %s param=%s",
+                                             target.url, param_name)
+                                else:
+                                    findings.append(VulnFinding(
+                                        vuln_type="SQL注入",
+                                        severity="critical",
+                                        url=target.url,
+                                        method="POST",
+                                        detail=f"POST 参数 '{param_name}' 存在布尔盲注，"
+                                               f"True条件响应与基线相似(归一化)，False条件不同，"
+                                               f"True长度={true_len}，False长度={false_len}，基线={baseline_len_n}",
+                                        evidence=f"True: {true_resp.text[:200]}\nFalse: {false_resp.text[:200]}",
+                                        payload=true_payload,
+                                        fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
+                                        evidence_quality="body_confirmed",
+                                    ))
+                                    break  # 一个参数命中即可
 
             # 处理 JSON 数据
             if target.body.strip().startswith("{"):
@@ -1324,20 +1521,34 @@ class FastScanner:
                                 if true_similar and not false_similar:
                                     if (true_resp.status_code != false_resp.status_code
                                             or abs(true_len - false_len) > 10):
-                                        findings.append(VulnFinding(
-                                            vuln_type="SQL注入",
-                                            severity="critical",
-                                            url=target.url,
-                                            method="POST",
-                                            detail=f"JSON 字段 '{field_name}' 存在布尔盲注，"
-                                                   f"True条件响应与基线相似(归一化)，False条件不同，"
-                                                   f"True长度={true_len}，False长度={false_len}，基线={baseline_len_n}",
-                                            evidence=f"True: {true_resp.text[:200]}\nFalse: {false_resp.text[:200]}",
-                                            payload=true_payload,
-                                            fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
-                                            evidence_quality="body_confirmed",
-                                        ))
-                                        break
+                                        # ★ P0 防误报（与 GET / POST-form 路径对齐）：
+                                        _is_false_waf_or_error = (
+                                            _is_waf_block_page(false_resp)
+                                            or false_len < max(baseline_len_n * 0.1, 10)
+                                            or false_resp.status_code in (403, 404, 418, 429, 500, 502, 503)
+                                        )
+                                        _false_similar_baseline = _bodies_similar(
+                                            false_resp.text, baseline_text)
+                                        if _false_similar_baseline:
+                                            pass
+                                        elif _is_false_waf_or_error:
+                                            log.info("[SCAN] SQLi-JSON | True≈基线 + False=WAF/错误页，跳过: %s field=%s",
+                                                     target.url, field_name)
+                                        else:
+                                            findings.append(VulnFinding(
+                                                vuln_type="SQL注入",
+                                                severity="critical",
+                                                url=target.url,
+                                                method="POST",
+                                                detail=f"JSON 字段 '{field_name}' 存在布尔盲注，"
+                                                       f"True条件响应与基线相似(归一化)，False条件不同，"
+                                                       f"True长度={true_len}，False长度={false_len}，基线={baseline_len_n}",
+                                                evidence=f"True: {true_resp.text[:200]}\nFalse: {false_resp.text[:200]}",
+                                                payload=true_payload,
+                                                fix_suggestion="使用参数化查询，对用户输入进行严格过滤",
+                                                evidence_quality="body_confirmed",
+                                            ))
+                                            break
                 except (json.JSONDecodeError, ValueError):
                     pass
 
@@ -1784,9 +1995,13 @@ class FastScanner:
                 return findings
 
             resp_text = resp.text.lower()
-            # 成功登录的特征
-            success_indicators = ["token", "access_token", "session", "login success",
-                                  "登录成功", '"code":0', '"code": 0', '"success":true', "success"]
+            # ★ 收紧成功判定指标：使用带赋值格式避免误匹配失败响应
+            #   原 "token"/"session"/"success" 裸词会匹配 {"error":"invalid token","success":false}
+            #   现改为 "token":"  /  "access_token":"  等带引号赋值格式，排除 false 响应
+            success_indicators = ['"token":', '"access_token":', '"sessionid":',
+                                  '"session_id":', "login success", "登录成功",
+                                  '"code":0', '"code": 0', '"success":true',
+                                  '"status":"ok"', '"result":"success"']
             failure_indicators = ["error", "fail", "invalid", "wrong", "incorrect",
                                   "失败", "错误", "密码不正确"]
 
@@ -1827,7 +2042,13 @@ class FastScanner:
                     log.warning("[SCAN] WeakPwd | 登录端点失效 (%d)，跳过剩余 %d 组凭据: %s",
                                 resp2.status_code, len(weak_credentials) - cred_idx - 1, target.url)
                     return findings
-                if any(ind in resp2.text.lower() for ind in success_indicators):
+                # ★ 与 JSON 路径对齐：同时检查 success / failure 指标
+                resp2_text = resp2.text.lower()
+                is_success2 = any(ind in resp2_text for ind in success_indicators)
+                is_failure2 = any(ind in resp2_text for ind in failure_indicators)
+                if is_failure2 and re.search(r'"error"\s*:\s*(?:null|""|0|false)', resp2_text):
+                    is_failure2 = False
+                if is_success2 and not is_failure2:
                     findings.append(VulnFinding(
                         vuln_type="弱口令",
                         severity="high",
@@ -1859,6 +2080,22 @@ class FastScanner:
 
         acao = resp.headers.get("access-control-allow-origin", "")
         acac = resp.headers.get("access-control-allow-credentials", "")
+
+        # ★ 补充 OPTIONS 预检请求：部分服务器仅在 OPTIONS 响应中返回 CORS 头，
+        # GET 请求不返回 CORS 头会导致漏报
+        if not acao:
+            options_resp = await self._request(
+                "OPTIONS", target.url,
+                headers={**target.auth_headers, "Origin": evil_origin,
+                         "Access-Control-Request-Method": "GET"},
+                rule_tag="CORS", payload_tag=f"OPTIONS Origin={evil_origin}",
+            )
+            if options_resp:
+                acao = options_resp.headers.get("access-control-allow-origin", "")
+                acac = options_resp.headers.get("access-control-allow-credentials", "")
+                if acao:
+                    log.info("[SCAN] CORS | GET 无 CORS 头，OPTIONS 预检发现 CORS 配置: %s", target.url)
+                    resp = options_resp  # 使用 OPTIONS 响应做后续分析
 
         # 先判定 CORS 头是否配置错误
         cors_misconfigured = False

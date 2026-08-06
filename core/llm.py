@@ -14,7 +14,9 @@ import hmac
 import json
 import re
 import time
+import threading
 import contextvars
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 from pathlib import Path
@@ -40,6 +42,89 @@ def reset_current_task(token) -> None:
 
 def get_current_task() -> str:
     return _current_task_id.get() or ""
+
+
+# ============================================================
+# ★ LLM 响应缓存 — 避免测试中相同请求重复消耗 API
+# ============================================================
+# 测试场景中常出现相同 messages+tools 的重复调用（如重试、多 worker
+# 并行测试相同 feature）。缓存命中时直接返回上次结果，不消耗 API 额度。
+# 缓存 Key 基于 messages 内容 + model + tools 定向 hash，TTL 默认 300s。
+# 可通过环境变量 XUANJIAN_LLM_CACHE_TTL 控制（0=禁用）。
+
+class LLMResponseCache:
+    """线程安全的 LLM 响应缓存（LRU + TTL）。"""
+
+    def __init__(self, max_size: int = 128, ttl: float = 300.0):
+        self._store: OrderedDict[str, tuple[float, Message]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._max_size = max_size
+        self._ttl = ttl
+        self._hits = 0
+        self._misses = 0
+
+    @staticmethod
+    def _make_key(messages: list[Message], model: str, tools: list[dict] | None,
+                  temperature: float, max_tokens: int) -> str:
+        """根据请求参数生成缓存 key（SHA256 摘要）。"""
+        parts = [model, f"{temperature:.2f}", str(max_tokens)]
+        for m in messages:
+            parts.append(f"{m.role}|{m.content or ''}|{m.tool_call_id or ''}")
+            if m.tool_calls:
+                parts.append(json.dumps(m.tool_calls, ensure_ascii=False, sort_keys=True))
+        if tools:
+            parts.append(json.dumps(tools, ensure_ascii=False, sort_keys=True))
+        raw = "\x00".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def get(self, messages: list[Message], model: str, tools: list[dict] | None,
+            temperature: float, max_tokens: int) -> Message | None:
+        if self._ttl <= 0:
+            return None
+        key = self._make_key(messages, model, tools, temperature, max_tokens)
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            ts, cached_msg = entry
+            if time.time() - ts > self._ttl:
+                del self._store[key]
+                self._misses += 1
+                return None
+            # LRU: move to end
+            self._store.move_to_end(key)
+            self._hits += 1
+            return cached_msg
+
+    def put(self, messages: list[Message], model: str, tools: list[dict] | None,
+            temperature: float, max_tokens: int, response: Message) -> None:
+        if self._ttl <= 0:
+            return
+        key = self._make_key(messages, model, tools, temperature, max_tokens)
+        with self._lock:
+            self._store[key] = (time.time(), response)
+            self._store.move_to_end(key)
+            while len(self._store) > self._max_size:
+                self._store.popitem(last=False)
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {"hits": self._hits, "misses": self._misses,
+                    "size": len(self._store), "ttl": self._ttl}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
+            self._hits = 0
+            self._misses = 0
+
+
+# 全局缓存实例
+_response_cache = LLMResponseCache(
+    max_size=int(os.getenv("XUANJIAN_LLM_CACHE_MAX_SIZE", "128")),
+    ttl=float(os.getenv("XUANJIAN_LLM_CACHE_TTL", "300")),
+)
 
 
 # ============================================================
@@ -158,6 +243,8 @@ class LLMMonitor:
                 return
             self._log_file = Path("data/logs/llm_usage.jsonl")
             self._log_file.parent.mkdir(parents=True, exist_ok=True)
+            # ★ 线程安全：record() 加锁防止多 worker 并发写入竞态
+            self._record_lock = threading.Lock()
             # 内存统计（当前进程生命周期）
             self.total_calls = 0
             self.total_input_tokens = 0
@@ -166,6 +253,13 @@ class LLMMonitor:
             self.by_model: dict[str, dict] = {}  # model → {calls, input, output, seconds}
             self.by_caller: dict[str, dict] = {}  # caller → {calls, input, output}
             self.by_task: dict[str, dict] = {}    # task_id → {calls, input, output, seconds, started_at}
+            # ★ 缓冲写入：攒够 _BUFFER_FLUSH 条或 _BUFFER_TIMEOUT 秒后批量 flush，减少 IO 次数
+            self._buffer: list[str] = []
+            self._buffer_flush_count = int(os.getenv("XUANJIAN_LLM_LOG_BUFFER", "50"))
+            self._buffer_flush_timeout = 5.0
+            self._buffer_last_flush = time.time()
+            # ★ 日志轮转：超过 _MAX_LOG_SIZE_MB 时自动截断保留最新记录
+            self._max_log_size = int(os.getenv("XUANJIAN_LLM_LOG_MAX_MB", "50")) * 1024 * 1024
             # ★ 标志放最后：确保上面所有属性都已赋值后，才允许其他线程跳过初始化
             self._initialized = True
 
@@ -188,65 +282,91 @@ class LLMMonitor:
         if not task_id:
             task_id = get_current_task()
 
-        self.total_calls += 1
-        self.total_input_tokens += input_tokens
-        self.total_output_tokens += output_tokens
-        self.total_cost_seconds += elapsed
+        # ★ 线程安全：整个 record 加锁，防止多 worker 并发自增竞态
+        with self._record_lock:
+            self.total_calls += 1
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.total_cost_seconds += elapsed
 
-        # 按模型聚合
-        if model not in self.by_model:
-            self.by_model[model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0}
-        m = self.by_model[model]
-        m["calls"] += 1
-        m["input_tokens"] += input_tokens
-        m["output_tokens"] += output_tokens
-        m["seconds"] += elapsed
+            # 按模型聚合
+            if model not in self.by_model:
+                self.by_model[model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0}
+            m = self.by_model[model]
+            m["calls"] += 1
+            m["input_tokens"] += input_tokens
+            m["output_tokens"] += output_tokens
+            m["seconds"] += elapsed
 
-        # 按调用方聚合
-        if caller:
-            if caller not in self.by_caller:
-                self.by_caller[caller] = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
-            c = self.by_caller[caller]
-            c["calls"] += 1
-            c["input_tokens"] += input_tokens
-            c["output_tokens"] += output_tokens
+            # 按调用方聚合
+            if caller:
+                if caller not in self.by_caller:
+                    self.by_caller[caller] = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+                c = self.by_caller[caller]
+                c["calls"] += 1
+                c["input_tokens"] += input_tokens
+                c["output_tokens"] += output_tokens
 
-        # ★ 按 task_id 聚合（本次会话维度）
-        if task_id:
-            if task_id not in self.by_task:
-                self.by_task[task_id] = {
-                    "calls": 0, "input_tokens": 0, "output_tokens": 0,
-                    "seconds": 0.0, "started_at": time.time(),
-                    "last_at": time.time(),
-                }
-            t = self.by_task[task_id]
-            t["calls"] += 1
-            t["input_tokens"] += input_tokens
-            t["output_tokens"] += output_tokens
-            t["seconds"] += elapsed
-            t["last_at"] = time.time()
+            # ★ 按 task_id 聚合（本次会话维度）
+            if task_id:
+                if task_id not in self.by_task:
+                    self.by_task[task_id] = {
+                        "calls": 0, "input_tokens": 0, "output_tokens": 0,
+                        "seconds": 0.0, "started_at": time.time(),
+                        "last_at": time.time(),
+                    }
+                t = self.by_task[task_id]
+                t["calls"] += 1
+                t["input_tokens"] += input_tokens
+                t["output_tokens"] += output_tokens
+                t["seconds"] += elapsed
+                t["last_at"] = time.time()
 
-        # 持久化
-        record = {
-            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "timestamp": time.time(),
-            "call_id": call_id or "",
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
-            "elapsed_s": round(elapsed, 2),
-            "caller": caller,
-            "has_tools": has_tools,
-            "task_id": task_id,
-            "is_error": bool(is_error),
-            "error": (error or "")[:500],
-            "req_summary": (req_summary or "")[:300],
-            "resp_summary": (resp_summary or "")[:300],
-        }
+            # 持久化（缓冲写入）
+            record = {
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp": time.time(),
+                "call_id": call_id or "",
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
+                "elapsed_s": round(elapsed, 2),
+                "caller": caller,
+                "has_tools": has_tools,
+                "task_id": task_id,
+                "is_error": bool(is_error),
+                "error": (error or "")[:500],
+                "req_summary": (req_summary or "")[:300],
+                "resp_summary": (resp_summary or "")[:300],
+            }
+            self._buffer.append(json.dumps(record, ensure_ascii=False))
+            need_flush = (
+                len(self._buffer) >= self._buffer_flush_count
+                or (time.time() - self._buffer_last_flush) > self._buffer_flush_timeout
+            )
+            if need_flush:
+                self._flush_buffer()
+
+    def _flush_buffer(self):
+        """将缓冲区写入文件并执行轮转检查。"""
+        if not self._buffer:
+            return
         try:
             with open(self._log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                f.write("\n".join(self._buffer) + "\n")
+            self._buffer.clear()
+            self._buffer_last_flush = time.time()
+            # ★ 日志轮转：文件过大时保留最新一半
+            try:
+                if self._log_file.stat().st_size > self._max_log_size:
+                    lines = self._log_file.read_text(encoding="utf-8").splitlines()
+                    keep = lines[-(len(lines) // 2):]
+                    self._log_file.write_text("\n".join(keep) + "\n", encoding="utf-8")
+                    log.info("LLM 日志轮转: %s 从 %d 行截断为 %d 行",
+                             self._log_file, len(lines), len(keep))
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -391,9 +511,11 @@ def _parse_sse_chat_payload(raw: Any) -> Any:
         acc = tool_calls_acc[idx]
         tool_calls.append(_SseToolCall(acc.get("id"), acc.get("name", ""), acc.get("arguments", ""), acc.get("type", "function")))
 
+    full_content = "".join(content_parts)
+    full_reasoning = "".join(reasoning_parts)
     message = _ObjectProxy({
-        "content": "".join(content_parts),
-        "reasoning_content": "".join(reasoning_parts) or None,
+        "content": full_content,
+        "reasoning_content": full_reasoning or None,
         "tool_calls": tool_calls,
     })
     choice_obj = _ObjectProxy({"message": message, "finish_reason": finish_reason or None})
@@ -401,8 +523,15 @@ def _parse_sse_chat_payload(raw: Any) -> Any:
         "choices": [choice_obj],
         "usage": _ObjectProxy(usage) if usage else None,
     })
-    log.warning("LLM 返回为非标准 SSE 流式文本，已降级解析聚合 %d 字符 content、%d 个 tool_calls",
-                len(content_parts), len(tool_calls))
+    # 降级解析是兼容第三方代理强制 SSE 流式返回的预期路径，成功解析不打 WARNING 避免刷屏；
+    # 仅当解析结果为空（既无 content 也无 tool_calls）才视为异常并告警。
+    total_chars = len(full_content) + len(full_reasoning)
+    if total_chars == 0 and not tool_calls:
+        log.warning("LLM 返回非标准 SSE 但降级解析为空（0 content、0 tool_calls），原始 %d 字节",
+                    len(raw))
+    else:
+        log.debug("LLM 非标准 SSE 降级解析: %d 字符 content、%d 个 tool_calls",
+                  total_chars, len(tool_calls))
     return resp_obj
 
 
@@ -1102,6 +1231,27 @@ class LLMClient:
                     f"LLM Token 预算不足: task={task_id}, used={used}, reserve={reserved}, limit={max_task_tokens}, caller={caller or '?'}"
                 )
 
+    # ★ 已知不支持 temperature 参数的模型/平台（避免先失败再重试浪费一次 API 调用）
+    _NO_TEMPERATURE_MODELS = {
+        "deepseek-reasoner",  # DeepSeek 思考模式
+        "o1", "o1-preview", "o1-mini", "o3", "o3-mini",  # OpenAI o 系列
+        "o4-mini",
+    }
+    _NO_TEMPERATURE_URLS = (
+        "deepseek.com",  # DeepSeek 全系思考模型
+    )
+
+    def _supports_temperature(self) -> bool:
+        """预检当前模型是否支持 temperature 参数，避免浪费一次 API 调用。"""
+        model_lower = self.config.model.lower()
+        if model_lower in self._NO_TEMPERATURE_MODELS:
+            return False
+        base_lower = self.config.base_url.lower()
+        # DeepSeek 的 reasoner 模型不支持 temperature
+        if "deepseek.com" in base_lower and "reasoner" in model_lower:
+            return False
+        return True
+
     def chat(
         self,
         messages: list[Message],
@@ -1110,21 +1260,37 @@ class LLMClient:
         max_tokens: int = 4096,
         caller: str = "",
         max_retries: int = 3,
+        use_cache: bool = True,
     ) -> Message:
         """调用 LLM，带指数退避重试。
 
         可重试错误（429/5xx/超时/连接错误）会自动重试 max_retries 次，
         每次间隔指数退避（1s, 2s, 4s）+ 随机抖动。
         不可重试错误（401/403/400）直接抛出，由上层 fallback 逻辑处理。
+
+        ★ use_cache=True 时优先查响应缓存，命中则直接返回不消耗 API。
+          测试场景中相同请求可复用结果，大幅减少 API 消耗。
+        ★ 上层已自带重试时传 max_retries=0 可避免三层重试叠加。
         """
         self._check_task_budget(max_tokens=max_tokens, caller=caller)
+
+        # ★ 响应缓存：相同请求直接返回上次结果，不消耗 API
+        if use_cache:
+            cached = _response_cache.get(messages, self.config.model, tools, temperature, max_tokens)
+            if cached is not None:
+                log.debug("[%s] LLM 缓存命中，跳过 API 调用", caller or "?")
+                return cached
         last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
                 if self.config.provider == "anthropic":
-                    return self._chat_anthropic(messages, tools, temperature, max_tokens, caller)
+                    resp = self._chat_anthropic(messages, tools, temperature, max_tokens, caller)
                 else:
-                    return self._chat_openai(messages, tools, temperature, max_tokens, caller)
+                    resp = self._chat_openai(messages, tools, temperature, max_tokens, caller)
+                # ★ 成功调用写入缓存，后续相同请求可复用
+                if use_cache:
+                    _response_cache.put(messages, self.config.model, tools, temperature, max_tokens, resp)
+                return resp
             except Exception as exc:
                 last_exc = exc
                 # 最后一次尝试不再等待
@@ -1203,8 +1369,10 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
-        # DeepSeek 思考模式不支持 temperature
-        if not self._is_deepseek:
+        # ★ temperature 预检：已知不支持 temperature 的模型直接跳过，避免浪费一次 API 调用
+        # 旧逻辑：先带 temperature 调一次 → 报错 → 去掉 temperature 再调一次 = 2 次 API 消耗
+        # 新逻辑：预检命中则直接不带 temperature = 1 次 API 消耗
+        if not self._is_deepseek and self._supports_temperature():
             kwargs["temperature"] = temperature
 
         # Ollama 本地模型需要指定上下文窗口（默认 4096 不够用）
@@ -1454,6 +1622,7 @@ class LLMPool:
         max_tokens: int = 4096,
         caller: str = "",
         exclude: set[str] | None = None,
+        use_cache: bool = True,
     ) -> tuple[Message, str]:
         """带故障转移的 LLM 调用：主模型失败时自动切换备用模型。
 
@@ -1481,7 +1650,7 @@ class LLMPool:
                 resp = client.chat(
                     messages=messages, tools=tools,
                     temperature=temperature, max_tokens=max_tokens,
-                    caller=caller,
+                    caller=caller, use_cache=use_cache,
                 )
                 return resp, client.config.name
             except Exception as exc:

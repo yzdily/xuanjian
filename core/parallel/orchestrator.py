@@ -1436,7 +1436,7 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                 f"ℹ️ 业务理解状态为 {bu_status},跳过 Phase 2.5 对账")
 
     # ★ Phase 2.55: 补测 Agent (2026-05-22)
-    # ★ FAST 模式跳过补测（补测 Agent 依赖 LLM）
+    # ★ P2-A: FAST 模式不再完全跳过补测，改用本地规则版（FastScanner 替代 WorkerAgent）
     _fast_mode = getattr(session, "user_scan_mode", "smart") == "fast"
     if session.sitemap and not _fast_mode:
         try:
@@ -1474,6 +1474,7 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                             f"❌ 补测 Agent [{wid}] 出错: {inner.get('error', '')[:200]}")
                 elif etype == "done":
                     s = supp_evt.get("summary", {}) or {}
+                    session._supplemental_summary = s
                     elapsed = s.get("elapsed", time.time() - supp_started)
                     if s.get("error"):
                         yield session._event("system",
@@ -1492,6 +1493,46 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
             yield session._event("system",
                 f"⚠️ Phase 2.55 异常（{type(e).__name__}: {str(e)[:200]}）\n"
                 f"  原因: 补测 Agent 启动失败，不影响后续 Phase 2.6/3")
+
+    # ★ P2-A: FAST 模式本地规则版补测（不依赖 LLM，用 FastScanner 补覆盖缺口）
+    elif session.sitemap and _fast_mode:
+        try:
+            from core.supplemental_test_agent import run_supplemental_test_local
+            yield session._event("phase",
+                "Phase 2.55: 本地规则补测 — 扫描新发现 API 并用 FastScanner 测试")
+            supp_started = time.time()
+            async for supp_evt in run_supplemental_test_local(session):
+                etype = supp_evt.get("type", "")
+                if etype == "info":
+                    yield session._event("system", f"[补测] {supp_evt.get('msg', '')}")
+                elif etype == "warn":
+                    yield session._event("system", f"[补测] ⚠️ {supp_evt.get('msg', '')}")
+                elif etype == "error":
+                    yield session._event("system", f"[补测] ❌ {supp_evt.get('msg', '')}")
+                elif etype == "done":
+                    s = supp_evt.get("summary", {})
+                    session._supplemental_summary = s
+                    supp_elapsed = s.get("elapsed", time.time() - supp_started)
+                    if s.get("error"):
+                        yield session._event("system",
+                            f"⚠️ Phase 2.55 本地补测完成（含异常，耗时 {supp_elapsed:.1f}s）:\n"
+                            f"  - 错误原因: {s.get('error')}\n"
+                            f"  - 发现新 API: {s.get('discovered', 0)} 个\n"
+                            f"  - 新建 feature: {s.get('new_features', 0)} 个\n"
+                            f"  - 测试 feature: {s.get('tested_features', 0)} 个\n"
+                            f"  - 发现漏洞: {s.get('vulns_found', 0)} 个")
+                    else:
+                        yield session._event("system",
+                            f"✅ Phase 2.55 本地补测完成 (耗时 {supp_elapsed:.1f}s):\n"
+                            f"  - 发现新 API: {s.get('discovered', 0)} 个\n"
+                            f"  - 新建 feature: {s.get('new_features', 0)} 个\n"
+                            f"  - 测试 feature: {s.get('tested_features', 0)} 个\n"
+                            f"  - 发现漏洞: {s.get('vulns_found', 0)} 个")
+        except Exception as e:
+            log.warning("Phase 2.55 local supplemental crashed: %s", e, exc_info=True)
+            yield session._event("system",
+                f"⚠️ Phase 2.55 本地补测异常（{type(e).__name__}: {str(e)[:200]}）\n"
+                f"  不影响后续阶段")
 
     # ★ Phase 2.6: 漏洞危害验证 (SRC/赏金平台审核员视角)
     # ★ FAST 模式跳过危害验证（validate_harm 依赖 LLM）
@@ -1587,11 +1628,30 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
         pending = checks_total - checks_done
         session.sitemap.phase_status = "partial" if pending > 0 else "completed"
 
-        if not cov.get("vulns", 0) and not cov.get("checks_done", 0):
-            session.sitemap.termination_reason = (
-                "扫描未产生有效结果：所有 LLM 调用被拒绝（403 AccessDenied），"
-                "FastScanner 未发现匹配目标，报告仅展示功能点清单。"
-            )
+        scan_issue = getattr(session, "_scan_health_issue", None) or {}
+        traffic_health = getattr(session, "_traffic_health", None) or {}
+        has_assets = bool(getattr(session.sitemap, "features", None) or getattr(session.sitemap, "apis", None))
+
+        if not cov.get("vulns", 0) and not cov.get("checks_done", 0) and not has_assets:
+            if scan_issue.get("type") == "zero_assets_after_crawl":
+                target_flows = (traffic_health or scan_issue.get("traffic") or {}).get("target_flows", 0)
+                flow_count = (traffic_health or scan_issue.get("traffic") or {}).get("flow_count", 0)
+                problem = (traffic_health or scan_issue.get("traffic") or {}).get("problem", "")
+                traffic_hint = (
+                    f"抓包文件共 {flow_count} 条流量，但目标站点流量 {target_flows} 条"
+                    if problem == "target_flow_zero"
+                    else "流量文件不存在或抓包健康检查失败"
+                )
+                session.sitemap.termination_reason = (
+                    "扫描未产生有效结果：Phase 0 未抓到页面、API 或有效点击，"
+                    f"{traffic_hint}。可能原因是目标页面加载超时、浏览器代理/mitmproxy 未生效、"
+                    "或当前硬超时过短；未进入有效功能点测试。"
+                )
+            else:
+                session.sitemap.termination_reason = (
+                    "扫描未产生有效结果：未发现可测试的功能点或 API，"
+                    "FastScanner 未发现匹配目标，报告仅展示空结果。"
+                )
         elif cov.get("vulns", 0) == 0:
             pending_str = f" {pending} 项未测;" if pending > 0 else ""
             session.sitemap.termination_reason = (

@@ -145,10 +145,12 @@ class LoginMixin:
                 local_token = ""
                 try:
                     local_token = await page.evaluate("""() => {
-                        const keys = ['token','access_token','accessToken','auth_token','jwt','Authorization','user_token'];
-                        for (const k of keys) {
-                            const v = localStorage.getItem(k);
-                            if (v && v.length > 10) return k;
+                        const keys = ['token','access_token','accessToken','auth_token','authToken','jwt','id_token','idToken','Authorization','user_token','Sc-Id-Token','c-token'];
+                        for (const store of [localStorage, sessionStorage]) {
+                            for (const k of keys) {
+                                const v = store.getItem(k);
+                                if (v && v.length > 10) return k;
+                            }
                         }
                         return '';
                     }""")
@@ -515,6 +517,7 @@ class LoginMixin:
         auth_header_names = {
             "authorization", "sc-id-token", "x-token", "x-auth-token",
             "x-access-token", "token", "access-token", "access_token",
+            "c-token", "id-token", "id_token", "jwt",
         }
         positive_markers = (
             '"code":"000000"', '"code": "000000"', '"success":true',

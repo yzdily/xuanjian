@@ -187,8 +187,8 @@ async def _meta_analyze_checklist(
     from core.llm import Message
     from core.sitemap import CheckResult
 
-    # ★ LLM 未配置时跳过元分析（FAST 模式下 llm 为 None）
-    if llm is None:
+    # ★ LLM 未配置或不可调用时跳过元分析（FAST 模式下 llm 为 None）
+    if not callable(getattr(llm, "chat", None)):
         log.info("LLM 未配置，跳过元分析")
         return {"script_batch": [], "llm_required": []}
 

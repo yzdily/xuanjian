@@ -72,7 +72,7 @@ def _record_unsupported_method(method: str, check_type: str, feature_ids: list, 
 
 async def _smart_group_features(
     features: list[FeaturePoint],
-    llm: "LLMClient",
+    llm: "LLMClient | None",
     target: str = "",
     business_type: str = "",
     tech_stack: str = "",
@@ -91,8 +91,8 @@ async def _smart_group_features(
         log.info("功能点 ≤5 个，跳过 LLM 分组，直接使用代码分组")
         return _group_features_by_api_prefix(features)
 
-    # ★ LLM 未配置时直接使用代码分组（FAST 模式下 llm 为 None）
-    if llm is None:
+    # ★ LLM 未配置或不可调用时直接使用代码分组（FAST 模式下 llm 为 None）
+    if not callable(getattr(llm, "chat", None)):
         log.info("LLM 未配置，使用代码分组")
         return _group_features_by_api_prefix(features)
 

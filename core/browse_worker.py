@@ -648,12 +648,29 @@ def _page_name_from_url(path: str) -> str:
 
 def _get_auth_token(crawl_result: dict) -> str | None:
     """从爬取结果或 FlowStore 中提取 JWT/Bearer token。"""
+    from core.intent import _extract_token_value, _looks_like_auth_token
+
+    auth_header_names = {
+        "authorization", "x-auth-token", "x-access-token", "access-token",
+        "id-token", "id_token", "token", "jwt", "c-token", "sc-id-token",
+    }
+
+    def _pick_token(headers: dict) -> str | None:
+        for hk, hv in (headers or {}).items():
+            hk_lower = str(hk).lower()
+            if hk_lower not in auth_header_names and "token" not in hk_lower:
+                continue
+            token = _extract_token_value(hv) if isinstance(hv, str) else ""
+            if token and _looks_like_auth_token(token):
+                return token
+        return None
+
     # 1. 从爬取结果的 API headers 中找
     for api in crawl_result.get("api_endpoints", []):
         headers = api.get("headers", {})
-        auth = headers.get("Authorization", "") or headers.get("authorization", "")
-        if auth and "Bearer" in auth:
-            return auth.replace("Bearer ", "").strip()
+        token = _pick_token(headers)
+        if token:
+            return token
 
     # 2. 从 FlowStore 中找
     try:
@@ -662,9 +679,9 @@ def _get_auth_token(crawl_result: dict) -> str | None:
         for flow_id in reversed(list(_store._order)):
             flow = _store.get(flow_id)
             if flow and flow.request_headers:
-                auth = flow.request_headers.get("Authorization", "") or flow.request_headers.get("authorization", "")
-                if auth and "Bearer" in auth:
-                    return auth.replace("Bearer ", "").strip()
+                token = _pick_token(flow.request_headers)
+                if token:
+                    return token
     except Exception:
         pass
 
@@ -677,10 +694,12 @@ def _get_auth_token(crawl_result: dict) -> str | None:
         async def _get_token():
             page = await actual()
             token = await page.evaluate("""() => {
-                const keys = ['token', 'access_token', 'accessToken', 'auth_token', 'Token'];
-                for (const key of keys) {
-                    const val = localStorage.getItem(key);
-                    if (val && val.length > 10) return val;
+                const keys = ['token', 'access_token', 'accessToken', 'auth_token', 'authToken', 'jwt', 'id_token', 'idToken', 'Authorization', 'Sc-Id-Token', 'c-token'];
+                for (const store of [localStorage, sessionStorage]) {
+                    for (const key of keys) {
+                        const val = store.getItem(key);
+                        if (val && val.length > 10) return val.startsWith('Bearer ') ? val.slice(7).trim() : val;
+                    }
                 }
                 return null;
             }""")
@@ -1655,14 +1674,16 @@ class BrowseWorker:
         # ★ 2026-05-28：STALE 判断升级为"双维度"（API 增量 + checklist 进度）
         # 只有同时满足"无新 API"且"无 checklist 进展"才判定为 STALE。
         # 纯展示页（无 API 但 LLM 在推进 checklist）不再被误杀。
-        STALE_ROUNDS_LIMIT = 20
+        STALE_ROUNDS_LIMIT = 15
         STALE_NUDGE_AT = 10
-        STALE_FINAL_CHANCE = 10  # STALE 退出前给的额外轮次
+        STALE_FINAL_CHANCE = 5  # STALE 退出前给的额外轮次（从10降至5）
         PROGRESS_CHECK_INTERVAL = 30  # 每 N 轮注入一次进度检查点
         last_api_count = len(self.sitemap.apis) if self.sitemap else 0
         rounds_since_new_api = 0
         _nudged = False
         _final_chance_given = False  # 是否已给过"最后机会"
+        _progress_reset_count = 0  # has_recent_progress 重置计数（防止无限续命）
+        _MAX_PROGRESS_RESETS = 2  # 最多允许 2 次"有进度"续命，之后强制退出
         # ★ checklist 进度追踪：通过检测 LLM 回复中的 ✅ 标记来判断是否在推进
         _last_checklist_progress_round = 0  # 上次检测到 ✅ 进展的轮次
         _checklist_done_count = 0  # 累计检测到的 ✅ 数量
@@ -1697,8 +1718,11 @@ class BrowseWorker:
                 if rounds_since_new_api >= STALE_ROUNDS_LIMIT:
                     # ★ 双维度判断：如果 LLM 最近 10 轮内有 checklist 进展，不退出
                     has_recent_progress = (round_num - _last_checklist_progress_round) <= 10
-                    if has_recent_progress:
-                        # LLM 还在推进 checklist（可能是纯展示页），重置计数器继续
+                    # ★ 2026-08-05：限制"有进度"续命次数，防止 LLM 反复输出 ✅ 但无实际 API 进展导致无限循环
+                    if has_recent_progress and _progress_reset_count < _MAX_PROGRESS_RESETS:
+                        _progress_reset_count += 1
+                        log.warning("[%s] STALE 但有 checklist 进度，第 %d 次续命（上限 %d）",
+                                    self.worker_id, _progress_reset_count, _MAX_PROGRESS_RESETS)
                         rounds_since_new_api = STALE_NUDGE_AT  # 重置到 nudge 之后，避免立即再触发
                         _nudged = True
                     elif not _final_chance_given:
@@ -1755,8 +1779,10 @@ class BrowseWorker:
 
             try:
                 messages = self.context.get_messages()
+                # ★ 2026-08-05：补 caller 埋点，此前 77% 的 LLM 调用 caller 为空无法追踪
                 response = await asyncio.to_thread(
-                    self.llm.chat, messages, worker_tools
+                    self.llm.chat, messages, worker_tools,
+                    caller=f"browse:{self.worker_id}"
                 )
             except Exception as e:
                 yield {
@@ -1929,7 +1955,9 @@ class BrowseWorker:
                     break
 
             # 上下文压缩
-            if self.context.should_compress():
+            # ★ 2026-08-05：browse_worker 用更激进的压缩阈值（15轮 vs 默认30轮）
+            # 此前 browse_worker 上下文膨胀到 124K（45次100K+调用），严重浪费 input tokens
+            if self.context.turn_count >= 15 or self.context.should_compress():
                 self.context.compress()
 
         # 保存 sitemap

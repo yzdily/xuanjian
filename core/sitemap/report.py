@@ -130,11 +130,21 @@ class ReportMixin:
         if pending:
             lines.append(f"> ⚠️ 仍有 {len(pending)} 项未完成。报告可用于阶段性审阅，但不应声明为完整测试。")
             lines.append("")
-            lines.append("**未完成样本（最多 20 项）**：")
+            priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            pending_sorted = sorted(
+                pending,
+                key=lambda item: (
+                    priority_rank.get(getattr(item[0].priority, "value", "medium"), 2),
+                    item[0].id,
+                    item[1].vuln_type,
+                ),
+            )
+            lines.append("**优先补测队列（最多 20 项）**：")
             lines.append("")
-            for fp, c in pending[:20]:
+            for fp, c in pending_sorted[:20]:
                 api = fp.related_apis[0] if fp.related_apis else fp.page_url
-                lines.append(f"- `{fp.id}` {fp.name} / {c.vuln_type} / {api}")
+                pri = getattr(fp.priority, "value", "medium")
+                lines.append(f"- `{pri}` `{fp.id}` {fp.name} / {c.vuln_type} / {api}")
             lines.append("")
         return lines
 
@@ -207,7 +217,7 @@ class ReportMixin:
         if bu_result:
             lines.append(f"### {bu_section} 业务理解")
             lines.append("")
-            if bu_result.get("status") == "ok":
+            if bu_result.get("status") in ("ok", "degraded"):
                 rec = getattr(self, "reconcile_result", None) or {}
                 if rec and rec.get("status") == "ok":
                     coverage_map: dict = {}
@@ -329,6 +339,8 @@ class ReportMixin:
             lines.append(f"| WAF 拦截（403/418/429/503） | {scanner_stats.get('blocked', 0)} |")
             lines.append(f"| 超时 | {scanner_stats.get('timeout', 0)} |")
             lines.append(f"| 请求异常 | {scanner_stats.get('error', 0)} |")
+            if scanner_stats.get("log_suppressed"):
+                lines.append(f"| 重复响应日志已抑制 | {scanner_stats.get('log_suppressed', 0)} |")
             lines.append("")
 
         # 覆盖矩阵
@@ -410,14 +422,33 @@ class ReportMixin:
         """
         from core.sitemap.models import Priority
 
+        # ★ 去重：按 (vuln_type, 归一化URL) 去重，与 coverage.py 头部统计对齐，
+        # 避免头部显示"3个漏洞"但详情章节列了5条的矛盾
+        _seen_vuln_keys: set[str] = set()
+        _seen_review_keys: set[str] = set()
+
+        def _make_dedup_key(fp, c) -> str:
+            """生成与 coverage.py _normalize_vuln_key 一致的去重键。"""
+            try:
+                from core.sitemap.coverage import _normalize_vuln_key
+                return _normalize_vuln_key(fp, c.vuln_type)
+            except Exception:
+                return f"{fp.name}|{c.vuln_type}"
+
         vuln_details = []
         review_details = []
         for fp in self.features.values():
             for c in fp.checklist:
                 if c.result == CheckResult.VULNERABLE:
-                    vuln_details.append((fp, c))
+                    key = _make_dedup_key(fp, c)
+                    if key not in _seen_vuln_keys:
+                        _seen_vuln_keys.add(key)
+                        vuln_details.append((fp, c))
                 elif c.result == CheckResult.NEEDS_REVIEW:
-                    review_details.append((fp, c))
+                    key = _make_dedup_key(fp, c)
+                    if key not in _seen_review_keys:
+                        _seen_review_keys.add(key)
+                        review_details.append((fp, c))
 
         if vuln_details or review_details:
             lines.append("## 3. 漏洞详情")

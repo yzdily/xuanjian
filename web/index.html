@@ -2941,7 +2941,13 @@ async function startScanForTarget(target) {
   // 新建会话
   try {
     const resp = await fetch('/api/sessions/new', { method: 'POST' });
+    if (!resp.ok) {
+      throw new Error(await readApiError(resp, '创建会话失败'));
+    }
     const data = await resp.json();
+    if (!data.task_id) {
+      throw new Error(data.error || '创建会话失败：后端未返回 task_id');
+    }
     currentTaskId = data.task_id;
     target.taskId = currentTaskId;
     saveTargets();
@@ -2966,7 +2972,11 @@ async function startScanForTarget(target) {
     message += '\n额外请求头: ' + JSON.stringify(target.headers);
   }
 
-  const scanModeMap = { quick: 'batch', standard: 'smart', deep: 'realtime' };
+  // ★ 维度分离：前端只暴露 3 个深度选项，后端自动映射为 batch 执行策略
+  // quick → fast（深度: fast, 策略: batch）
+  // standard → standard（深度: standard, 策略: batch）
+  // deep → deep（深度: deep, 策略: batch）
+  const scanModeMap = { quick: 'fast', standard: 'standard', deep: 'deep' };
   const scanMode = scanModeMap[target.strategy] || 'smart';
 
   addTerminalLine('system', 'INFO', `开始扫描: ${target.url} [模式: ${scanMode}]`);
@@ -2988,6 +2998,12 @@ async function startScanForTarget(target) {
       body: JSON.stringify({ message, task_id: currentTaskId, scan_mode: scanMode }),
       signal: currentAbort.signal,
     });
+    if (!resp.ok || !resp.body) {
+      const msg = await readApiError(resp, '扫描请求启动失败');
+      addTerminalLine('error', 'ERROR', msg);
+      toast(msg, 'error');
+      throw new Error(msg);
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -3009,8 +3025,10 @@ async function startScanForTarget(target) {
   } catch (e) {
     _fetchError = e;
     if (e.name !== 'AbortError') {
-      addTerminalLine('error', 'ERROR', '扫描异常: ' + e.message);
-      toast('扫描异常: ' + e.message, 'error');
+      if (!String(e.message || '').includes('扫描请求启动失败') && !String(e.message || '').includes('登录已失效')) {
+        addTerminalLine('error', 'ERROR', '扫描异常: ' + e.message);
+        toast('扫描异常: ' + e.message, 'error');
+      }
     }
   }
 
@@ -3699,9 +3717,15 @@ async function sendTerminalMessage() {
   if (!currentTaskId) {
     try {
       const resp = await fetch('/api/sessions/new', { method: 'POST' });
+      if (!resp.ok) {
+        throw new Error(await readApiError(resp, '创建会话失败'));
+      }
       const data = await resp.json();
+      if (!data.task_id) {
+        throw new Error(data.error || '后端未返回 task_id');
+      }
       currentTaskId = data.task_id;
-    } catch (e) { addTerminalLine('error', 'ERR', '无法创建会话'); return; }
+    } catch (e) { addTerminalLine('error', 'ERR', '无法创建会话: ' + e.message); return; }
   }
 
   isStreaming = true;
@@ -3717,6 +3741,11 @@ async function sendTerminalMessage() {
       body: JSON.stringify({ message: msg, task_id: currentTaskId, scan_mode: 'smart' }),
       signal: currentAbort.signal,
     });
+    if (!resp.ok || !resp.body) {
+      const errMsg = await readApiError(resp, '消息发送失败');
+      addTerminalLine('error', 'ERR', errMsg);
+      throw new Error(errMsg);
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -3743,7 +3772,9 @@ async function sendTerminalMessage() {
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError') addTerminalLine('error', 'ERR', e.message);
+    if (e.name !== 'AbortError' && !String(e.message || '').includes('消息发送失败') && !String(e.message || '').includes('登录已失效')) {
+      addTerminalLine('error', 'ERR', e.message);
+    }
   }
 
   isStreaming = false;
@@ -3771,6 +3802,23 @@ function escapeHtml(s) {
 function jsStr(s) {
   if (s === undefined || s === null) return '';
   return JSON.stringify(String(s));
+}
+
+async function readApiError(resp, fallback) {
+  let detail = '';
+  try {
+    const ct = resp.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await resp.clone().json();
+      detail = data.message || data.error || data.detail || JSON.stringify(data);
+    } else {
+      detail = (await resp.clone().text()).slice(0, 300);
+    }
+  } catch (e) {}
+  if (resp.status === 401) {
+    return '登录已失效或未授权，请重新登录后再扫描';
+  }
+  return `${fallback || '请求失败'} (HTTP ${resp.status})${detail ? ': ' + detail : ''}`;
 }
 
 function safeMarkdown(text) {

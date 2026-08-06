@@ -85,6 +85,25 @@ class AdvancePhaseMixin:
     async def _advance_phase(self, summary: str) -> AsyncGenerator[str, None]:
         log.info("阶段推进: %s → 下一阶段, summary=%s", self.phase, summary[:80])
         if self.phase == "explore":
+            # ★ P1-A: Phase 0 爬虫完成后评估是否需要升级模式
+            # 多因子评分：支付/上传关键词 → deep；认证/API多 → standard
+            _escalated = self._check_post_crawl_escalation()
+            if _escalated:
+                yield self._event("system",
+                    f"📈 爬虫完成后自动升级扫描模式 → {_escalated}"
+                    f"（检测到高危业务功能或复杂 API 结构）")
+
+            # ★ FAST 模式：跳过 Phase 1，直接进入 Phase 2
+            _user_mode = getattr(self, "user_scan_mode", "smart")
+            if _user_mode == "fast" or self.llm is None:
+                self.phase = "test"
+                yield self._event("phase", "Phase 2: 本地规则引擎测试（FAST 模式跳过 Phase 1）")
+                # 直接进入 Phase 2
+                from core.parallel import run_parallel_test
+                async for evt in run_parallel_test(self):
+                    yield evt
+                return
+
             self.phase = "analyze"
             self.current_context = self._new_context_for_phase(PHASE_ANALYZE_PROMPT)
             yield self._event("phase", "Phase 1: 功能分析 — 理解业务逻辑，制定测试计划")
@@ -176,13 +195,22 @@ class AdvancePhaseMixin:
                         yield self._event("system",
                             f"⚠️ Phase 1.5 业务理解失败/降级 ({bu_result.get('status')}): {err[:200]}\n"
                             f"  主链路继续运行,启用本地规则引擎兜底测试")
-                        # ★ 降级标记：强制启用快速规则引擎（即使 smart 模式也走 fast 扫描）
-                        self._bu_failed = True
+                        # ★ P0-B: 业务理解失败 → 降级到 fast 模式（跳过后续 LLM 阶段）
+                        # 此前 _bu_failed 只赋值不读取，降级从未生效，现已接入 _maybe_escalate_mode
+                        _new_mode = self._maybe_escalate_mode("business_understanding_failed", "downgrade")
+                        if _new_mode:
+                            yield self._event("system",
+                                f"⚠️ 因业务理解失败，扫描模式已降级 → {_new_mode}"
+                                f"（后续 LLM 依赖阶段将跳过，使用本地规则兜底）")
                 except Exception as e:
                     log.warning("Phase 1.5 business understanding crashed: %s", e)
                     yield self._event("system",
                         f"⚠️ Phase 1.5 异常: {str(e)[:200]}\n  启用本地规则引擎兜底")
-                    self._bu_failed = True
+                    # ★ P0-B: 异常也触发降级
+                    _new_mode = self._maybe_escalate_mode("business_understanding_crashed", "downgrade")
+                    if _new_mode:
+                        yield self._event("system",
+                            f"⚠️ 因业务理解异常，扫描模式已降级 → {_new_mode}")
 
             self.phase = "test"
             # ★ 2026-05-22: 打 Phase 2 开始时间戳，供 Phase 2.55 补测 Agent 筛选"Phase 2 之后产生的新 API"

@@ -584,6 +584,59 @@ def render_proven_only(
     accepted = [v for v in verdicts if v.get("verdict") == "accepted"]
     summary = hv_result.get("summary", "")
 
+    def _dedupe_verdicts(items: list[dict]) -> list[dict]:
+        from urllib.parse import urlparse
+        import re
+
+        def _canon_type(orig: dict) -> str:
+            vt = (orig.get("vuln_type", "") or "").lower()
+            blob = "\n".join([
+                vt,
+                (orig.get("detail", "") or "").lower(),
+                (orig.get("evidence_request", "") or "").lower(),
+                (orig.get("evidence_response", "") or "").lower(),
+            ])
+            if ("信息泄露" in orig.get("vuln_type", "") or "代码审计" in orig.get("vuln_type", "") or "key" in vt or "secret" in vt) and any(
+                marker in blob for marker in ("appsecret", "app_secret", "api_key", "apikey", "appkey", "硬编码密钥", "签名密钥")
+            ):
+                return "客户端硬编码密钥泄露"
+            return orig.get("vuln_type", "") or "未知"
+
+        def _key(vd: dict) -> str:
+            orig = vd.get("_original", {}) or {}
+            url = orig.get("url", "") or ""
+            req = orig.get("evidence_request", "") or ""
+            if not url and req:
+                m = re.search(r"\b(?:GET|POST|PUT|DELETE|PATCH)\s+(\S+)", req)
+                if m:
+                    url = m.group(1)
+            try:
+                pu = urlparse(url)
+                path = pu.path or url.split("?", 1)[0]
+                norm_parts = []
+                for part in [p for p in path.split("/") if p]:
+                    if part.isdigit() or re.fullmatch(r"[0-9a-fA-F]{16,}", part):
+                        norm_parts.append("*")
+                    else:
+                        norm_parts.append(part)
+                norm_path = "/" + "/".join(norm_parts) if norm_parts else path
+                host = pu.netloc.lower()
+            except Exception:
+                host, norm_path = "", url
+            return f"{host}{norm_path}|{_canon_type(orig)}"
+
+        seen: set[str] = set()
+        result: list[dict] = []
+        for item in items:
+            k = _key(item)
+            if k in seen:
+                continue
+            seen.add(k)
+            result.append(item)
+        return result
+
+    accepted = _dedupe_verdicts(accepted)
+
     if not accepted:
         rej_count = sum(1 for v in verdicts if v.get("verdict") == "rejected")
         bord_count = sum(1 for v in verdicts if v.get("verdict") == "borderline")
@@ -601,7 +654,7 @@ def render_proven_only(
         # 51 个漏洞全是 borderline 时 proven 报告只有一句话，用户拿不到任何漏洞详情。
         # 现在把 borderline 漏洞的标题、类型、URL、证据、修复建议都列出来，
         # 明确标注"未经危害验证，需人工复核"，不与已证明漏洞混淆。
-        borderline = [v for v in verdicts if v.get("verdict") == "borderline"]
+        borderline = _dedupe_verdicts([v for v in verdicts if v.get("verdict") == "borderline"])
         if borderline:
             body.extend([
                 "---",
@@ -908,6 +961,37 @@ def _render_orphan_block(orphan_findings: list | None) -> list[str]:
     """
     if not orphan_findings:
         return []
+    from urllib.parse import urlparse
+
+    deduped_findings = []
+    seen_keys: set[str] = set()
+    for f in orphan_findings:
+        if not isinstance(f, dict):
+            continue
+        vt = f.get("vuln_type", "未知")
+        blob = "\n".join([
+            str(vt).lower(),
+            (f.get("detail", "") or "").lower(),
+            (f.get("evidence", "") or "").lower(),
+        ])
+        if ("信息泄露" in str(vt) or "代码审计" in str(vt) or "key" in str(vt).lower()) and any(
+            marker in blob for marker in ("appsecret", "app_secret", "api_key", "apikey", "appkey", "硬编码密钥", "签名密钥")
+        ):
+            vt_key = "客户端硬编码密钥泄露"
+        else:
+            vt_key = str(vt)
+        url = f.get("url", "") or ""
+        try:
+            pu = urlparse(url)
+            url_key = f"{pu.netloc.lower()}{pu.path}".rstrip("/")
+        except Exception:
+            url_key = url.split("?", 1)[0].rstrip("/")
+        key = f"{vt_key}|{url_key}|{f.get('method', '')}"
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped_findings.append(f)
+
     sev_emoji = {
         "critical": "🔴 严重", "high": "🟠 高危",
         "medium": "🟡 中危", "low": "🟢 低危", "info": "ℹ️ 信息",
@@ -918,12 +1002,10 @@ def _render_orphan_block(orphan_findings: list | None) -> list[str]:
         "> 以下漏洞由本地规则引擎（FastScanner）发现，但未匹配到功能点、",
         "> 也未经 Phase 2.6 危害验证裁决。请人工复核是否有实际利用价值。",
         "",
-        f"**共 {len(orphan_findings)} 条**",
+        f"**共 {len(deduped_findings)} 条**",
         "",
     ]
-    for i, f in enumerate(orphan_findings, 1):
-        if not isinstance(f, dict):
-            continue
+    for i, f in enumerate(deduped_findings, 1):
         sev = (f.get("severity") or "medium").lower()
         sev_label = sev_emoji.get(sev, sev)
         vt = f.get("vuln_type", "未知")

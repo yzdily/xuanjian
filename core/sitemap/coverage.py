@@ -14,6 +14,29 @@ from core.sitemap.constants import CHECK_RESULT_ICON
 log = logging.getLogger("pentest_agent.sitemap")
 
 
+def _canonical_vuln_type_for_dedup(fp: FeaturePoint, vuln_type: str) -> str:
+    """把同一根因的不同检测类型合并到同一个去重类型。"""
+    vt = (vuln_type or "").lower()
+    name = (getattr(fp, "name", "") or "").lower()
+    text_parts = [name, vt]
+    for c in getattr(fp, "checklist", []) or []:
+        text_parts.extend([
+            (getattr(c, "detail", "") or "").lower(),
+            (getattr(c, "evidence_request", "") or "").lower(),
+            (getattr(c, "evidence_response", "") or "").lower(),
+        ])
+    blob = "\n".join(text_parts)
+    secret_markers = (
+        "appsecret", "app_secret", "secret", "api_key", "apikey",
+        "appkey", "硬编码密钥", "签名密钥", "js代码审计",
+    )
+    if ("信息泄露" in vuln_type or "代码审计" in vuln_type or "secret" in vt or "key" in vt) and any(
+        marker in blob for marker in secret_markers
+    ):
+        return "客户端硬编码密钥泄露"
+    return vuln_type
+
+
 def _normalize_vuln_key(fp: FeaturePoint, vuln_type: str) -> str:
     """归一化漏洞去重 key。
 
@@ -23,11 +46,14 @@ def _normalize_vuln_key(fp: FeaturePoint, vuln_type: str) -> str:
 
     策略：
     1. 从 related_apis 提取第一个 API URL
-    2. 将路径最后一段替换为 * （如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*）
+    2. 仅将明显动态路径段替换为 *（数字 ID / UUID / 长 hex），避免把
+       /netbus/homePage/activitys 与 /netbus/homePage/layout 这类不同业务接口误合并
     3. 结合漏洞类型生成 key
     4. 无 API 时退回到功能点名 + 漏洞类型
     """
     from urllib.parse import urlparse
+
+    canonical_vuln_type = _canonical_vuln_type_for_dedup(fp, vuln_type)
 
     # 尝试从 related_apis 提取 URL 路径模式
     for api in (fp.related_apis or []):
@@ -39,22 +65,30 @@ def _normalize_vuln_key(fp: FeaturePoint, vuln_type: str) -> str:
             path = pu.path.rstrip("/")
             if not path or path == "/":
                 continue
-            # 将路径分段，替换最后一段为 *
-            # 如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*
-            # 如 /api/user/list → /api/user/*
             parts = [p for p in path.split("/") if p]
-            if len(parts) >= 2:
-                # 保留前 N-1 段，最后一段替换为 *（归一化路径变体）
-                # 如 /Home/GetVerificationCode/file → /Home/GetVerificationCode/*
-                # 如 /api/user/list → /api/user/*
-                norm_path = "/" + "/".join(parts[:-1]) + "/*"
-                return f"{pu.netloc.lower()}{norm_path}|{vuln_type}"
+            if parts:
+                import re
+
+                def _is_dynamic_segment(seg: str) -> bool:
+                    s = seg.strip()
+                    return (
+                        s.isdigit()
+                        or bool(re.fullmatch(r"[0-9a-fA-F]{16,}", s))
+                        or bool(re.fullmatch(
+                            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                            s,
+                        ))
+                    )
+
+                norm_parts = ["*" if _is_dynamic_segment(p) else p for p in parts]
+                norm_path = "/" + "/".join(norm_parts)
+                return f"{pu.netloc.lower()}{norm_path}|{canonical_vuln_type}"
         except Exception:
             pass
         break  # 只检查第一个 API
 
     # 退回功能名 + 漏洞类型
-    return f"{fp.name}|{vuln_type}"
+    return f"{fp.name}|{canonical_vuln_type}"
 
 
 class CoverageMixin:

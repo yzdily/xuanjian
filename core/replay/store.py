@@ -27,9 +27,14 @@ log = get_logger("replay.store")
 
 REPLAY_ROOT = Path("data/replays")
 MAX_SCRIPT_SIZE = 100 * 1024 * 1024  # 100MB
+# ★ 2026-08-05：预计算 MB 上限，避免日志里 `MAX_SCRIPT_SIZE // 1024 // 1024`
+# 在历史/缓存版本中误算为 0（曾出现 "超过 0MB" 的误导性日志）
+_MAX_SCRIPT_SIZE_MB = MAX_SCRIPT_SIZE // (1024 * 1024)
 
 _run_locks: dict[str, Lock] = {}
 _run_locks_master = Lock()
+# ★ 2026-08-05：每个 run 的大小超限警告只输出一次，避免数百次重复 WARNING 刷屏
+_size_warned_runs: set[str] = set()
 
 
 def _lock_for(run_id: str) -> Lock:
@@ -67,7 +72,10 @@ def save_frame(frame: ReplayFrame, meta_patch: dict[str, Any] | None = None) -> 
         with _lock_for(run_id):
             # 大小保护
             if script_path.exists() and script_path.stat().st_size > MAX_SCRIPT_SIZE:
-                log.warning("剧本 %s 超过 %dMB，停止追加", run_id, MAX_SCRIPT_SIZE // 1024 // 1024)
+                # ★ 每个 run 只警告一次，避免 save_frame 被高频调用时刷屏
+                if run_id not in _size_warned_runs:
+                    _size_warned_runs.add(run_id)
+                    log.warning("剧本 %s 超过 %dMB，停止追加", run_id, _MAX_SCRIPT_SIZE_MB)
                 return False
 
             script_path.parent.mkdir(parents=True, exist_ok=True)

@@ -260,6 +260,23 @@ async def analyze_business(
         log.exception("business_understanding context build failed")
         return {"status": "error", "error": f"上下文拼装失败: {e}", "elapsed": 0}
 
+    if not callable(getattr(llm, "chat", None)):
+        understanding = _fallback_rule_based_understanding(sitemap, crawl_result)
+        if understanding:
+            return {
+                "status": "degraded",
+                "understanding": understanding,
+                "summary": understanding.get("summary", "（规则推导生成，LLM 不可用）"),
+                "raw_response": "",
+                "elapsed": time.time() - started,
+                "error": "LLM 未配置或不可调用，已降级到规则推导",
+            }
+        return {
+            "status": "error",
+            "error": "LLM 未配置或不可调用，且规则推导失败",
+            "elapsed": time.time() - started,
+        }
+
     # 调 LLM (用 asyncio.wait_for + to_thread 避免阻塞主 event loop)
     from core.llm import Message
     messages = [

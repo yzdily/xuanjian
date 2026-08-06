@@ -150,6 +150,10 @@ async def parse_user_intent(llm: LLMClient, user_message: str) -> dict:
         if "NoneType" in _msg or "no attribute" in _msg:
             logging.getLogger(__name__).debug(
                 "intent_parse 跳过 LLM（未配置），使用正则 fallback")
+        elif "404" in _msg or "not found" in _msg.lower():
+            # ★ 2026-08-05：404 通常是模型名配错，清晰告警并提示检查配置
+            logging.getLogger(__name__).error(
+                "intent_parse LLM 返回 404（模型名可能配错），使用正则 fallback: %s", _msg[:200])
         else:
             logging.getLogger(__name__).warning("intent_parse LLM 调用失败: %s", e)
 
@@ -251,6 +255,30 @@ def _filter_extra_headers(headers: dict) -> dict:
             and isinstance(v, (str, int, float))}
 
 
+def _extract_token_value(value: str) -> str:
+    """从 Header 值中提取可注入前端存储的 token。"""
+    if not isinstance(value, str):
+        return ""
+    token = value.strip()
+    if not token:
+        return ""
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token
+
+
+def _looks_like_auth_token(value: str) -> bool:
+    """判断字符串是否像登录态 token，避免把普通业务字段误写入 localStorage。"""
+    token = _extract_token_value(value)
+    if len(token) < 16:
+        return False
+    if token.startswith("eyJ"):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_\-\.=]{24,}", token):
+        return True
+    return False
+
+
 def jwt_headers_to_local_storage(extra_headers: dict, storage_keys: list[str] | set[str] | tuple[str, ...] | None = None) -> dict:
     """从 extra_headers 中提取 JWT token，生成适合注入 localStorage 的 dict。
 
@@ -279,19 +307,32 @@ def jwt_headers_to_local_storage(extra_headers: dict, storage_keys: list[str] | 
             if key not in normalized_storage_keys:
                 normalized_storage_keys.append(key)
 
+    common_token_keys = [
+        "token", "access_token", "accessToken", "auth_token", "authToken",
+        "jwt", "id_token", "idToken", "Authorization",
+    ]
+    auth_header_names = {
+        "authorization", "x-auth-token", "x-access-token", "access-token",
+        "id-token", "id_token", "token", "jwt", "c-token", "sc-id-token",
+    }
+
     for hk, hv in extra_headers.items():
-        if isinstance(hv, str) and hv.startswith("eyJ") and len(hv) > 20:
-            ls_items[hk] = hv
-            hk_lower = hk.lower()
+        hk_name = str(hk)
+        hk_lower = hk_name.lower()
+        token = _extract_token_value(hv) if isinstance(hv, str) else ""
+        if token and (hk_lower in auth_header_names or _looks_like_auth_token(token)):
+            ls_items[hk_name] = token
             # 同时写入常见别名，提高 SPA 读取匹配率
             if hk_lower not in ("token", "access_token", "authtoken", "auth_token"):
-                ls_items["token"] = hv
+                ls_items["token"] = token
+            for key in common_token_keys:
+                ls_items.setdefault(key, token)
             for key in normalized_storage_keys:
-                ls_items[key] = hv
+                ls_items[key] = token
             # 兼容历史经验：秀合同/ShowCon 前端路由守卫读取固定 key。
             # 通用链路会通过 JS 分析发现此 key；这里保留首屏加载前的兜底注入。
             if hk_lower == "sc-id-token":
-                ls_items.setdefault("showcon_token_mpv1.0", hv)
+                ls_items.setdefault("showcon_token_mpv1.0", token)
                 # ★ 2026-06-05 根因修复：ShowCon 路由守卫在读取 token 之前
                 # 先检查 localStorage 中的 showcon_login_type，若无则直接跳 /error。
                 # 值固定为 "tenant_user_pass"（企业/租户密码登录），对应 edgeLogin 流程。
@@ -810,4 +851,3 @@ def parse_curl_command(text: str) -> dict | None:
         "dynamic_signing_fields": dynamic_fields,
         "warnings": warnings,
     }
-

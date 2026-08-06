@@ -65,6 +65,9 @@ class AgentSessionBase:
         self.scan_mode: str = "batch"
         # ★ 用户选择的原始模式（含 smart），供 chat_loop 判断是否需要自动切换
         self.user_scan_mode: str = "smart"
+        # ★ P1-A: 模式升降级追踪
+        self._original_user_scan_mode: str | None = None  # 首次升降级前的原始模式
+        self._mode_escalated: bool = False                 # 是否发生过升降级
         # ★ 扫描策略实例（惰性创建，scan_mode 变更时重建）
         self._strategy = None
 

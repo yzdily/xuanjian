@@ -61,6 +61,8 @@ class ToolExecutor:
         if name in ("note_add", "note_read", "note_summary", "report_generate",
                     "report_check_template", "report_format_with_template", "report_save_formatted"):
             args.setdefault("task_id", self.task_id)
+            if name == "note_read":
+                args.setdefault("type", "all")
 
         # 浏览器工具：直接 await（Playwright 必须在同一 event loop）
         if name in BROWSER_TOOL_NAMES:
@@ -255,6 +257,8 @@ class ToolExecutor:
         # Note 工具注入 task_id（确保子 Agent 笔记写到正确的任务文件）
         if name in ("note_add", "note_read", "note_summary"):
             args.setdefault("task_id", self.task_id)
+            if name == "note_read":
+                args.setdefault("type", "all")
 
         # HTTP/knowledge/note 工具
         from core.tool_router import ToolRouter

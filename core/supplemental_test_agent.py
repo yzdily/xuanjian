@@ -287,6 +287,7 @@ def discover_new_apis_from_flows(
         "already_known": 0,
         "duplicate": 0,
         "kept": 0,
+        "flow_file": "",
     }
 
     if flows_path is None:
@@ -294,9 +295,11 @@ def discover_new_apis_from_flows(
             os.getenv("PROXY_FLOW_FILE",
                       "data/pentest_agent_flows.jsonl")
         )
+    stats["flow_file"] = str(flows_path)
 
     if not flows_path.exists():
         log.warning("supplemental: flows.jsonl 不存在: %s", flows_path)
+        stats["flow_file_missing"] = 1
         return [], stats
 
     # 计算 scope
@@ -586,6 +589,51 @@ def _gen_feature_desc(api: _DiscoveredAPI) -> str:
         preview = api.response_body_preview[:80].replace("\n", " ")
         parts.append(f"响应预览: {preview}")
     return "；".join(parts)
+
+
+def _normalize_related_api_for_scan(api_ref: str, target_url: str) -> tuple[str, str] | None:
+    """把 feature.related_apis 里的条目规范成 (method, url)。
+
+    related_apis 常见格式包括：
+      - "GET https://example.com/api/user"
+      - "POST /api/user"
+      - "https://example.com/api/user"
+      - "/api/user"
+
+    本地补测此前只判断字符串是否以 http 开头，导致
+    "GET https://..." 被拼成 "https://target/GET https://..."，
+    FastScanner 实际收到非法 URL。这里统一拆出 method 和 URL。
+    """
+    raw = (api_ref or "").strip()
+    if not raw:
+        return None
+
+    method = "GET"
+    url_part = raw
+    if " " in raw:
+        first, rest = raw.split(" ", 1)
+        if first.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            method = first.upper()
+            url_part = rest.strip()
+
+    if not url_part:
+        return None
+
+    parsed = urlparse(url_part)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return method, url_part
+
+    if url_part.startswith("//"):
+        scheme = urlparse(target_url).scheme or "http"
+        return method, f"{scheme}:{url_part}"
+
+    if not target_url:
+        return None
+
+    base = target_url.rstrip("/")
+    if not url_part.startswith("/"):
+        url_part = "/" + url_part
+    return method, f"{base}{url_part}"
 
 
 # ============================================================
@@ -897,3 +945,226 @@ async def _run_worker_with_timeout(
                 await drain_task
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+# ============================================================
+# P2-A: 本地规则版补测（FAST 模式专用，不依赖 LLM）
+# ============================================================
+
+async def run_supplemental_test_local(
+    session: "Any",
+) -> AsyncGenerator[dict, None]:
+    """Phase 2.55 本地规则版补测（FAST 模式专用）。
+
+    与 run_supplemental_test 的区别：
+    - L1 发现新 API：相同（纯本地规则）
+    - L2 挂载到 sitemap：相同（纯本地规则）
+    - L3 测试新 feature：用 FastScanner 替代 WorkerAgent（不依赖 LLM）
+
+    这样 FAST 模式也能覆盖爬取后新发现的 API，不增加 LLM 成本。
+    """
+    started = time.time()
+    summary: dict[str, Any] = {
+        "discovered": 0,
+        "new_features": 0,
+        "attached_features": 0,
+        "tested_features": 0,
+        "vulns_found": 0,
+        "elapsed": 0.0,
+        "error": None,
+        "mode": "local",
+    }
+
+    try:
+        sitemap = getattr(session, "sitemap", None)
+        if sitemap is None:
+            yield {"type": "error", "msg": "sitemap 未初始化，跳过补测"}
+            summary["error"] = "sitemap 未初始化"
+            yield {"type": "done", "summary": summary}
+            return
+
+        target_url = getattr(session, "target_url", "") or ""
+        phase2_started_at = getattr(session, "_phase2_started_at", 0.0) or 0.0
+
+        # ---- L1: 扫描新 API（纯本地规则） ----
+        current_task_id = getattr(session, "task_id", None) or ""
+        apis, scan_stats = discover_new_apis_from_flows(
+            sitemap=sitemap,
+            target_url=target_url,
+            phase2_started_at=phase2_started_at,
+            task_id=current_task_id or None,
+        )
+
+        summary["discovered"] = len(apis)
+        summary["scan_stats"] = scan_stats
+
+        if scan_stats.get("flow_file_missing"):
+            summary["error"] = f"flow_file_missing: {scan_stats.get('flow_file', '')}"
+            yield {
+                "type": "error",
+                "msg": f"[本地补测] flows.jsonl 不存在: {scan_stats.get('flow_file', '')}",
+            }
+        elif scan_stats.get("io_error") or scan_stats.get("unexpected_error"):
+            err_msg = scan_stats.get("unexpected_error") or scan_stats.get("io_error")
+            summary["warning"] = f"flows_scan_partial: {err_msg}"
+            yield {
+                "type": "warn",
+                "msg": f"[本地补测] 扫描 flows.jsonl 过程中发生异常（已收集部分结果）: {err_msg[:120]}",
+            }
+
+        yield {
+            "type": "info",
+            "msg": (
+                f"[本地补测] 扫描完成: {scan_stats.get('total_scanned', 0)} 条流量, "
+                f"保留 {len(apis)} 个新 API "
+                f"(早于Phase2 {scan_stats.get('before_phase2', 0)}, "
+                f"其他任务 {scan_stats.get('other_task', 0)}, "
+                f"scope外 {scan_stats.get('out_of_scope', 0)}, "
+                f"第三方 {scan_stats.get('third_party', 0)}, "
+                f"非2xx {scan_stats.get('not_2xx', 0)}, "
+                f"已知 {scan_stats.get('already_known', 0)}, "
+                f"非业务 {scan_stats.get('non_business', 0)}, "
+                f"重复 {scan_stats.get('duplicate', 0)})"
+            ),
+        }
+        if scan_stats.get("total_scanned", 0) == 0 and not scan_stats.get("flow_file_missing"):
+            summary["warning"] = "no_phase2_flows"
+            yield {
+                "type": "warn",
+                "msg": (
+                    "[本地补测] 没有可分析的新流量，因此不会产生新 API。"
+                    "如果预期应有补测结果，请检查浏览器代理/mitmproxy 是否生效，"
+                    "或确认 Phase 2 期间是否实际产生了目标站点请求。"
+                ),
+            }
+
+        if not apis:
+            if summary.get("error"):
+                yield {"type": "error", "msg": "[本地补测] 未获得可补测 API，补测失败但不阻塞后续阶段"}
+            elif scan_stats.get("io_error") or scan_stats.get("unexpected_error"):
+                err_msg = scan_stats.get("unexpected_error") or scan_stats.get("io_error")
+                summary["error"] = f"flows_scan_failed: {err_msg}"
+                yield {
+                    "type": "error",
+                    "msg": f"[本地补测] 扫描异常导致未发现新 API: {err_msg[:120]}",
+                }
+            else:
+                yield {"type": "info", "msg": "[本地补测] 未发现新 API，跳过"}
+            summary["elapsed"] = time.time() - started
+            yield {"type": "done", "summary": summary}
+            return
+
+        # ---- L2: 挂载到 sitemap（纯本地规则） ----
+        new_features, attached_features = attach_apis_to_sitemap(sitemap, apis)
+        summary["new_features"] = len(new_features)
+        summary["attached_features"] = len(attached_features)
+
+        yield {
+            "type": "info",
+            "msg": (
+                f"[本地补测] 挂载完成: 新建 {len(new_features)} 个 feature, "
+                f"挂到现有 feature {len(attached_features)} 个 API"
+            ),
+        }
+
+        features_to_test = [fp for fp in new_features if fp.checklist]
+        if not features_to_test:
+            yield {"type": "info", "msg": "[本地补测] 无需测试的新 feature"}
+            summary["elapsed"] = time.time() - started
+            yield {"type": "done", "summary": summary}
+            return
+
+        # ---- L3: FastScanner 本地规则测试（替代 WorkerAgent） ----
+        from core.fast_scanner import quick_scan, convert_findings_to_checklist_results
+        from core.sitemap import CheckResult
+
+        # 收集认证头
+        auth_headers = {}
+        cookies = getattr(session, "_inject_cookies", "") or ""
+        if cookies:
+            auth_headers["Cookie"] = cookies
+        inject_headers = getattr(session, "_inject_headers", {}) or {}
+        auth_headers.update(inject_headers)
+
+        total_vulns = 0
+        for fp in features_to_test:
+            # 收集该 feature 的所有 API URL
+            api_targets: list[tuple[str, str]] = []
+            for api_path in getattr(fp, "related_apis", []) or []:
+                normalized = _normalize_related_api_for_scan(api_path, target_url)
+                if normalized:
+                    api_targets.append(normalized)
+
+            if not api_targets:
+                yield {
+                    "type": "warn",
+                    "msg": f"[本地补测] {fp.name} 没有可解析的 API URL，跳过",
+                }
+                continue
+
+            yield {
+                "type": "info",
+                "msg": f"[本地补测] FastScanner 测试 {fp.name}: {len(api_targets)} 个 URL",
+            }
+
+            # 对每个 URL 跑 FastScanner
+            for method, url in api_targets[:10]:  # 限制每 feature 最多 10 个 URL
+                try:
+                    result = await quick_scan(
+                        url=url,
+                        method=method,
+                        auth_headers=auth_headers or None,
+                        max_workers=5,
+                    )
+                    if result.vuln_count > 0:
+                        total_vulns += result.vuln_count
+                        # 回写 checklist
+                        cl_results = convert_findings_to_checklist_results(result.findings)
+                        for finding in cl_results:
+                            vuln_type = finding.get("vuln_type", "")
+                            # 匹配 checklist 中的对应项
+                            for c in fp.checklist:
+                                if c.result == CheckResult.PENDING and vuln_type in c.vuln_type:
+                                    c.result = CheckResult.VULN
+                                    c.detail = finding.get("detail", "")
+                                    c.evidence = finding.get("evidence", "")
+                                    c.fix_suggestion = finding.get("fix_suggestion", "")
+                                    c.source = "fast_scanner_supplemental"
+                                    break
+                except Exception as e:
+                    log.warning("[本地补测] FastScanner 扫描 %s 失败: %s", url, e)
+
+            summary["tested_features"] += 1
+
+        summary["vulns_found"] = total_vulns
+        summary["elapsed"] = time.time() - started
+
+        if total_vulns > 0:
+            yield {
+                "type": "info",
+                "msg": f"[本地补测] 完成: 测试 {summary['tested_features']} 个 feature, "
+                       f"发现 {total_vulns} 个漏洞",
+            }
+        else:
+            yield {
+                "type": "info",
+                "msg": f"[本地补测] 完成: 测试 {summary['tested_features']} 个 feature, 未发现漏洞",
+            }
+
+        # 保存 sitemap
+        try:
+            sitemap.save()
+        except Exception:
+            pass
+
+        yield {"type": "done", "summary": summary}
+
+    except Exception as e:
+        log.warning("supplemental_local: 顶层异常: %s", e, exc_info=True)
+        summary["error"] = f"top_level: {type(e).__name__}: {str(e)[:200]}"
+        summary["elapsed"] = time.time() - started
+        yield {
+            "type": "error",
+            "msg": f"[本地补测] 异常（{type(e).__name__}: {str(e)[:160]}），已跳过",
+        }
+        yield {"type": "done", "summary": summary}

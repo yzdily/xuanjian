@@ -957,7 +957,7 @@ def _is_key_business_js(js_url: str, js_text: str) -> bool:
     return True
 
 
-def _extract_api_chunks(js_text: str, max_total_chars: int = 80_000) -> list[str]:
+def _extract_api_chunks(js_text: str, max_total_chars: int = 30_000) -> list[str]:
     """从大 JS 文件中提取与 API 调用相关的代码片段。
 
     策略：找到每个 API 关键词的位置，提取其前后 ±2KB 的代码。
@@ -1052,6 +1052,12 @@ async def llm_analyze_key_js(
     for api in result.api_calls:
         seen_keys.add(f"{api.method} {api.path}")
 
+    # ★ 2026-08-05：前置过滤——如果正则已提取到足够 API，跳过 LLM 分析节省 token
+    # 此前 6 次 LLM 调用有 4 次返回 []（32892:1 的输入输出比），纯浪费
+    if len(seen_keys) >= 10:
+        log.info("LLM JS 分析: 正则已提取 %d 个 API，跳过 LLM 分析", len(seen_keys))
+        return result
+
     seen_route_keys: set[str] = set()
     for route in result.routes:
         seen_route_keys.add(route.path)
@@ -1067,8 +1073,8 @@ async def llm_analyze_key_js(
         chunks = _extract_api_chunks(js_text)
         combined_code = "\n\n// --- 片段分隔 ---\n\n".join(chunks)
 
-        if len(combined_code) > 100_000:
-            combined_code = combined_code[:100_000] + "\n// ... (截断)"
+        if len(combined_code) > 30_000:
+            combined_code = combined_code[:30_000] + "\n// ... (截断)"
 
         # 3. 构建 LLM prompt
         prompt = f"""分析以下 JS 代码片段，提取所有 API 端点调用。

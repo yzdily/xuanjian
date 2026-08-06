@@ -134,6 +134,82 @@ class TestEmptyData:
         large_body = '{"data":null,"padding":"' + 'x' * 600 + '"}'
         assert _is_empty_data(large_body) is False
 
+    def test_large_pure_empty_data_wrapper(self):
+        """长响应但是纯 API 包装器（data:null + 元数据）应判定为空"""
+        large_wrapper = '{"code":0,"msg":"success","data":null,"timestamp":"' + '0' * 600 + '"}'
+        assert _is_empty_data(large_wrapper) is True
+
+    def test_large_empty_list_wrapper(self):
+        """长响应但 data 为空列表 + 仅元数据 → 空"""
+        wrapper = '{"code":0,"message":"ok","records":[],"total":0}'
+        assert _is_empty_data(wrapper) is True
+
+    def test_mixed_empty_and_non_empty_data(self):
+        """data 为空但 result 有值 → 不为空"""
+        body = '{"data":null,"result":[{"id":1}]}'
+        assert _is_empty_data(body) is False
+
+
+# ============================================================
+# P3: FastScanner 发现去重
+# ============================================================
+
+class TestFindingsDedup:
+    """测试 _filter_false_positives 的去重逻辑"""
+
+    def _make_finding(self, vuln_type="SQL注入", severity="critical", url="http://example.com/api",
+                      method="GET", evidence_quality="body_confirmed"):
+        from core.fast_scanner import VulnFinding
+        return VulnFinding(
+            vuln_type=vuln_type,
+            severity=severity,
+            url=url,
+            method=method,
+            detail="test",
+            evidence="test",
+            payload="test",
+            fix_suggestion="test",
+            evidence_quality=evidence_quality,
+        )
+
+    def test_dedup_same_url_type_method(self):
+        """同一 URL + 类型 + 方法的发现应去重"""
+        from core.fast_scanner import FastScanner
+        scanner = FastScanner.__new__(FastScanner)
+        f1 = self._make_finding(url="http://example.com/api?id=1", severity="critical")
+        f2 = self._make_finding(url="http://example.com/api?id=2", severity="high")
+        result = scanner._filter_false_positives([f1, f2])
+        assert len(result) == 1
+        assert result[0].severity == "critical"  # 保留 severity 更高的
+
+    def test_dedup_keeps_higher_severity(self):
+        """去重时保留 severity 更高的发现"""
+        from core.fast_scanner import FastScanner
+        scanner = FastScanner.__new__(FastScanner)
+        f1 = self._make_finding(url="http://example.com/api", severity="medium")
+        f2 = self._make_finding(url="http://example.com/api", severity="high")
+        result = scanner._filter_false_positives([f1, f2])
+        assert len(result) == 1
+        assert result[0].severity == "high"
+
+    def test_no_dedup_different_type(self):
+        """不同漏洞类型不去重"""
+        from core.fast_scanner import FastScanner
+        scanner = FastScanner.__new__(FastScanner)
+        f1 = self._make_finding(vuln_type="SQL注入", url="http://example.com/api")
+        f2 = self._make_finding(vuln_type="未授权访问", url="http://example.com/api")
+        result = scanner._filter_false_positives([f1, f2])
+        assert len(result) == 2
+
+    def test_no_dedup_different_method(self):
+        """不同 HTTP 方法不去重"""
+        from core.fast_scanner import FastScanner
+        scanner = FastScanner.__new__(FastScanner)
+        f1 = self._make_finding(url="http://example.com/api", method="GET")
+        f2 = self._make_finding(url="http://example.com/api", method="POST")
+        result = scanner._filter_false_positives([f1, f2])
+        assert len(result) == 2
+
 
 # ============================================================
 # P2: WAF 拦截页识别

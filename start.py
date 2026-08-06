@@ -167,8 +167,10 @@ def check_env():
                 if line.startswith("LLM_1_MODEL="):
                     model = line.split("=", 1)[1].strip()
                     ok(f".env 已配置 (模型: {model})")
+                    _warn_wrong_model_names()
                     return
             ok(".env 已配置")
+            _warn_wrong_model_names()
         else:
             warn(".env 中未检测到有效 API Key，启动后可到 WebUI 系统设置中添加模型")
             print(f"    访问 http://localhost:{WEB_PORT} 后配置即可")
@@ -178,6 +180,120 @@ def check_env():
             warn(".env 不存在，已从模板创建")
         warn("请编辑 .env 文件并填入 LLM API Key，或在启动后到 WebUI 中配置模型")
         print(f"    .env 文件：{env_file}")
+
+
+# ★ 2026-08-05：启动时校验 LLM 模型名，发现常见错误（kimi2 / kimi-k2 /
+# deepseek-vN 等）立刻提示正确名称，避免扫描中途才暴露 404。
+# 与 core/llm.py 的 _normalize_model_name 保持同步，这里只做提示不自动改文件。
+_WRONG_MODEL_FIXES = {
+    # (base_url 子串小写, 错误模型名小写) → 正确模型名
+    ("moonshot.cn", "kimi2"): "kimi-k3",
+    ("moonshot.cn", "kimi"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2"): "kimi-k3",
+    ("moonshot.cn", "kimi-k1.5"): "moonshot-v1-8k",
+    ("moonshot.cn", "kimi-latest"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-0905-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-0711-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-turbo-preview"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-thinking"): "kimi-k3",
+    ("moonshot.cn", "kimi-k2-thinking-turbo"): "kimi-k3",
+    ("moonshot.cn", "kimi-thinking-preview"): "kimi-k3",
+    ("deepseek.com", "deepseek-v4-pro"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v3"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v4"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v5-pro"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v5"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v6-pro"): "deepseek-chat",
+    ("deepseek.com", "deepseek-v6"): "deepseek-chat",
+    ("deepseek.com", "deepseek-reasoner-v4"): "deepseek-reasoner",
+    ("deepseek.com", "deepseek-reasoner-v5"): "deepseek-reasoner",
+    ("bigmodel.cn", "glm-4-pro"): "glm-4-plus",
+    ("bigmodel.cn", "glm-4.6"): "glm-4-plus",
+}
+# 不依赖 base_url 的全局错误模型名（任意 provider 都算错）
+_GLOBAL_WRONG_MODELS = {
+    "kimi2": "kimi-k3",
+    "kimi": "kimi-k3",
+    "kimi-k2": "kimi-k3",
+    "kimi-k1.5": "moonshot-v1-8k",
+    "kimi-latest": "kimi-k3",
+}
+
+
+def _check_one_model(base_url: str, model: str) -> str | None:
+    """返回正确模型名；若模型名无误返回 None。"""
+    if not model:
+        return None
+    base_lower = (base_url or "").lower()
+    model_lower = model.lower().strip()
+    for (url_sub, wrong), right in _WRONG_MODEL_FIXES.items():
+        if url_sub in base_lower and model_lower == wrong:
+            return right
+    if model_lower in _GLOBAL_WRONG_MODELS:
+        return _GLOBAL_WRONG_MODELS[model_lower]
+    # DeepSeek 通用兜底：deepseek-vN(-xxx)?
+    if "deepseek.com" in base_lower:
+        import re as _re
+        if _re.match(r"^deepseek-v\d+(-.*)?$", model_lower):
+            return "deepseek-chat"
+    # Moonshot 已下线 kimi-k2-*-preview / kimi-k2-thinking* 等
+    if "moonshot.cn" in base_lower:
+        import re as _re
+        if _re.match(r"^kimi-k2-(0905|0711|turbo)-preview$|^kimi-k2-thinking(-turbo)?$|^kimi-thinking-preview$", model_lower):
+            return "kimi-k3"
+    return None
+
+
+def _warn_wrong_model_names():
+    """扫描 .env 与 data/llm_configs.json，发现错误模型名立刻醒目提示。"""
+    seen: list[tuple[str, str, str, str]] = []  # (来源, name, 错误模型, 正确模型)
+
+    # 1) .env
+    env_file = PROJECT_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("LLM_") or "_MODEL=" not in line:
+                continue
+            try:
+                key, model = line.split("=", 1)
+                model = model.strip().strip('"').strip("'")
+            except ValueError:
+                continue
+            if not model:
+                continue
+            idx = key.split("_")[1]
+            base_url = ""
+            for bl in env_file.read_text(encoding="utf-8").splitlines():
+                if bl.startswith(f"LLM_{idx}_BASE_URL="):
+                    base_url = bl.split("=", 1)[1].strip()
+                    break
+            right = _check_one_model(base_url, model)
+            if right:
+                seen.append((f".env LLM_{idx}", model, model, right))
+
+    # 2) data/llm_configs.json（优先级高于 .env，覆盖上面的结果）
+    json_path = PROJECT_DIR / "data" / "llm_configs.json"
+    if json_path.exists():
+        try:
+            import json as _json
+            data = _json.loads(json_path.read_text(encoding="utf-8"))
+            seen = []  # json 优先，清空 .env 结果
+            for item in data.get("models", []):
+                base_url = item.get("base_url", "")
+                model = item.get("model", "")
+                name = item.get("name", "?")
+                right = _check_one_model(base_url, model)
+                if right:
+                    seen.append((f"WebUI {name}", name, model, right))
+        except Exception:
+            pass
+
+    if not seen:
+        return
+    print()
+    warn(f"⚠️ 检测到 {len(seen)} 个模型名可能有误（启动后会自动纠正，但建议在 WebUI 修正）：")
+    for src, name, wrong, right in seen:
+        print(f"    {YELLOW}{src}{NC} ({name}): {RED}{wrong}{NC} → 应为 {GREEN}{right}{NC}")
 
 
 def check_browser():

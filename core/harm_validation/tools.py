@@ -315,24 +315,27 @@ def build_rescue_messages(
 
 
 def generate_placeholder_verdicts(vulns: list[dict]) -> str:
-    """救援彻底失败时的兜底：基于原漏洞数据生成 borderline 占位 verdicts。
+    """救援彻底失败时的兜底：基于原漏洞数据生成 rejected 占位 verdicts。
 
     设计原则：
     - 哪怕 LLM 完全摆烂，至少给报告生成器一份可解析的数据
-    - 全部标 borderline + evidence_strength=弱，让用户知道这是兜底结果
-    - poc_note 明确写"LLM 救援失败 - 占位数据"
+    - ★ 2026-08-05：从 borderline 改为 rejected，避免无 PoC 的占位数据
+      进入"待人工复核"区误导用户。LLM 调用失败 ≠ 有漏洞待复核，
+      无 PoC 数据无法人工复核，归入"拒收（透明披露）"更准确。
+    - poc_note 明确写"LLM 救援失败 - 无 PoC 数据"
     """
     verdicts = []
     for v in vulns:
         verdicts.append({
             "vuln_id": v.get("vuln_id", "?"),
-            "verdict": "borderline",
+            "verdict": "rejected",
             "platform_level": "信息",
-            "harm_story": f"{v.get('vuln_type', '?')}：危害验证 LLM 调用失败，请人工复核",
+            "harm_story": f"{v.get('vuln_type', '?')}：危害验证 LLM 调用失败，无 PoC 数据",
             "evidence_strength": "弱",
             "poc_request": "未生成",
             "poc_response": "未生成",
-            "poc_note": "LLM 救援失败 - 自动占位数据，需人工二次复核原漏洞详情",
+            "poc_note": "LLM 救援失败 - 无 PoC 数据，危害验证未执行成功",
+            "reject_reason": "危害验证 LLM 调用失败，未生成 PoC，无法人工复核",
         })
     return "```json\n" + json.dumps(verdicts, ensure_ascii=False, indent=2) + "\n```"
 

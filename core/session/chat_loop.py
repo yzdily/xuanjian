@@ -100,7 +100,7 @@ class ChatLoopMixin:
                 if elapsed >= hard_timeout:
                     if stop_requested_at is None:
                         stop_reason = "hard_timeout"
-                        crawler.request_stop(user_aborted=True)
+                        crawler.request_stop(user_aborted=False)
                         stop_requested_at = now
                         yield self._event("system",
                             f"⏰ {prefix}已达硬上限 {hard_timeout}s，请求爬虫优雅退出（最多再等 {grace_after_stop}s）")
@@ -178,7 +178,7 @@ class ChatLoopMixin:
                 crawl_result = crawler.get_partial_result()
                 # 区分用户手动停止和超时退出
                 user_aborted = getattr(crawler, "_user_aborted", False)
-                if user_aborted:
+                if user_aborted and stop_reason != "hard_timeout":
                     yield self._event("system",
                         f"✅ {prefix}爬虫已被用户手动停止，"
                         f"已抓 {crawl_result.get('apis_total', 0)} API / "
@@ -198,6 +198,48 @@ class ChatLoopMixin:
         # ★ 清理 session 上的爬虫引用（爬虫已结束，避免 /api/stop 误操作已完成的 task）
         self._active_crawler = None
         self._active_crawl_task = None
+
+    def _detect_and_handle_resume_command(
+        self, user_message: str, phase: str
+    ) -> tuple[bool, str]:
+        """非 idle / 非 report 阶段检测"继续 / resume"指令并准备唤醒提示。
+
+        背景：当 LLM 连续 3 次无工具调用，_maybe_nudge_phase_forward 会在第 4 次
+        返回空字符串，触发 task_stuck 事件并 break 出主循环。此时如果用户继续
+        输入"继续"消息，chat() 会再次进入主循环，但 nudge 计数器仍然 >= 3，
+        LLM 还是会被立刻 stuck。本方法在主循环之前拦截，并：
+        - 重置 _nudge_count[self.phase] = 0（再给 3 次 nudge 机会）
+        - 返回唤醒提示词让 caller 注入到 LLM 上下文并推给前端
+
+        复用 idle 阶段的关键词集合（含兜底子串匹配，覆盖"继续吧"/"继续测试吧"等口语）。
+        Returns:
+            (handled, kick_msg) — handled=True 时 kick_msg 非空
+        """
+        _resume_keywords = (
+            "继续", "resume", "go on", "continue", "继续扫描",
+            "继续测试", "恢复扫描", "恢复测试",
+        )
+        trimmed = user_message.strip().lower()
+        exact_match = trimmed in {kw.lower() for kw in _resume_keywords}
+        # 子串匹配：处理"请继续"/"继续吧"等自然语言
+        substring_match = any(kw.lower() in trimmed for kw in _resume_keywords if len(kw) <= 4)
+        is_resume = exact_match or substring_match
+        if not is_resume:
+            return False, ""
+        if phase not in ("analyze", "test", "explore"):
+            return False, ""
+
+        old_count = (getattr(self, "_nudge_count", {}) or {}).get(phase, 0)
+        self.reset_nudge_counter(phase)
+        kick_msg = (
+            f"✅ 已唤醒任务（Phase={phase}，重置 nudge 计数 {old_count}→0）。"
+            "请立刻调用工具或调用 phase_complete 推进阶段，不要再输出纯文字。"
+        )
+        log.info(
+            "检测到恢复指令，重置 nudge 计数: phase=%s, old=%d, user_msg=%r",
+            phase, old_count, user_message[:30],
+        )
+        return True, kick_msg
 
     async def chat(self, user_message: str) -> AsyncGenerator[str, None]:
         # ★ 把当前 task_id 注入 LLM 监控上下文，所有后续 LLM 调用都自动归属此会话
@@ -268,12 +310,30 @@ class ChatLoopMixin:
         # 如果已有 sitemap 且在 idle 阶段 → 恢复
         # ---- Phase 报告阶段 ----
         if self.phase == "report":
-            # ★ FAST 模式或未配置 LLM：报告阶段追问用本地规则回复
+            # ★ P2-B: FAST 模式报告阶段使用本地模板归因（不调 LLM，但有有意义的输出）
             _user_mode = getattr(self, "user_scan_mode", "smart")
             if self.llm is None or _user_mode == "fast":
+                # ★ 生成本地模板归因报告
+                try:
+                    from core.report_templates import generate_fast_report_attribution
+                    attribution = generate_fast_report_attribution(self.sitemap)
+                    yield self._event("message", attribution)
+                except Exception as e:
+                    log.warning("FAST 本地模板报告生成失败: %s", e)
+                    yield self._event("system",
+                        "ℹ️ FAST 模式扫描结果已生成。"
+                        "本地模板报告生成失败，如需深度分析请切换到标准/深度模式重新扫描。")
+
+                # ★ 模式升降级信息
+                if getattr(self, "_mode_escalated", False):
+                    _orig = getattr(self, "_original_user_scan_mode", _user_mode)
+                    yield self._event("system",
+                        f"ℹ️ 扫描过程中模式发生过调整：{_orig} → {_user_mode}"
+                        f"（因业务理解失败或阶段卡死自动降级）")
+
                 yield self._event("system",
-                    "ℹ️ FAST 模式/未配置 LLM，报告阶段不支持智能追问。"
-                    "扫描结果已生成，如需深度分析请切换到标准/深度模式重新扫描。")
+                    "ℹ️ FAST 模式报告基于本地模板生成，不含 LLM 分析。"
+                    "如需深度分析、业务逻辑测试或漏洞危害验证，请切换到标准/深度模式重新扫描。")
                 yield self._event("done", "FAST 模式扫描完成")
                 return
             yield self._event("thinking", "报告阶段 — 处理追问")
@@ -389,6 +449,12 @@ class ChatLoopMixin:
                 }
 
             if not intent.get("has_target") or not intent.get("target_url"):
+                if _is_resume_cmd and not _prev_target:
+                    yield self._event(
+                        "system",
+                        "当前会话没有可恢复的历史目标，请重新发送目标 URL 后再开始扫描。"
+                    )
+                    return
                 self.current_context.add_system(
                     "你是游刃AISec自动化渗透智能体。用户还没有给你明确的目标。\n"
                     "请根据用户的输入自然回复，引导用户提供：\n"
@@ -401,7 +467,12 @@ class ChatLoopMixin:
                 try:
                     response = await asyncio.to_thread(self.llm.chat, messages, caller="main:chat")
                 except Exception as e:
-                    yield self._event("system", f"LLM 调用出错: {e}")
+                    yield self._event(
+                        "system",
+                        "当前 LLM 模型不可用，无法生成闲聊回复。请直接发送目标 URL 开始扫描，"
+                        "或在模型配置中切换到可用模型。"
+                    )
+                    log.warning("idle 无目标闲聊 LLM 不可用: %s", e)
                     return
                 self.current_context.add_assistant(response)
                 if response.reasoning_content:
@@ -664,20 +735,87 @@ class ChatLoopMixin:
             target_reachable = await self._probe_target_reachable(url)
             if not target_reachable:
                 yield self._event("system",
-                    "⚠️ 目标不可达（重试 3 次均失败），切换到被动侦察模式")
-                # 被动侦察：仅做信息收集，不启动浏览器爬虫
+                    "⚠️ 目标不可达（重试 3 次均失败），切换到被动侦察 + 目录爆破模式")
+                # 被动侦察：信息收集 + dirsearch 风格目录爆破
                 passive_findings = await self._passive_recon(url)
+
+                # ★ 渲染目录爆破结果
+                dir_summary = getattr(self, "_dir_scan_summary", None) or {}
+                fallback = dir_summary.get("critical_path_fallback", False)
+                n_req = dir_summary.get("total_requests", 0)
+                conn_err = dir_summary.get("connect_errors", 0)
+                timeout_err = dir_summary.get("timeout_errors", 0)
+                discovered = dir_summary.get("discovered", [])
+                sensitive = dir_summary.get("sensitive", [])
+
+                if dir_summary.get("host_unreachable"):
+                    if fallback and n_req > 0:
+                        # 基线失败但关键路径兜底发了请求
+                        if discovered:
+                            lines = [
+                                f"  [{d['status']}] {d['path']} ({d['length']}B"
+                                f"{(' - ' + d['title']) if d.get('title') else ''})"
+                                for d in discovered[:20]
+                            ]
+                            yield self._event("system",
+                                f"📂 目录爆破（关键路径兜底）: 基线不可达但仍发现 "
+                                f"{len(discovered)} 个存活路径（{n_req} 次请求, "
+                                f"{conn_err} 连接失败）:\n"
+                                + "\n".join(lines))
+                        else:
+                            yield self._event("system",
+                                f"📂 目录爆破（关键路径兜底）: 基线不可达，"
+                                f"已 best-effort 探测 {n_req} 个关键路径均无存活"
+                                f"（{conn_err} 连接失败, {timeout_err} 超时）"
+                                f"— 主机确实不可达")
+                    else:
+                        yield self._event("system",
+                            "📡 目录爆破：主机连接级不可达，已跳过字典爆破"
+                            "（仅完成 robots.txt / sitemap.xml 等元信息收集）")
+                else:
+                    wildcard = dir_summary.get("wildcard_detected")
+                    if discovered:
+                        lines = [
+                            f"  [{d['status']}] {d['path']} ({d['length']}B"
+                            f"{(' - ' + d['title']) if d.get('title') else ''})"
+                            for d in discovered[:20]
+                        ]
+                        more = (f"\n  ... 及另外 {len(discovered) - 20} 个路径"
+                                if len(discovered) > 20 else "")
+                        wc_note = "（已过滤软 404）" if wildcard else ""
+                        yield self._event("system",
+                            f"📂 目录爆破完成: 发现 {len(discovered)} 个存活路径"
+                            f"{wc_note}（{n_req} 次请求）:\n"
+                            + "\n".join(lines) + more)
+                    else:
+                        yield self._event("system",
+                            f"📂 目录爆破完成: 未发现存活路径（{n_req} 次请求，"
+                            f"{conn_err} 连接失败, {timeout_err} 超时"
+                            f"{'，可能存在 WAF 或字典未覆盖' if n_req > 0 else ''}）")
+                if sensitive:
+                        sens_lines = [
+                            f"  [{s['severity'].upper()}] {s['vuln_type']} - {s['url']}"
+                            for s in sensitive[:20]
+                        ]
+                        yield self._event("system",
+                            f"🔴 目录爆破发现 {len(sensitive)} 个敏感信息泄露:\n"
+                            + "\n".join(sens_lines))
+
                 if passive_findings:
                     yield self._event("system",
-                        f"📡 被动侦察完成: 发现 {len(passive_findings)} 条信息")
+                        f"📡 被动侦察完成: 共收集 {len(passive_findings)} 条信息")
                 # 跳过爬虫阶段，直接进入 Phase 1
                 crawl_result = None
                 # 标记跳过原因
                 if self.sitemap:
-                    self.sitemap.termination_reason = "目标不可达，跳过浏览器爬取，仅做被动侦察"
+                    self.sitemap.termination_reason = "目标不可达，跳过浏览器爬取，仅做被动侦察与目录爆破"
                     self.sitemap.save()
-                # 跳到 Phase 1
-                async for evt in self._advance_phase():
+                # 跳到 Phase 1（★ 修复：_advance_phase 必须传 summary，否则
+                #   AdvancePhaseMixin._advance_phase() missing 1 required positional
+                #   argument: 'summary' 导致目标不可达路径直接崩溃）
+                async for evt in self._advance_phase(
+                    "目标不可达：跳过浏览器爬取，仅做被动侦察与目录扫描"
+                ):
                     yield evt
                 return
             # ★ Hermes 风格：注入与目标相关的历史经验
@@ -1066,7 +1204,14 @@ class ChatLoopMixin:
 
                 # 流量抓包健康检查
                 try:
-                    flow_file = Path("data/pentest_agent_flows.jsonl")
+                    flow_file = Path(os.getenv("PROXY_FLOW_FILE", "data/pentest_agent_flows.jsonl"))
+                    self._traffic_health = {
+                        "flow_file": str(flow_file),
+                        "flow_count": 0,
+                        "target_flows": 0,
+                        "ok": False,
+                        "problem": "",
+                    }
                     if flow_file.exists():
                         flow_count = sum(1 for _ in open(flow_file, encoding="utf-8", errors="replace"))
                         from urllib.parse import urlparse as _up
@@ -1076,6 +1221,12 @@ class ChatLoopMixin:
                             for line in open(flow_file, encoding="utf-8", errors="replace"):
                                 if target_host in line:
                                     target_flows += 1
+                        self._traffic_health.update({
+                            "flow_count": flow_count,
+                            "target_flows": target_flows,
+                            "ok": target_flows > 0,
+                            "problem": "" if target_flows > 0 else "target_flow_zero",
+                        })
                         if target_flows > 0:
                             yield self._event("system",
                                 f"✅ 流量抓包正常: 共 {flow_count} 条流量，其中目标站点 {target_flows} 条")
@@ -1085,9 +1236,17 @@ class ChatLoopMixin:
                                 f"可能原因: 浏览器未走 mitmproxy 代理（端口不匹配或代理未启动）\n"
                                 f"影响: Phase 1 模拟点击时 proxy_get_traffic 无法抓到 API，功能点将缺少 API 关联")
                     else:
+                        self._traffic_health["problem"] = "flow_file_missing"
                         yield self._event("system",
                             f"⚠️ 流量文件不存在，mitmproxy 可能未启动。Phase 1 流量抓取将不可用。")
                 except Exception:
+                    self._traffic_health = {
+                        "flow_file": "",
+                        "flow_count": 0,
+                        "target_flows": 0,
+                        "ok": False,
+                        "problem": "traffic_health_check_failed",
+                    }
                     pass
 
                 # LLM 域名清洗
@@ -1105,6 +1264,15 @@ class ChatLoopMixin:
                     f"✅ 自动生成 {len(atomic_features)} 个原子功能点, "
                     f"共 {total_checks} 项 checklist\n"
                     f"（每个按钮/表单/API = 1 个功能点, checklist 按 HTTP 方法+URL 特征自动推导）")
+
+                if not atomic_features and not crawl_result.get("apis_total", 0) and not crawl_result.get("menu_clicked", 0):
+                    self._scan_health_issue = {
+                        "type": "zero_assets_after_crawl",
+                        "pages": len(crawl_result.get("pages", {}) or {}),
+                        "apis": crawl_result.get("apis_total", 0),
+                        "menu_clicked": crawl_result.get("menu_clicked", 0),
+                        "traffic": getattr(self, "_traffic_health", {}),
+                    }
 
                 self.sitemap.save()
 
@@ -1182,10 +1350,10 @@ class ChatLoopMixin:
                     yield self._event("system",
                         f"ℹ️ {_skip_reason}，跳过 Phase 1 LLM 分析阶段，"
                         f"直接进入 Phase 2 本地规则引擎测试")
-                    self.phase = "analyze"
-                    async for evt in self._advance_phase(
-                        f"{_skip_reason}，跳过分析阶段（fast/无 LLM 模式）"
-                    ):
+                    # 直接设置为 test 阶段，避免进入 analyze 阶段
+                    self.phase = "test"
+                    from core.parallel import run_parallel_test
+                    async for evt in run_parallel_test(self):
                         yield evt
                     return
 
@@ -1526,6 +1694,16 @@ class ChatLoopMixin:
                 )
 
         else:
+            # ★ 非 idle / 非 report 阶段：分析/测试/探索中
+            #   1. 检测"继续 / resume / go"指令，重置 nudge 计数避免再次 stuck
+            #   2. 用户消息照常加入上下文，主循环照常推进
+            _resume_handled, _kick_msg = self._detect_and_handle_resume_command(
+                user_message, self.phase
+            )
+            if _resume_handled:
+                # 推送唤醒提示到前端 + 注入 LLM 上下文（system 提示让 LLM 立即行动）
+                yield self._event("system", _kick_msg)
+                self.current_context.add_system(_kick_msg)
             self.current_context.add_user(user_message)
 
         self._sync_tool_executor()
@@ -1543,9 +1721,10 @@ class ChatLoopMixin:
             _skip_reason = "FAST 模式" if _user_mode == "fast" else "LLM 未配置"
             yield self._event("system",
                 f"ℹ️ {_skip_reason}，跳过 LLM 分析阶段，直接进入本地规则引擎测试")
-            async for evt in self._advance_phase(
-                f"{_skip_reason}，跳过分析阶段（fast/无 LLM 模式）"
-            ):
+            # 直接设置为 test 阶段，避免进入 analyze 阶段
+            self.phase = "test"
+            from core.parallel import run_parallel_test
+            async for evt in run_parallel_test(self):
                 yield evt
             return
 
@@ -1555,7 +1734,8 @@ class ChatLoopMixin:
 
             try:
                 messages = self.current_context.get_messages()
-                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test")
+                # ★ max_retries=3：内层 LLMClient.chat() 负责 3 次指数退避重试
+                response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test", max_retries=3)
             except Exception as e:
                 err_str = str(e).lower()
                 err_type = type(e).__name__.lower()
@@ -1596,7 +1776,8 @@ class ChatLoopMixin:
                     await asyncio.sleep(_wait_sec)
                     try:
                         messages = self.current_context.get_messages()
-                        response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test")
+                        # ★ max_retries=0：外层重试时内层不再重试，避免三层叠加（3×5=15 次→最多 3+5=8 次）
+                        response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test", max_retries=0)
                         _retried_ok = True
                         yield self._event("system",
                             f"✅ LLM API 重试成功（第 {_llm_retry_count} 次）")
@@ -1705,6 +1886,16 @@ class ChatLoopMixin:
                         yield self._event("tool_result", result[:500])
             else:
                 nudged = await self._maybe_nudge_phase_forward(round_num)
+                # ★ 自动推进：nudge 用完但已有充足功能点时自动 phase_complete
+                if nudged == "__AUTO_PHASE_COMPLETE__":
+                    yield self._event("system",
+                        "⚠️ LLM 多次未调用工具，系统自动推进到 Phase 2 测试阶段。"
+                        "（已有功能点充足，无需等待 LLM 手动 phase_complete）")
+                    async for evt in self._advance_phase(
+                        "系统自动推进：LLM 在 analyze 阶段多次无工具调用，自动进入测试阶段"
+                    ):
+                        yield evt
+                    return
                 if nudged:
                     yield self._event("system", nudged)
                     self.current_context.add_user(nudged)

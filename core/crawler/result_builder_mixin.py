@@ -193,7 +193,16 @@ class ResultBuilderMixin:
         total_elements = sum(len(p.elements) for r in self.rounds for p in r.pages.values())
 
         # ---- 路径推测 + 指纹对比验证 ----
-        self._report("推测并验证 CRUD 变体 API...")
+        # 如果外层监控已因 hard_timeout / silent_timeout 请求停止，说明本轮爬虫已经超预算。
+        # 此时继续做 800+ 个候选路径指纹验证会把"保留已抓数据尽快进入 Phase 2"变成额外耗时。
+        # 典型日志：菜单点击 6/19 后 hard_timeout，但仍验证 868 个推测 API → 0 个通过。
+        _stop_requested = bool(getattr(self, "_stop_requested", False))
+        _user_aborted = bool(getattr(self, "_user_aborted", False))
+        _skip_inference_due_to_stop = _stop_requested and not _user_aborted
+        if _skip_inference_due_to_stop:
+            self._report("推测并验证 CRUD 变体 API: 跳过（爬虫已超时/停止，优先保留已抓数据进入测试）")
+        else:
+            self._report("推测并验证 CRUD 变体 API...")
 
         inferred_candidates: list[tuple[str, str]] = []  # (method, url)
         crud_suffixes = [
@@ -204,28 +213,32 @@ class ResultBuilderMixin:
             ("export", "GET"), ("import", "POST"), ("batch", "POST"),
         ]
         seen_paths = {urlparse(a["url"]).path.rstrip("/") for a in all_apis.values()}
-        for api in list(all_apis.values()):
-            parsed = urlparse(api["url"])
-            path_parts = [p for p in parsed.path.rstrip("/").split("/") if p]
-            if len(path_parts) < 2:
-                continue
-            base_prefix = "/".join(path_parts[:-1])
-            base_url_prefix = f"{parsed.scheme}://{parsed.netloc}/{base_prefix}"
-            for suffix, method in crud_suffixes:
-                inferred_path = f"/{base_prefix}/{suffix}"
-                if inferred_path not in seen_paths:
-                    inferred_url = f"{base_url_prefix}/{suffix}"
-                    key = f"{method} {inferred_url}"
-                    if key not in all_apis:
-                        inferred_candidates.append((method, inferred_url))
-                        seen_paths.add(inferred_path)
+        if not _skip_inference_due_to_stop:
+            for api in list(all_apis.values()):
+                parsed = urlparse(api["url"])
+                path_parts = [p for p in parsed.path.rstrip("/").split("/") if p]
+                if len(path_parts) < 2:
+                    continue
+                base_prefix = "/".join(path_parts[:-1])
+                base_url_prefix = f"{parsed.scheme}://{parsed.netloc}/{base_prefix}"
+                for suffix, method in crud_suffixes:
+                    inferred_path = f"/{base_prefix}/{suffix}"
+                    if inferred_path not in seen_paths:
+                        inferred_url = f"{base_url_prefix}/{suffix}"
+                        key = f"{method} {inferred_url}"
+                        if key not in all_apis:
+                            inferred_candidates.append((method, inferred_url))
+                            seen_paths.add(inferred_path)
 
         # ★ 路径前缀字典 fuzz — 门控：爬取完全空时跳过盲猜
         # 当 0 个业务 API + 0 个页面元素 + 0 个 JS 端点时，fuzz 纯属盲猜，
         # 800 个候选几乎全部指纹验证失败（日志实测 800→0），浪费 ~46 秒
-        _skip_fuzz = (not all_apis and total_elements == 0 and not all_js_endpoints)
+        _skip_fuzz = _skip_inference_due_to_stop or (not all_apis and total_elements == 0 and not all_js_endpoints)
         if _skip_fuzz:
-            self._report("  路径前缀 fuzz: 跳过（爬取无任何业务信号：0 API / 0 元素 / 0 JS 端点）")
+            if _skip_inference_due_to_stop:
+                self._report("  路径前缀 fuzz: 跳过（爬虫已超时/停止，避免额外盲探）")
+            else:
+                self._report("  路径前缀 fuzz: 跳过（爬取无任何业务信号：0 API / 0 元素 / 0 JS 端点）")
 
         # ★ 路径前缀字典 fuzz
         target_parsed = urlparse(self.target)
