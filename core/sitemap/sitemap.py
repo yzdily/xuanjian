@@ -40,6 +40,8 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         self.tech_stack: str = ""
         self._feature_counter = 0
         self.pending_discoveries: list[dict] = []
+        # ★ DirScan 敏感发现（被动侦察阶段的信息泄露，需上报为漏洞）
+        self._dirscan_sensitive_vulns: list[dict] = []
         # ★ 并发安全锁：保护 save/checklist 写入，防止多子 Agent 并发写入损坏数据
         import threading
         self._save_lock = threading.Lock()
@@ -224,6 +226,8 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
                 "_inject_auth": getattr(self, "_inject_auth", "") or "",
                 "_inject_headers": getattr(self, "_inject_headers", {}) or {},
                 "_has_credentials": getattr(self, "_has_credentials", False),
+                # ★ DirScan 敏感发现（被动侦察阶段的信息泄露漏洞）
+                "_dirscan_sensitive_vulns": getattr(self, "_dirscan_sensitive_vulns", []) or [],
             }
             try:
                 raw = json.dumps(data, ensure_ascii=False, indent=2, default=str)
@@ -298,4 +302,6 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         self._inject_auth = data.get("_inject_auth", "") or ""
         self._inject_headers = data.get("_inject_headers", {}) or {}
         self._has_credentials = data.get("_has_credentials", False)
+        # ★ 恢复 DirScan 敏感发现
+        self._dirscan_sensitive_vulns = data.get("_dirscan_sensitive_vulns", []) or []
         return True

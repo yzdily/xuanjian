@@ -198,6 +198,22 @@ SENSITIVE_PATHS = [
     "/api-docs", "/openapi.json", "/api/swagger",
     "/actuator", "/actuator/env", "/actuator/health",
     "/actuator/heapdump", "/actuator/mappings",
+    "/actuator/refresh", "/actuator/restart", "/actuator/jolokia",
+    "/actuator/gateway/routes", "/actuator/gateway/refresh",
+    "/actuator/configprops", "/actuator/beans", "/actuator/loggers",
+    "/actuator/httptrace", "/actuator/threaddump", "/actuator/env",
+    # Spring Boot 1.x context-path 变体
+    "/manage", "/manage/env", "/manage/heapdump", "/manage/refresh",
+    "/management", "/management/env",
+    # Spring Cloud（Eureka / Hystrix / Config / Function）
+    "/eureka/apps", "/hystrix", "/hystrix.stream",
+    "/application/default", "/functionRouter",
+    # Jolokia（JMX → JNDI RCE）
+    "/jolokia", "/jolokia/list", "/jolokia/exec",
+    # Spring 路径穿越绕过变体
+    "/;/actuator/env", "/..;/actuator/env",
+    # Spring Boot 配置文件
+    "/application.yml", "/bootstrap.yml",
     "/phpinfo.php", "/info.php", "/test.php",
     "/server-status", "/server-info",
     "/.well-known/security.txt",
@@ -598,6 +614,25 @@ SENSITIVE_PATH_FINGERPRINTS = {
     "actuator/env": [r'"propertySources"', r'"property"', r'"configName"'],
     "actuator/heapdump": [r"^\x00", r"JAVA PROFILE"],  # 二进制
     "actuator/mappings": [r'"handler"', r'"mappings"'],
+    "actuator/refresh": [r'"context"', r'"refresh"'],
+    "actuator/restart": [r'"context"', r'restart'],
+    "actuator/jolokia": [r'"jolokia"', r'"mbean"', r'"JmxAgent"'],
+    "actuator/gateway/routes": [r'"route_id"', r'"filters"', r'"uri"'],
+    "actuator/configprops": [r'"prefix"', r'"properties"'],
+    "actuator/beans": [r'"bean"', r'"scope"', r'"type"'],
+    "actuator/loggers": [r'"configuredLevel"', r'"effectiveLevel"'],
+    "actuator/httptrace": [r'"exchanges"', r'"request"', r'"response"'],
+    "actuator/threaddump": [r'"threadName"', r'"threadState"'],
+    # Spring Cloud
+    "eureka/apps": [r'"application"', r'"instance"', r'"hostName"'],
+    "eureka": [r'"applications"', r'"eureka"'],
+    "hystrix.stream": [r'"type"', r'"ping"', r"data:"],
+    "jolokia": [r'"jolokia"', r'"request"', r'"mbean"'],
+    "jolokia/list": [r'"java.lang"', r'"mbean"'],
+    "manage/env": [r'"propertySources"', r'"property"'],
+    "manage/heapdump": [r"^\x00", r"JAVA PROFILE"],
+    "application/default": [r'"propertySources"', r'"name"', r'"source"'],
+    "functionrouter": [r'"function"', r'"routing"', r'"error"'],
     # 数据库备份
     ".sql": [r"CREATE TABLE", r"INSERT INTO", r"^--\s*-{2,}"],
     ".zip": [r"^PK\x03\x04"],  # ZIP 魔数
@@ -999,9 +1034,15 @@ class FastScanner:
         suppressed_before = self._response_log_suppressed
         self._total_requests = 0
         self._blocked_count = 0
-        self._waf_blocked = False  # ★ 每个目标重置 WAF 封禁标志
+        # ★ 2026-08-08: 仅在未封禁时才重置，避免并发目标覆盖已触发的 WAF 状态。
+        #   原逻辑每个目标无条件重置 _waf_blocked=False，导致：
+        #   批次内目标 A 触发 WAF 置 True → 目标 B 又将其重置为 False → 目标 B 继续打无效请求。
+        #   修复后：一旦有目标触发 WAF，后续所有目标（同批次/跨批次）都会看到封禁标志。
+        if not self._waf_blocked:
+            self._waf_blocked = False
         self._consecutive_timeout_count = 0
-        self._timeout_blocked = False  # ★ 每个目标重置超时熔断标志
+        if not self._timeout_blocked:
+            self._timeout_blocked = False
         self._semaphore = asyncio.Semaphore(self.max_workers)  # ★ 每个目标重建信号量
         # ★ 每个目标重置响应日志计数：否则 same=N 会跨目标累积，看起来像同一目标
         # 被打了 N 次，实际是 N 个不同目标的响应落入同一桶。重置后 same= 反映单目标
@@ -1014,9 +1055,22 @@ class FastScanner:
         # 原逻辑一次性 gather 所有规则，每条规则内部又 gather 数十 payload，
         # 导致数百协程同时在途，WAF 封禁后仍有大量在途请求返回 403 并刷日志
         all_handlers = []
+        # ★ WAF 智能降级：当拦截次数过半时，过滤高 WAF 影响规则
+        # 高影响规则：sql_injection、xss、command_injection、ssrf、xxe、ssti
+        # 这些规则的 payload 容易触发 WAF，应在降级时跳过
+        _HIGH_WAF_IMPACT_RULES = {"sql_injection", "xss", "command_injection",
+                                   "ssrf", "xxe", "ssti", "path_traversal"}
+        _waf_degradation_threshold = self._waf_block_threshold // 2  # 半数拦截时降级
+
         for rule in all_rules:
             handler = getattr(self, f"_check_{rule}", None)
             if handler:
+                # ★ WAF 降级：拦截次数过半时，跳过高 WAF 影响规则
+                if (self._blocked_count >= _waf_degradation_threshold
+                        and rule in _HIGH_WAF_IMPACT_RULES):
+                    log.info("[SCAN] WAF 降级中：跳过高影响规则 %s（已拦截 %d 次）",
+                             rule, self._blocked_count)
+                    continue
                 all_handlers.append(handler)
 
         batch_size = min(3, len(all_handlers)) if all_handlers else 1
@@ -1069,6 +1123,16 @@ class FastScanner:
         # 分批并发，避免连接爆炸
         batch_size = self.max_workers
         for i in range(0, len(targets), batch_size):
+            # ★ WAF/超时熔断后跳过剩余批次：scan_target 每次重置 _waf_blocked，
+            # 若不在此拦截，每个新批次的首个目标都会重新触发 WAF 封禁（日志中
+            # "WAF 已封禁" 重复出现数十次），浪费请求且无法产出有效扫描结果。
+            if self._waf_blocked:
+                log.info("[SCAN] WAF 全局封禁，跳过剩余 %d 个目标", len(targets) - i)
+                break
+            if self._timeout_blocked:
+                log.info("[SCAN] 全局超时熔断，跳过剩余 %d 个目标", len(targets) - i)
+                break
+
             batch = targets[i:i + batch_size]
             batch_results = await asyncio.gather(
                 *[self.scan_target(t, enabled_rules) for t in batch],

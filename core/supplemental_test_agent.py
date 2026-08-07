@@ -451,12 +451,104 @@ _NON_BUSINESS_PATH_SEGMENTS = (
     "/assets/", "/static/", "/dist/", "/_next/static/", "/_nuxt/",
 )
 
+# ---- 敏感/基础设施路径 ----
+# 这些路径已被 FastScanner._check_info_disclosure（SENSITIVE_PATHS）和
+# dirscan 的敏感文件检测覆盖。若把它们创建为业务 feature 并跑全量 14 条
+# 漏洞规则（SQLi/XSS/XXE/CORS…），不仅浪费请求，还会触发 WAF 封禁。
+# 匹配方式：
+#   - _SENSITIVE_DIR_SEGMENTS: 路径中包含该段即命中（如 /console/.svn/entries）
+#   - _SENSITIVE_FILE_SUFFIXES: 路径等于或以该后缀结尾（如 /.env、/api/.env）
+#   - _SENSITIVE_ENDPOINT_PREFIXES: 路径等于该前缀或以 前缀/ 开头（避免 /manage 误匹配 /manager）
+_SENSITIVE_DIR_SEGMENTS = (
+    "/.svn/", "/.git/", "/.hg/", "/.bzr/",
+    "/.idea/", "/.vscode/",
+    "/web-inf/", "/meta-inf/",
+)
+_SENSITIVE_FILE_SUFFIXES = (
+    # VCS / dotfiles
+    "/.svn", "/.svn/entries", "/.svn/wc.db",
+    "/.git", "/.git/config", "/.git/head", "/.git/index",
+    "/.hg", "/.bzr",
+    "/.env", "/.env.local", "/.env.production", "/.env.bak",
+    "/.ds_store", "/.htaccess", "/.htpasswd",
+    # Config files
+    "/web.config", "/config.php.bak", "/config.yml", "/config.yaml", "/config.json",
+    "/application.yml", "/application.yaml", "/application.properties",
+    "/bootstrap.yml", "/bootstrap.properties",
+    "/docker-compose.yml", "/dockerfile", "/.dockerignore",
+    # Backup / database dumps
+    "/backup.sql", "/db.sql", "/database.sql", "/dump.sql", "/data.sql",
+    "/backup.zip", "/backup.tar.gz", "/www.zip", "/web.zip", "/site.zip",
+    "/backup.rar",
+    # Build / dependency files
+    "/package.json", "/composer.json", "/requirements.txt", "/pom.xml", "/makefile",
+    "/webpack.config.js", "/.babelrc",
+    # PHP info / shells
+    "/phpinfo.php", "/info.php", "/test.php",
+    "/shell.php", "/cmd.php", "/eval.php",
+    # Server status
+    "/server-status", "/server-info",
+    # API documentation endpoints (not business APIs to test for vulns)
+    "/swagger-ui.html", "/swagger-ui/", "/v2/api-docs", "/v3/api-docs",
+    "/api-docs", "/openapi.json", "/openapi.yaml", "/api/swagger",
+    "/swagger.json", "/swagger.yaml",
+)
+_SENSITIVE_ENDPOINT_PREFIXES = (
+    "/actuator", "/manage", "/management",
+    "/jolokia", "/eureka", "/hystrix",
+    "/druid", "/h2-console", "/phpmyadmin", "/pma", "/adminer",
+)
+
+# ---- 管理后台 & 认证路径（DirScan 字典猜测） ----
+# 这些路径是 dirscan 字典中的高频猜测项（/dashboard、/login 等），
+# 在 wildcard 站点上会全部命中 200，导致创建大量无效 feature。
+# 它们应由 FastScanner 的 info_disclosure 规则检测，而非创建业务 feature 跑全量漏洞测试。
+# 匹配方式：精确匹配 或 路径前缀匹配
+_ADMIN_PANEL_PATHS = (
+    "/admin", "/administrator", "/administrator/",
+    "/backend", "/cpanel", "/control", "/cp",
+    "/dashboard", "/manager", "/webadmin",
+)
+_AUTH_PATH_PREFIXES = (
+    "/login", "/signin", "/register", "/signup",
+    "/sso", "/oauth", "/logout",
+)
+
 
 def _is_non_business_path(path: str) -> bool:
+    """判断路径是否为非业务路径（静态资源或敏感/基础设施路径）。
+
+    敏感路径（/.svn/entries、/.git/config、/actuator/env 等）已由 FastScanner
+    的 _check_info_disclosure 和 dirscan 的敏感文件检测覆盖，不应创建为业务
+    feature 并跑全量漏洞规则。
+
+    2026-08-08：新增管理后台/认证路径过滤——这些是 dirscan 字典高频猜测项，
+    在 wildcard 站点上全部返回 200，导致 feature 爆炸（8921 checklist）。
+    改为直接在 DirScan 摘要中记录，不创建业务 feature。
+    """
     p = (path or "").lower().rstrip("/")
+    if not p:
+        return False
+    # 静态资源后缀
     if any(p.endswith(s) for s in _NON_BUSINESS_PATH_SUFFIXES):
         return True
+    # 静态资源路径段
     if any(seg in p for seg in _NON_BUSINESS_PATH_SEGMENTS):
+        return True
+    # 敏感目录段（VCS、IDE、框架配置目录）
+    if any(seg in p for seg in _SENSITIVE_DIR_SEGMENTS):
+        return True
+    # 敏感文件（精确或后缀匹配，后缀含 / 前缀避免误匹配）
+    if any(p == s or p.endswith(s) for s in _SENSITIVE_FILE_SUFFIXES):
+        return True
+    # 敏感端点前缀（精确或 path 前缀匹配，避免 /manage 误匹配 /manager）
+    if any(p == pre or p.startswith(pre + "/") for pre in _SENSITIVE_ENDPOINT_PREFIXES):
+        return True
+    # ★ 管理后台精确匹配（字典猜测项，不应创建 feature）
+    if p in _ADMIN_PANEL_PATHS:
+        return True
+    # ★ 认证路径精确或前缀匹配（字典猜测项，不应创建 feature）
+    if any(p == pre or p.startswith(pre + "/") for pre in _AUTH_PATH_PREFIXES):
         return True
     return False
 
@@ -703,14 +795,12 @@ def _find_best_matching_feature(sitemap: Sitemap, api: _DiscoveredAPI):
 
 
 def _gen_feature_name(api: _DiscoveredAPI) -> str:
-    """从 API 生成功能点名称。"""
-    # 取 path 最后两段作为名称
-    segs = [s for s in api.path.split("/") if s]
-    if len(segs) >= 2:
-        return f"{api.method} /{segs[-2]}/{segs[-1]}"
-    elif segs:
-        return f"{api.method} /{segs[-1]}"
-    return f"{api.method} {api.host}"
+    """从 API 生成功能点名称（使用完整 path 避免不同前缀路径碰撞）。
+
+    原逻辑取 path 最后两段，导致 /.svn/entries 和 /console/.svn/entries
+    生成相同名称 "GET /.svn/entries"，被 add_feature 去重逻辑错误合并。
+    """
+    return f"{api.method} {api.path}"
 
 
 def _gen_feature_desc(api: _DiscoveredAPI) -> str:
@@ -1279,7 +1369,7 @@ async def run_supplemental_test_local(
             return
 
         # ---- L3: FastScanner 本地规则测试（替代 WorkerAgent） ----
-        from core.fast_scanner import quick_scan, convert_findings_to_checklist_results
+        from core.fast_scanner import FastScanner, ScanTarget, convert_findings_to_checklist_results
         from core.sitemap import CheckResult
 
         # 收集认证头
@@ -1289,6 +1379,12 @@ async def run_supplemental_test_local(
             auth_headers["Cookie"] = cookies
         inject_headers = getattr(session, "_inject_headers", {}) or {}
         auth_headers.update(inject_headers)
+
+        # ★ 共享一个 FastScanner 实例，使 WAF/超时封禁状态跨 URL/feature 持续生效。
+        # 原逻辑每次 quick_scan() 创建新 scanner，_waf_blocked 每个 URL 重置，
+        # 导致 WAF 已封禁后下一个 URL 仍从头触发封禁（日志中 "WAF 已封禁" 重复出现）。
+        scanner = FastScanner(max_workers=5)
+        waf_blocked_global = False
 
         total_vulns = 0
         for fp in features_to_test:
@@ -1306,20 +1402,48 @@ async def run_supplemental_test_local(
                 }
                 continue
 
+            # ★ 截断日志：超 10 个 URL 时提示被跳过的数量（原逻辑静默截断）
+            scan_urls = api_targets[:10]
+            if len(api_targets) > 10:
+                yield {
+                    "type": "warn",
+                    "msg": (
+                        f"[本地补测] {fp.name} 有 {len(api_targets)} 个 URL，"
+                        f"超过单 feature 上限 10，仅测试前 10 个，跳过 {len(api_targets) - 10} 个"
+                    ),
+                }
+
             yield {
                 "type": "info",
-                "msg": f"[本地补测] FastScanner 测试 {fp.name}: {len(api_targets)} 个 URL",
+                "msg": f"[本地补测] FastScanner 测试 {fp.name}: {len(scan_urls)} 个 URL",
             }
 
-            # 对每个 URL 跑 FastScanner
-            for method, url in api_targets[:10]:  # 限制每 feature 最多 10 个 URL
+            # 对每个 URL 跑 FastScanner（共享 scanner 实例）
+            for method, url in scan_urls:
+                # ★ WAF/超时全局封禁后跳过剩余 URL
+                if waf_blocked_global:
+                    yield {
+                        "type": "warn",
+                        "msg": f"[本地补测] WAF/超时已封禁，跳过 {fp.name} 剩余 URL",
+                    }
+                    break
+
                 try:
-                    result = await quick_scan(
+                    target = ScanTarget(
                         url=url,
                         method=method,
-                        auth_headers=auth_headers or None,
-                        max_workers=5,
+                        auth_headers=auth_headers or {},
                     )
+                    result = await scanner.scan_target(target)
+                    # ★ 检查本次扫描是否触发 WAF 或超时熔断
+                    scan_stats = scanner.get_accumulated_stats()
+                    if scan_stats.get("waf_blocked") or scan_stats.get("timeout_blocked"):
+                        reason = "WAF 封禁" if scan_stats.get("waf_blocked") else "超时熔断"
+                        waf_blocked_global = True
+                        yield {
+                            "type": "warn",
+                            "msg": f"[本地补测] {url} 触发{reason}，后续 URL 将被跳过",
+                        }
                     if result.vuln_count > 0:
                         total_vulns += result.vuln_count
                         # 回写 checklist
@@ -1339,6 +1463,12 @@ async def run_supplemental_test_local(
                     log.warning("[本地补测] FastScanner 扫描 %s 失败: %s", url, e)
 
             summary["tested_features"] += 1
+
+        # 清理共享 scanner 的 HTTP 客户端
+        try:
+            await scanner._close()
+        except Exception:
+            pass
 
         summary["vulns_found"] = total_vulns
         summary["elapsed"] = time.time() - started

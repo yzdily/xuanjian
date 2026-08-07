@@ -137,15 +137,25 @@ class ExplorePhaseMixin:
 
             # 回写 sitemap + 转 finding
             already_seen = {"/robots.txt", "/sitemap.xml", "/.well-known/security.txt"}
+            # ★ 复用 supplemental_test_agent 的非业务路径过滤，避免 DirScan 字典猜测路径
+            # （/dashboard、/login 等）被添加为 sitemap page/API，导致 feature 爆炸
+            try:
+                from core.supplemental_test_agent import _is_non_business_path
+            except Exception:
+                _is_non_business_path = None
+
             for entry in dir_result.entries:
                 if entry.path in already_seen:
                     continue
+                is_non_biz = _is_non_business_path(entry.path) if _is_non_business_path else False
                 dir_summary["discovered"].append({
                     "path": entry.path, "status": entry.status,
                     "length": entry.length, "title": entry.title,
                     "content_type": entry.content_type,
+                    "skipped": is_non_biz,
                 })
-                if self.sitemap:
+                # ★ 非业务路径（管理后台/认证猜测等）不写入 sitemap，仅记录在摘要中
+                if self.sitemap and not is_non_biz:
                     self.sitemap.add_page(entry.url, title=entry.title or entry.path)
                     # API-like 路径补建为 API，供下游 FastScanner 测试
                     if self._is_api_like_path(entry.path, entry.content_type):
@@ -157,7 +167,8 @@ class ExplorePhaseMixin:
                     "type": "accessible_path",
                     "url": entry.url,
                     "detail": f"目录扫描发现: {entry.path} (HTTP {entry.status}, "
-                              f"{entry.length}B, {entry.content_type})",
+                              f"{entry.length}B, {entry.content_type})"
+                              + (" [非业务路径，已跳过功能创建]" if is_non_biz else ""),
                 })
 
             for f in dir_result.findings:
@@ -170,6 +181,18 @@ class ExplorePhaseMixin:
                     "detail": f"{f.vuln_type}: {f.detail}",
                     "severity": f.severity,
                 })
+                # ★ 同步写入 sitemap 的 DirScan 漏洞列表，确保在 get_coverage 中上报
+                if self.sitemap:
+                    try:
+                        self.sitemap._dirscan_sensitive_vulns.append({
+                            "vuln_type": f.vuln_type,
+                            "severity": f.severity or "high",
+                            "url": f.url,
+                            "detail": f.detail,
+                            "source": "dirscan",
+                        })
+                    except Exception:
+                        pass
 
             _log.info(
                 "目录扫描完成: 发现 %d 个路径, %d 个敏感泄露 (请求 %d, 耗时 %.1fs, "

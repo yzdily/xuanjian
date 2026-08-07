@@ -234,6 +234,21 @@ class CoverageMixin:
                             "status": "suspected",
                         })
 
+        # ★ 纳入 DirScan 敏感发现为已确认漏洞（info_disclosure 类型）
+        dirscan_vulns = getattr(self, "_dirscan_sensitive_vulns", []) or []
+        for dv in dirscan_vulns:
+            norm_key = f"dirscan_{dv.get('url', '')}"
+            if norm_key not in seen_vulns:
+                seen_vulns.add(norm_key)
+                vuln_list.append({
+                    "feature": f"DirScan 敏感发现",
+                    "vuln_type": dv.get("vuln_type", "info_disclosure"),
+                    "detail": dv.get("detail", ""),
+                    "severity": dv.get("severity", "high"),
+                    "status": "confirmed",
+                    "source": "dirscan",
+                })
+
         return {
             "total": total,
             "total_deduped": total_deduped,
@@ -434,6 +449,20 @@ class CoverageMixin:
         lines.append(f"\n**统计**: {top_modules} 个一级模块, {len(rows)} 个功能点, "
                      f"{cov['checks_done']}/{cov['checks_total']} 项测试完成, "
                      f"发现 {vuln_count} 个漏洞")
+
+        # ★ 附加 DirScan 敏感发现（被动侦察阶段确认的信息泄露）
+        dirscan_vulns = getattr(self, "_dirscan_sensitive_vulns", []) or []
+        if dirscan_vulns:
+            lines.append("\n### 🔴 DirScan 敏感发现（信息泄露）\n")
+            lines.append("| 漏洞类型 | 严重度 | URL | 详情 |")
+            lines.append("|----------|--------|-----|------|")
+            for dv in dirscan_vulns:
+                vuln_type = dv.get("vuln_type", "info_disclosure")
+                severity = dv.get("severity", "high")
+                url = dv.get("url", "")
+                detail = (dv.get("detail", "") or "")[:80]
+                lines.append(f"| {vuln_type} | {severity} | {url} | {detail} |")
+            lines.append("")
 
         return "\n".join(lines)
 

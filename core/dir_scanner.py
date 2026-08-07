@@ -68,16 +68,51 @@ DEFAULT_WORDLIST: list[str] = [
     "db.sql", "database.sql", "dump.sql", "data.sql",
     "www.zip", "web.zip", "site.zip", "wwwroot.zip", "1.zip", "bak",
     "backup.zip.bak", "db.bak",
-    # ---- Spring Boot Actuator（高危信息泄露）----
+    # ---- Spring Boot Actuator 全端点（高危信息泄露 + RCE）----
     "actuator", "actuator/health", "actuator/env", "actuator/info",
     "actuator/heapdump", "actuator/mappings", "actuator/beans",
     "actuator/configprops", "actuator/trace", "actuator/httptrace",
     "actuator/loggers", "actuator/threaddump", "actuator/metrics",
     "actuator/auditevents", "actuator/scheduledtasks",
+    "actuator/refresh", "actuator/restart", "actuator/shutdown",
+    "actuator/sessions", "actuator/prometheus", "actuator/logfile",
+    "actuator/conditions", "actuator/caches", "actuator/startup",
+    "actuator/flyway", "actuator/liquibase", "actuator/integrationgraph",
+    "actuator/jolokia", "actuator/jolokia/list",
+    # Actuator 1.x context-path 变体
+    "manage", "manage/health", "manage/env", "manage/heapdump",
+    "manage/refresh", "manage/jolokia",
+    "management", "management/health", "management/env",
+    # Spring Cloud Gateway（CVE-2022-22947 SpEL RCE）
+    "actuator/gateway/routes", "actuator/gateway/refresh",
+    "actuator/gateway/globalfilters", "actuator/gateway/routefilters",
+    "gateway/actuator", "gateway/actuator/gateway/routes",
+    # Spring Cloud Function（CVE-2022-22963 SpEL RCE）
+    "functionRouter",
+    # Spring Cloud Config Server（信息泄露）
+    "application/default", "application/default/master",
+    "application-dev.yml", "application-prod.yml",
+    "application-dev.properties", "application-prod.properties",
+    # Spring Cloud Eureka（未授权 → 内网服务列表）
+    "eureka", "eureka/apps", "eureka/lastn", "eureka/v2/apps",
+    # Spring Cloud Hystrix（Dashboard + 监控流）
+    "hystrix", "hystrix.stream", "hystrix/monitor",
+    # Spring Boot Admin（未授权管理面板）
+    "instances", "instances/applications", "applications",
+    # Jolokia（JMX over HTTP → JNDI RCE）
+    "jolokia", "jolokia/list", "jolokia/version", "jolokia/read",
+    "jolokia/exec", "jolokia/search",
+    # Spring 路径穿越绕过变体
+    ";/actuator/env", "..;/actuator/env", ";/actuator",
     # ---- Java / 中间件默认后台 ----
     "manager", "manager/html", "manager/status", "host-manager",
-    "jmx-console", "jmx-console/", "jenkins", "jolokia", "struts",
+    "jmx-console", "jmx-console/", "jenkins", "struts",
     "weblogic", "console", "ibm/console", "solr", "solr/admin",
+    # Spring Boot 静态资源 / 配置泄露
+    "application.yml", "application.yaml", "application.properties",
+    "bootstrap.yml", "bootstrap.properties",
+    "WEB-INF/web.xml", "WEB-INF/classes/application.yml",
+    "META-INF/MANIFEST.MF", "META-INF/spring.factories",
     # ---- PHP / CMS ----
     "wp-admin", "wp-login.php", "wp-config.php", "wp-config.php.bak",
     "xmlrpc.php", "install.php", "info.php", "phpinfo.php", "test.php",
@@ -121,6 +156,7 @@ RECURSE_CANDIDATES: set[str] = {
     "management", "console", "swagger", "docs", "static", "upload",
     "uploads", "files", "test", "app", "application", "manager",
     "wp-admin", "wp-content", "server", "system", "public", "assets",
+    "eureka", "jolokia", "gateway", "instances",
 }
 
 # 默认收录的状态码（排除 404；含重定向/认证/方法不允许/服务端错误）
@@ -154,6 +190,20 @@ SENSITIVE_PATTERNS: list[tuple[str, str, str]] = [
     ("actuator/configprops", "Actuator 配置泄露", "high"),
     ("actuator/mappings", "Actuator 路由映射泄露", "medium"),
     ("actuator/beans", "Actuator Bean 信息泄露", "medium"),
+    ("actuator/refresh", "Actuator 配置刷新(可触发JNDI)", "critical"),
+    ("actuator/restart", "Actuator 应用重启(DoS+RCE触发)", "critical"),
+    ("actuator/jolokia", "Actuator Jolokia JMX 未授权(JNDI RCE)", "critical"),
+    ("actuator/gateway", "Spring Cloud Gateway 路由(SpEL RCE)", "critical"),
+    ("actuator/shutdown", "Actuator 关闭应用(DoS)", "critical"),
+    ("manage/env", "Actuator 1.x 环境信息泄露", "high"),
+    ("manage/heapdump", "Actuator 1.x 堆转储泄露", "critical"),
+    ("manage/refresh", "Actuator 1.x 配置刷新(可触发JNDI)", "critical"),
+    ("eureka/apps", "Eureka 注册中心未授权(内网服务列表)", "high"),
+    ("eureka", "Eureka 注册中心未授权", "medium"),
+    ("hystrix", "Hystrix Dashboard 未授权", "medium"),
+    ("jolokia", "Jolokia JMX 未授权(JNDI RCE)", "critical"),
+    ("functionrouter", "Spring Cloud Function(SpEL RCE)", "critical"),
+    ("application/default", "Spring Cloud Config 配置泄露", "high"),
     ("swagger", "API 文档泄露(Swagger)", "medium"),
     ("api-docs", "API 文档泄露", "medium"),
     ("openapi", "API 文档泄露(OpenAPI)", "medium"),

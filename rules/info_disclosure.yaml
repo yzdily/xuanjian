@@ -58,10 +58,112 @@
     - /actuator/mappings
     - /actuator/beans
     - /actuator/configprops
+    - /actuator/refresh
+    - /actuator/restart
+    - /actuator/jolokia
+    - /actuator/loggers
+    - /actuator/httptrace
+    - /actuator/threaddump
+    - /actuator/scheduledtasks
+    - /actuator/sessions
+    - /actuator/prometheus
+    - /actuator/logfile
+    - /manage
+    - /manage/env
+    - /manage/heapdump
+    - /manage/refresh
+    - /management/env
   detection:
     method: status_code
     expected: 200
   fix: 禁用或限制 Actuator 端点，添加认证
+
+- name: Spring Cloud Gateway 泄露
+  type: info_disclosure
+  severity: critical
+  description: Spring Cloud Gateway Actuator 端点暴露（CVE-2022-22947 SpEL RCE）
+  paths:
+    - /actuator/gateway/routes
+    - /actuator/gateway/refresh
+    - /actuator/gateway/globalfilters
+    - /actuator/gateway/routefilters
+    - /gateway/actuator
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制 Gateway Actuator 端点访问，升级 Spring Cloud Gateway >= 3.1.1
+
+- name: Spring Cloud Eureka 未授权
+  type: info_disclosure
+  severity: high
+  description: Eureka 注册中心未授权访问，泄露内网微服务列表
+  paths:
+    - /eureka
+    - /eureka/apps
+    - /eureka/lastn
+    - /eureka/v2/apps
+  detection:
+    method: status_code
+    expected: 200
+  fix: 为 Eureka Dashboard 添加认证
+
+- name: Jolokia JMX 未授权
+  type: info_disclosure
+  severity: critical
+  description: Jolokia JMX over HTTP 未授权访问（可触发 JNDI RCE）
+  paths:
+    - /jolokia
+    - /jolokia/list
+    - /jolokia/version
+    - /jolokia/exec
+    - /actuator/jolokia
+    - /actuator/jolokia/list
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制 Jolokia 端点访问，禁用危险 MBean 操作
+
+- name: Spring Cloud Config 泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Cloud Config Server 配置文件未授权访问
+  paths:
+    - /application/default
+    - /application/default/master
+    - /application-dev.yml
+    - /application-prod.yml
+    - /application-dev.properties
+    - /application-prod.properties
+  detection:
+    method: status_code
+    expected: 200
+  fix: 为 Config Server 添加认证，限制环境配置访问
+
+- name: Spring Cloud Function 端点
+  type: info_disclosure
+  severity: critical
+  description: Spring Cloud Function 路由端点暴露（CVE-2022-22963 SpEL RCE）
+  paths:
+    - /functionRouter
+  detection:
+    method: status_code
+    expected: 200
+  fix: 升级 Spring Cloud Function >= 3.2.3，限制函数端点访问
+
+- name: Spring Boot 配置文件泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Boot 应用配置文件可直接访问，泄露数据库密码等敏感信息
+  paths:
+    - /application.yml
+    - /application.yaml
+    - /application.properties
+    - /bootstrap.yml
+    - /bootstrap.properties
+  detection:
+    method: status_code
+    expected: 200
+  fix: 将配置文件移出 Web 根目录，限制静态资源访问范围
 
 - name: 响应头信息泄露
   type: info_disclosure
