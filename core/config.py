@@ -273,6 +273,67 @@ VULN_SYNONYMS: dict[str, str] = {
     "Race Condition": "竞态条件",
     "payment-logic": "金额篡改",
     "payment_logic": "金额篡改",
+    # ---- 2026-08-07 补充：日志中 agent 反复尝试的变体 ----
+    "IDOR 越权": "IDOR越权",          # checklist 显示带空格，内部无空格
+    "broken-object-level-authorization": "IDOR越权",
+    "broken_object_level_authorization": "IDOR越权",
+    "insecure-direct-object-reference": "IDOR越权",
+    "insecure_direct_object_reference": "IDOR越权",
+    "horizontal-privilege-escalation": "IDOR越权",
+    "horizontal_privilege_escalation": "IDOR越权",
+    "vertical-privilege-escalation": "垂直越权",
+    "vertical_privilege_escalation": "垂直越权",
+    "access-control-bypass": "未授权访问",
+    "access_control_bypass": "未授权访问",
+    "authorization-bypass": "未授权访问",
+    "authorization_bypass": "未授权访问",
+    "privilege-escalation": "垂直越权",
+    "privilege_escalation": "垂直越权",
+    "object-authorization-bypass": "IDOR越权",
+    "object_authorization_bypass": "IDOR越权",
+    "越权漏洞": "IDOR越权",
+    "越权测试": "IDOR越权",
+    "越权检测": "IDOR越权",
+    "越权风险": "IDOR越权",
+    "越权问题": "IDOR越权",
+    "越权审查": "IDOR越权",
+    "越权审计": "IDOR越权",
+    "越权探测": "IDOR越权",
+    "越权扫描": "IDOR越权",
+    "数据越权": "IDOR越权",
+    "用户数据越权": "IDOR越权",
+    "接口越权": "IDOR越权",
+    "API越权": "IDOR越权",
+    "API 越权": "IDOR越权",
+    "功能越权": "IDOR越权",
+    "资源越权": "IDOR越权",
+    "访问控制": "未授权访问",
+    "Access Control": "未授权访问",
+    "Access Control Bypass": "未授权访问",
+    "Authorization Bypass": "未授权访问",
+    "Privilege Escalation": "垂直越权",
+    "Broken Access Control": "未授权访问",
+    "broken-access-control": "未授权访问",
+    "身份认证绕过": "未授权访问",
+    "认证绕过漏洞": "未授权访问",
+    "会话管理": "Cookie/JWT安全",
+    "安全配置": "信息泄露",
+    "安全头缺失": "信息泄露",
+    "安全审计": "信息泄露",
+    "逻辑漏洞": "业务逻辑",
+    "业务逻辑漏洞": "业务逻辑",
+    "竞态条件漏洞": "竞态条件",
+    "竞态漏洞": "竞态条件",
+    "密码重置漏洞": "密码重置逻辑",
+    "账户接管": "未授权访问",
+    "账户接管漏洞": "未授权访问",
+    "枚举漏洞": "用户枚举",
+    "用户名枚举": "用户枚举",
+    "拒绝服务": "DDoS",
+    "DDoS": "DDoS",
+    "dos": "DDoS",
+    "denial-of-service": "DDoS",
+    "denial_of_service": "DDoS",
 }
 
 # ---- 原子操作级 checklist 自动推导规则 ----
@@ -367,6 +428,7 @@ REPEAT_TOOL_THRESHOLD = 3    # 同一工具+相同参数连续重复 N 次，强
 
 # ★ 性能优化：并发与模式控制
 FAST_SCAN_MAX_WORKERS = 20   # 本地规则引擎并发数（纯 HTTP，不涉及 LLM，可激进）
+FAST_SCAN_RATE_LIMIT = 15.0  # 本地规则引擎全局速率（req/s）；原默认 5 太慢，50 目标×200 请求需 33min
 LLM_SCAN_MAX_WORKERS = 3     # LLM 分析并发数（贴合常见 API 并发上限，避免 429 后大量重试）
 SKIP_BUSINESS_UNDERSTANDING = False   # True: 跳过 Phase 1 业务理解（减少 1 轮 LLM 调用）
 SKIP_META_ANALYSIS = False            # True: 跳过 Phase 2 LLM 元分析（直接按规则初筛 + 子 Agent）
@@ -380,6 +442,9 @@ FAST_MODE_TIMEOUTS = {
     # FastScanner 先行等待时长：超过则放弃等待，回退到与 LLM 准备阶段并行
     # （保证总时长不因 FastScanner 慢而劣化；FastScanner 仍在后台继续跑完）
     "lead_time": 120.0,
+    # ★ 硬超时：从 FastScanner 启动算起的总最大耗时；Step 5 超过则取消 task
+    # 避免速率限制 + 大量目标导致后台扫描无限拖慢总流程
+    "hard_timeout": 600.0,
 }
 
 # ★ 单个功能点 checklist 项数上限（保险丝：防止规则匹配爆炸）

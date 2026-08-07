@@ -75,6 +75,14 @@ class VulnFinding:
     #   body_confirmed = 响应体已确认含敏感数据特征
     #   content_match = 敏感路径/文件内容特征已匹配预期
     evidence_quality: str = ""
+    # ★ 优化.md 建议6：日志→报告溯源 ID
+    # 每条发现生成唯一 trace_id，可在 agent.log/agent.jsonl 中检索对应请求/响应日志
+    trace_id: str = ""
+    # 发现该漏洞的规则标签（如 SQLi / Unauth / IDOR / XSS），用于溯源
+    rule_tag: str = ""
+    # ★ skill 引导：该发现由哪个 SKILL 治理（确定性映射，fast 模式在 ScanExecutor 回填）
+    skill: str = ""
+    skill_path: str = ""
 
 
 @dataclass
@@ -131,6 +139,10 @@ class ScanResult:
                     "evidence": f.evidence[:500],
                     "payload": f.payload,
                     "fix_suggestion": f.fix_suggestion,
+                    "trace_id": f.trace_id,
+                    "rule_tag": f.rule_tag,
+                    "skill": f.skill,
+                    "skill_path": f.skill_path,
                 }
                 for f in self.findings
             ],
@@ -529,6 +541,28 @@ def _is_public_data(text: str, content_type: str = "") -> bool:
     return False
 
 
+def _is_auth_wall_page(text: str) -> bool:
+    """检测响应体是否为登录/认证墙页面（优化.md 建议1 缺口补齐）。
+
+    未授权访问检测中，去认证后服务器常返回登录页（HTTP 200 + 登录表单），
+    这种"认证墙"不是真正的未授权数据访问。登录页天然含 password 输入框，
+    会被 _body_contains_sensitive_data 误判为含敏感数据 → 误报 HIGH。
+    本函数识别此类认证墙页面，用于在未授权检测中提前剔除。
+    """
+    if not text or len(text) < 20:
+        return False
+    low = text.lower()
+    # 必须同时含密码输入框 + 登录特征，才算认证墙
+    has_pwd_input = bool(re.search(
+        r'<input[^>]*type=["\']?password["\']?', low))
+    has_login_marker = any(kw in low for kw in (
+        "login", "signin", "logon", "登录", "账号登录", "用户登录",
+        "请输入密码", "忘记密码", "password\"", "name=\"password\"",
+        "<form", "action=\"/login", "action=\"/auth",
+    ))
+    return has_pwd_input and has_login_marker
+
+
 def _header_value_leaks_version(val: str) -> bool:
     """判断响应头值是否泄露了具体版本号。
 
@@ -598,6 +632,18 @@ def _verify_sensitive_path_content(path: str, text: str) -> tuple[bool, str]:
     if not text:
         return False, ""
     path_lower = path.lower()
+
+    # ★ 公开网站正常文件白名单：这些路径是网站标准文件，不应报为信息泄露
+    # sitemap.xml / robots.txt / crossdomain.xml / clientaccesspolicy.xml
+    # 是搜索引擎和爬虫协议文件，公开可访问是正常行为
+    _PUBLIC_NORMAL_PATHS = {
+        "/sitemap.xml", "/robots.txt", "/crossdomain.xml",
+        "/clientaccesspolicy.xml", "/humans.txt", "/security.txt",
+        "/.well-known/security.txt",
+    }
+    if path_lower in _PUBLIC_NORMAL_PATHS:
+        return False, ""
+
     # 查找匹配的指纹（按 path 后缀/子串匹配）
     # ★ 按长度降序迭代：让更具体的 key（如 "actuator/env"）先于
     #   更宽泛的 key（如 "actuator"）匹配，避免误用错误指纹导致漏判。
@@ -673,6 +719,10 @@ class FastScanner:
         self._response_log_suppressed = 0
         # ★ YAML 规则缓存：从 rules/*.yaml 加载的规则列表
         self._yaml_rules: list[dict] = []
+        # ★ 生产修复：_check_ssrf 末尾的 SSRF OOB 增强分支会读取 self.config，
+        # 但 __init__ 原先未初始化该属性，导致 url 参数型 SSRF 触发 OOB 分支时
+        # 抛出 AttributeError 崩溃。这里显式初始化，默认禁用 OOB，避免运行时崩溃。
+        self.config: dict = {}
         self._load_yaml_rules()
 
     def _record_scan_response_log(
@@ -940,7 +990,7 @@ class FastScanner:
         """
         all_rules = enabled_rules or [
             "sql_injection", "xss", "info_disclosure",
-            "unauthorized", "weak_password", "cors",
+            "unauthorized", "auth_matrix", "weak_password", "cors",
             "path_traversal", "command_injection", "ssrf",
             "csrf", "xxe", "ssti", "file_upload",
         ]
@@ -953,6 +1003,11 @@ class FastScanner:
         self._consecutive_timeout_count = 0
         self._timeout_blocked = False  # ★ 每个目标重置超时熔断标志
         self._semaphore = asyncio.Semaphore(self.max_workers)  # ★ 每个目标重建信号量
+        # ★ 每个目标重置响应日志计数：否则 same=N 会跨目标累积，看起来像同一目标
+        # 被打了 N 次，实际是 N 个不同目标的响应落入同一桶。重置后 same= 反映单目标
+        # 内的重复度，便于识别 catch-all/soft-404 误报模式。
+        # _response_log_suppressed 不重置：scan_target 用 delta（suppressed_before）计算本目标抑制数。
+        self._response_log_counts.clear()
         findings: list[VulnFinding] = []
 
         # ★ 分批执行规则：每批 max_workers 个规则，批次间检查熔断标志
@@ -985,6 +1040,9 @@ class FastScanner:
 
         # 过滤用户标记的误报
         findings = self._filter_false_positives(findings)
+
+        # ★ 优化.md 建议6：为每条发现分配溯源 ID（日志→报告溯源强制化）
+        self._assign_trace_ids(findings)
 
         elapsed = time.time() - t0
         await self._close()
@@ -1111,6 +1169,35 @@ class FastScanner:
                      len(filtered), len(deduped), len(filtered) - len(deduped))
 
         return deduped
+
+    def _assign_trace_ids(self, findings: list[VulnFinding]) -> None:
+        """★ 优化.md 建议6：为每条发现分配溯源 ID（原地修改）。
+
+        生成格式：XJ-{rule_tag}-{short_uuid}
+        每条发现可在 agent.log 中通过 trace_id 检索到对应的请求/响应日志，
+        实现报告→日志的端到端溯源。
+        """
+        import uuid as _uuid
+        _VT_TO_TAG = {
+            "SQL注入": "SQLi", "SQL Injection": "SQLi",
+            "XSS": "XSS", "跨站脚本": "XSS",
+            "未授权访问": "Unauth", "未授权": "Unauth",
+            "信息泄露": "InfoLeak", "敏感信息泄露": "InfoLeak",
+            "弱口令": "WeakPwd", "弱密码": "WeakPwd",
+            "CORS": "CORS", "路径遍历": "PathTrav",
+            "命令注入": "CmdInj", "SSRF": "SSRF",
+            "CSRF": "CSRF", "XXE": "XXE", "SSTI": "SSTI",
+            "文件上传": "FileUpload", "IDOR": "IDOR",
+            "越权访问": "AuthMatrix", "水平越权": "AuthMatrix",
+            "垂直越权": "AuthMatrix",
+        }
+        for f in findings:
+            if not f.trace_id:
+                tag = f.rule_tag or _VT_TO_TAG.get(f.vuln_type, f.vuln_type[:8] or "VULN")
+                short_id = _uuid.uuid4().hex[:8].upper()
+                f.trace_id = f"XJ-{tag}-{short_id}"
+                if not f.rule_tag:
+                    f.rule_tag = tag
 
     # ============================================================
     # 规则实现
@@ -1921,6 +2008,15 @@ class FastScanner:
                     # 公开数据（公告/商品/SPA 壳/静态资源）→ 不算漏洞
                     log.info("[SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: %s", target.url)
                     pass
+                # ★ 优化.md 建议1 缺口：去认证后返回登录/认证墙页面（含密码输入框+登录特征）
+                #   登录页天然含 password 字段，会被敏感数据检测误判 → 提前剔除
+                elif _is_auth_wall_page(noauth_text):
+                    log.info("[SCAN] Unauth | 去认证 200 但响应体为登录/认证墙页面，跳过: %s", target.url)
+                    pass
+                # ★ 认证/去认证响应归一化后完全一致 → 无鉴权差异（公开页或统一兜底页）
+                elif _normalize_body(auth_resp.text) == _normalize_body(noauth_text):
+                    log.info("[SCAN] Unauth | 认证与去认证响应归一化后一致，无鉴权差异，跳过: %s", target.url)
+                    pass
                 elif _body_contains_sensitive_data(noauth_text):
                     # 响应体确实含敏感数据（PII/密钥/用户列表）→ 高危，强证据
                     findings.append(VulnFinding(
@@ -1952,6 +2048,197 @@ class FastScanner:
         # 去认证后返回 401/403 → 正常（有鉴权）
         if noauth_resp.status_code in (401, 403):
             pass  # 安全
+
+        return findings
+
+    async def _check_auth_matrix(self, target: ScanTarget) -> list[VulnFinding]:
+        """★ 优化.md 建议4：三身份认证对照（Auth Matrix）。
+
+        对每个接口执行三身份请求矩阵：
+          1. 无凭证请求 → 记录状态码 + 响应体
+          2. 认证请求（现有 auth_headers） → 记录状态码 + 响应体
+          3. IDOR 探测：修改 URL 中的资源 ID，用认证身份请求他人资源
+
+        判定规则：
+          - 无凭证 200 且响应 == 认证响应 → 公开接口，降级为 Info（不算漏洞）
+          - 无凭证 200 且响应含敏感数据 ≠ 认证响应 → 未授权访问（已被 _check_unauthorized 覆盖，此处补矩阵证据）
+          - IDOR 探测成功（认证身份访问到他人资源） → High/Critical
+          - 仅有无凭证 200 但无对照证据 → 不定 High/Critical（降级为 Medium）
+
+        与 _check_unauthorized 的区别：
+          - _check_unauthorized 是二元对比（auth vs no-auth），只看是否泄露
+          - _check_auth_matrix 是三元矩阵 + IDOR 探测，记录结构化对照证据
+        """
+        findings = []
+
+        # 跳过登录/认证接口（本身允许匿名访问）
+        _url_lower = target.url.lower()
+        _LOGIN_AUTH_ENDPOINTS = (
+            "/login", "/signin", "/auth", "/login_psw", "/login_auth",
+            "/login_cert", "/logon", "/authenticate", "/sso/login",
+            "/api/auth", "/oauth/token", "/session",
+        )
+        if any(ep in _url_lower for ep in _LOGIN_AUTH_ENDPOINTS):
+            return []
+
+        # ── 身份1：无凭证请求 ──
+        noauth_resp = await self._request(
+            target.method, target.url,
+            headers=target.headers,
+            content=target.body,
+            drop_auth=True,
+            rule_tag="AuthMatrix", payload_tag="no_cred",
+        )
+
+        # ── 身份2：认证请求（基线） ──
+        auth_resp = await self._request(
+            target.method, target.url,
+            headers={**target.auth_headers, **target.headers},
+            content=target.body,
+            rule_tag="AuthMatrix", payload_tag="with_auth",
+        )
+
+        if not noauth_resp or not auth_resp:
+            return []
+
+        noauth_text = noauth_resp.text or ""
+        auth_text = auth_resp.text or ""
+        noauth_status = noauth_resp.status_code
+        auth_status = auth_resp.status_code
+
+        # ── 矩阵判定1：无凭证 200 且 == 认证响应 → 公开接口，降级 ──
+        # 优化.md：仅无凭证200 但高权限响应相同 → 可能本来就是公开接口，降级
+        if (noauth_status == 200 and auth_status == 200
+                and _normalize_body(noauth_text) == _normalize_body(auth_text)):
+            log.info("[SCAN] AuthMatrix | 无凭证与认证响应一致，判定为公开接口: %s", target.url)
+            # 不产生漏洞，但记录矩阵结果供报告溯源
+            return []
+
+        # ── 矩阵判定2：IDOR 探测 ──
+        # 提取 URL 中的资源 ID（/api/users/123, ?id=123, ?userId=456）
+        idor_findings = await self._probe_idor(target, auth_resp)
+        findings.extend(idor_findings)
+
+        # ── 矩阵判定3：无凭证 200 且含敏感数据（补矩阵证据） ──
+        # _check_unauthorized 已覆盖此场景，此处仅当未检出时补一条带矩阵证据的发现
+        if (noauth_status == 200 and auth_status == 200
+                and not _is_business_deny(noauth_text)
+                and not _is_empty_data(noauth_text)
+                and not _is_auth_wall_page(noauth_text)
+                and _body_contains_sensitive_data(noauth_text)
+                and _normalize_body(noauth_text) != _normalize_body(auth_text)):
+            # 确认不是公开接口（响应不同）且含敏感数据 → 未授权访问
+            # 记录三身份矩阵作为对照证据
+            matrix_detail = (
+                f"三身份认证对照检出未授权访问：\n"
+                f"  无凭证: HTTP {noauth_status}, body={len(noauth_text)}字符\n"
+                f"  认证用户: HTTP {auth_status}, body={len(auth_text)}字符\n"
+                f"  对照结论: 无凭证可获取与认证用户不同的敏感数据"
+            )
+            findings.append(VulnFinding(
+                vuln_type="未授权访问",
+                severity="high",
+                url=target.url,
+                method=target.method,
+                detail=matrix_detail,
+                evidence=f"无凭证响应: {noauth_text[:300]}\n---\n认证响应: {auth_text[:300]}",
+                fix_suggestion="添加认证中间件，对所有 API 请求强制鉴权；对敏感数据接口实施最小权限原则",
+                evidence_quality="body_confirmed",
+                rule_tag="AuthMatrix",
+            ))
+
+        return findings
+
+    async def _probe_idor(self, target: ScanTarget, auth_resp: httpx.Response) -> list[VulnFinding]:
+        """★ 优化.md 建议4：IDOR 探测 — 修改 URL 中的资源 ID 尝试越权访问。
+
+        检测逻辑：
+        1. 从 URL 中提取数字型/UUID 型资源 ID
+        2. 用相邻 ID（id±1, id+100）重发请求
+        3. 如果获取到不同的数据 → IDOR（越权访问他人资源）
+        4. 仅当认证身份能访问到不同资源时才定 High/Critical
+        """
+        import re as _re
+        findings = []
+
+        # 从 URL path 和 query 中提取资源 ID
+        url = target.url
+        id_candidates: list[tuple[str, str, str]] = []  # (full_match, id_value, location)
+
+        # path 中的数字 ID: /api/users/123, /api/orders/456
+        for m in _re.finditer(r'/(?:users?|orders?|accounts?|items?|products?|docs?|records?|files?|tasks?|projects?)/(\d+)', url, _re.I):
+            id_candidates.append((m.group(0), m.group(1), "path"))
+
+        # query 中的 ID 参数: ?id=123, ?userId=456, ?orderId=789
+        for m in _re.finditer(r'[?&](\w*(?:[Ii]d|ID))=(\d+)', url):
+            id_candidates.append((m.group(0), m.group(2), f"query:{m.group(1)}"))
+
+        if not id_candidates:
+            return []
+
+        auth_text = auth_resp.text or ""
+        auth_len = len(auth_text)
+
+        for _, id_str, location in id_candidates[:2]:  # 最多测 2 个 ID 参数
+            try:
+                id_val = int(id_str)
+            except ValueError:
+                continue
+
+            # 尝试相邻 ID
+            for offset in (1, -1, 100):
+                new_id = id_val + offset
+                if new_id <= 0:
+                    continue
+                new_url = url.replace(id_str, str(new_id), 1)
+                if new_url == url:
+                    continue
+
+                idor_resp = await self._request(
+                    target.method, new_url,
+                    headers={**target.auth_headers, **target.headers},
+                    content=target.body,
+                    rule_tag="AuthMatrix", payload_tag=f"idor_{location}={new_id}",
+                )
+                if not idor_resp or idor_resp.status_code != 200:
+                    continue
+
+                idor_text = idor_resp.text or ""
+                idor_len = len(idor_text)
+
+                # 跳过：空数据、业务拒绝、与原始响应完全一致（同一资源或统一兜底）
+                if _is_empty_data(idor_text) or _is_business_deny(idor_text):
+                    continue
+                if _normalize_body(idor_text) == _normalize_body(auth_text):
+                    continue  # 相同数据，可能没有越权
+
+                # 响应不同且含数据 → 疑似 IDOR
+                if _body_contains_sensitive_data(idor_text):
+                    findings.append(VulnFinding(
+                        vuln_type="IDOR",
+                        severity="high",
+                        url=new_url,
+                        method=target.method,
+                        detail=(
+                            f"三身份认证对照 IDOR 探测：\n"
+                            f"  原始资源 ID={id_val}: HTTP 200, body={auth_len}字符\n"
+                            f"  越权 ID={new_id}: HTTP 200, body={idor_len}字符\n"
+                            f"  对照结论: 认证用户可访问 ID={new_id} 的他人资源，响应含敏感数据\n"
+                            f"  证据来源: {location}"
+                        ),
+                        evidence=f"越权响应: {idor_text[:400]}",
+                        fix_suggestion=(
+                            "1. 对每个资源访问实施对象级授权检查（OWASP A01）\n"
+                            "2. 验证当前用户是否有权访问目标资源 ID\n"
+                            "3. 使用间接引用映射（如 session→resource_id）替代直接暴露 ID"
+                        ),
+                        evidence_quality="body_confirmed",
+                        rule_tag="AuthMatrix",
+                    ))
+                    break  # 一个 ID 越权成功即可，不重复测
+            else:
+                continue
+            break
 
         return findings
 

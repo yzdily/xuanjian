@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import AsyncGenerator, Callable
 
-from core.llm import LLMClient, Message, parse_tool_call_arguments
+from core.llm import LLMClient, Message, parse_tool_call_arguments, ContextLimitError
 from core.context import ContextManager
 from core.sitemap import Sitemap, FeaturePoint, CheckResult, TestStatus
 from core.config import WORKER_MAX_ROUNDS
@@ -836,6 +836,23 @@ class WorkerAgent:
                     asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}", max_retries=3),
                     timeout=_LLM_CALL_TIMEOUT,
                 )
+            except ContextLimitError as cle:
+                # ★ Token 预检超限 → 自动压缩上下文后重试一次
+                log.warning("[%s] 上下文超限，自动压缩后重试: 估算 %d tokens > 窗口 %d",
+                            self.worker_id, cle.estimated_tokens, cle.context_window)
+                self.context.compress()
+                messages = self.context.get_messages()
+                try:
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(self.llm.chat, messages, tools, caller=f"worker:{self.worker_id}", max_retries=3),
+                        timeout=_LLM_CALL_TIMEOUT,
+                    )
+                except Exception as e_inner:
+                    log.error("[%s] 压缩后重试仍失败: %s", self.worker_id, e_inner)
+                    self.error = str(e_inner)
+                    yield {"type": "worker_error", "worker": self.worker_id,
+                           "feature": self.group_name, "error": f"上下文超限: {e_inner}"}
+                    break
             except Exception as e:
                 # ★ asyncio.TimeoutError → 转成可读消息，走重试逻辑
                 if isinstance(e, asyncio.TimeoutError):
@@ -1130,7 +1147,8 @@ class WorkerAgent:
 
             # ★ 2026-08-05 优化1：Worker 专用压缩阈值（15 轮，比默认 30 更激进）
             # Worker 静态 prompt（任务组+API样本）可达 24K+，每轮重发浪费严重
-            if self.context.turn_count >= WORKER_COMPRESS_THRESHOLD:
+            # ★ 2026-08-07：增加 token 触发——当 token 估算超阈值时也压缩
+            if self.context.turn_count >= WORKER_COMPRESS_THRESHOLD or self.context.should_compress_by_tokens():
                 self.context.compress()
 
             # ★ 2026-08-05 优化3：高 skip 率熔断

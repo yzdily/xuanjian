@@ -59,6 +59,9 @@ class ScanConfig:
     total_timeout: int = 7200
     # 并发配置
     max_concurrent_requests: int = 20
+    # ★ skill 引导（fast 模式零 LLM 确定性路由；standard/deep 也可复用）
+    enable_skill_routing: bool = True
+    skill_routing_top_n: int = 3
 
     @classmethod
     def from_mode(cls, mode: ScanMode | str) -> "ScanConfig":
@@ -69,7 +72,7 @@ class ScanConfig:
         if mode == ScanMode.FAST:
             return cls(
                 mode=mode,
-                crawl_max_pages=30,
+                crawl_max_pages=100,
                 crawl_fast_mode=True,
                 fast_scan_enabled=True,
                 fast_scan_workers=20,
@@ -78,11 +81,13 @@ class ScanConfig:
                 skip_meta_analysis=True,
                 skip_supplemental_test=True,
                 skip_harm_validation=True,
-                crawl_timeout=60,
+                crawl_timeout=180,
                 fast_scan_timeout=120,
                 llm_phase_timeout=0,
                 total_timeout=600,
                 max_concurrent_requests=20,
+                enable_skill_routing=True,
+                skill_routing_top_n=3,
             )
         elif mode == ScanMode.STANDARD:
             return cls(
@@ -136,6 +141,8 @@ class ScanConfig:
             "skip_supplemental_test": self.skip_supplemental_test,
             "skip_harm_validation": self.skip_harm_validation,
             "total_timeout": self.total_timeout,
+            "enable_skill_routing": self.enable_skill_routing,
+            "skill_routing_top_n": self.skill_routing_top_n,
         }
 
 
@@ -302,8 +309,12 @@ class ScanExecutor:
 
             try:
                 from core.fast_scanner import FastScanner, ScanTarget
+                from core.config import FAST_SCAN_RATE_LIMIT
 
-                scanner = FastScanner(max_workers=self.config.fast_scan_workers)
+                scanner = FastScanner(
+                    max_workers=self.config.fast_scan_workers,
+                    request_rate_limit=FAST_SCAN_RATE_LIMIT,
+                )
                 targets = [
                     ScanTarget(url=api_url, auth_headers=auth_headers or {})
                     for api_url in crawl_apis[:50]  # 限制最多 50 个 API
@@ -331,6 +342,42 @@ class ScanExecutor:
             except Exception as e:
                 log.warning("本地规则引擎失败: %s", e)
                 await self._emit_progress("fast_scan", f"本地规则失败: {e}", 0.5)
+
+        # ============ Phase 1.5: skill 路由（确定性，零 LLM）============
+        # 给 fast 模式注入「skill 引导」：用 VULN_TO_SKILL 确定性映射为每个发现
+        # 标注治理它的 SKILL，并选出优先级最高的 top_n 个 SKILL 供报告/补充测试。
+        # ★ 此阶段不调用 LLM、不消耗 API；即便失败也只记录、绝不影响主流程。
+        # （把 SKILL 散文正文展开成可执行探针是 LLM 活，属可选后续层，默认关闭。）
+        if self.config.enable_skill_routing and fast_findings:
+            try:
+                from core.skill_router import (
+                    build_vuln_to_skill_routes,
+                    route_vuln_types_to_skills,
+                )
+
+                vuln_types = {f.get("vuln_type") for f in fast_findings if f.get("vuln_type")}
+                lookup = build_vuln_to_skill_routes(vuln_types)
+                for f in fast_findings:
+                    rt = lookup.get(f.get("vuln_type"))
+                    if rt:
+                        f["skill"] = rt.skill_name
+                        f["skill_path"] = rt.skill_path
+                top_routes = route_vuln_types_to_skills(
+                    vuln_types, top_n=self.config.skill_routing_top_n
+                )
+                result["skill_routes"] = {
+                    "enabled": True,
+                    "routes": [r.to_dict() for r in top_routes],
+                    "covered_vuln_types": sorted(lookup.keys()),
+                }
+                await self._emit_progress(
+                    "skill_routing",
+                    f"skill 引导完成: 命中 {len(lookup)} 类漏洞 → {len(top_routes)} 个 SKILL",
+                    0.55,
+                )
+            except Exception as e:  # skill 路由失败绝不影响主流程
+                log.warning("skill 路由失败（已跳过）: %s", e)
+                result["skill_routes"] = {"enabled": True, "error": str(e)}
 
         # ============ Phase 2: LLM 分析（仅标准/深度模式）============
         if self.config.mode in (ScanMode.STANDARD, ScanMode.DEEP) and self.config.llm_workers > 0:
@@ -369,6 +416,9 @@ class ScanStrategyConfig:
     #   'ScanStrategyConfig' object has no attribute 'crawl_timeout' 崩溃
     crawl_timeout: int = 300
     fast_scan_timeout: int = 120
+    # ★ skill 引导
+    enable_skill_routing: bool = True
+    skill_routing_top_n: int = 3
 
     @classmethod
     def from_scan_config(cls, cfg: ScanConfig) -> "ScanStrategyConfig":
@@ -384,6 +434,8 @@ class ScanStrategyConfig:
             total_timeout=cfg.total_timeout,
             crawl_timeout=cfg.crawl_timeout,
             fast_scan_timeout=cfg.fast_scan_timeout,
+            enable_skill_routing=cfg.enable_skill_routing,
+            skill_routing_top_n=cfg.skill_routing_top_n,
         )
 
 

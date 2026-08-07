@@ -20,7 +20,7 @@ from core.tools import ALL_MAIN_TOOLS
 from core.intent import parse_user_intent
 from core.log import get_logger, metrics
 # ★ 统一的工具调用 arguments 解析（避免 JSON 解析失败被静默吞掉）
-from core.llm import parse_tool_call_arguments, Message
+from core.llm import parse_tool_call_arguments, Message, ContextLimitError
 from core.scan_store import upsert_scan, finish_scan as _finish_scan
 from core.harm_validation import exploit_single_target
 from core.realtime_protocols import classify_realtime_flow, dedupe_realtime_channels
@@ -112,18 +112,35 @@ class ChatLoopMixin:
                 # 静默超时检测（仅在还未请求停止时）
                 if stop_requested_at is None:
                     cur_tick = getattr(crawler, "progress_tick", 0)
-                    if cur_tick != last_progress_tick:
+                    # ★ 双信号静默检测：progress_tick（粗粒度）+ last_activity_time（细粒度）
+                    # progress_tick 只在页面/菜单/API 粗粒度事件时 +1
+                    # last_activity_time 在网络响应/JS 分析等细粒度活动时更新
+                    # 任一信号有进展就不触发静默超时，避免慢操作期间误判
+                    tick_changed = cur_tick != last_progress_tick
+                    if tick_changed:
                         last_progress_tick = cur_tick
                         last_progress_time = now
+
+                    # 细粒度活动检测（wall clock，与 crawler._last_activity_time 一致）
+                    cur_activity = getattr(crawler, "_last_activity_time", 0)
+                    if cur_activity > 0:
+                        activity_silent = time.time() - cur_activity
                     else:
-                        silent = now - last_progress_time
-                        if silent >= silent_timeout and elapsed >= silent_min_elapsed:
-                            stop_reason = "silent_timeout"
-                            crawler.request_stop(user_aborted=False)
-                            stop_requested_at = now
-                            yield self._event("system",
-                                f"✅ {prefix}爬虫已 {silent_timeout}s 无新进展（共点击 {cur_tick} 次），"
-                                f"判定为已爬完，请求优雅退出")
+                        activity_silent = float('inf')
+
+                    # 取两者中更短的静默时间作为有效静默时间
+                    tick_silent = now - last_progress_time
+                    effective_silent = min(tick_silent, activity_silent)
+
+                    if effective_silent >= silent_timeout and elapsed >= silent_min_elapsed:
+                        stop_reason = "silent_timeout"
+                        crawler.request_stop(user_aborted=False)
+                        stop_requested_at = now
+                        _net_count = getattr(crawler, "_network_activity_count", 0)
+                        yield self._event("system",
+                            f"✅ {prefix}爬虫已 {silent_timeout}s 无新进展（共点击 {cur_tick} 次，"
+                            f"网络活动 {_net_count} 次），"
+                            f"判定为已爬完，请求优雅退出")
                 else:
                     # 已请求停止：检测是否被爬虫自己取消请求（self healing）
                     if not getattr(crawler, "_stop_requested", True):
@@ -131,6 +148,9 @@ class ChatLoopMixin:
                         stop_reason = None
                         last_progress_tick = getattr(crawler, "progress_tick", 0)
                         last_progress_time = now
+                        # ★ 同步重置爬虫活动时间戳，避免 Step1→Step2 过渡期误判
+                        if hasattr(crawler, "_touch_activity"):
+                            crawler._touch_activity()
                         continue
                     if now - stop_requested_at >= grace_after_stop:
                         crawl_task.cancel()
@@ -143,12 +163,11 @@ class ChatLoopMixin:
                     msg = await asyncio.wait_for(progress_queue.get(), timeout=2.0)
                     if not msg.strip():
                         continue
-                    # ★ 修复：不再无条件重置 last_progress_time
-                    # 原逻辑：收到任何 _report（含每 30s 一次的心跳 💓）都重置静默计时器，
-                    #   导致 silent_timeout 永不触发，爬虫在菜单/选择器循环中空转无法被杀。
-                    # 现逻辑：静默超时完全依赖循环开头的 progress_tick 检测（line 113-116），
-                    #   progress_tick 只在真实进度（新页面/新 API/点击成功）时递增，
-                    #   心跳不算进度，不重置 → 无真实进展时 silent_timeout 正常触发。
+                    # ★ 静默超时检测策略（双信号）：
+                    # 1. progress_tick（粗粒度）：页面/菜单/API 发现时 +1，用 event loop 时钟
+                    # 2. _last_activity_time（细粒度）：网络响应/JS 分析时更新，用 wall clock
+                    # 任一信号有进展就不触发 silent_timeout，避免慢操作期间误判。
+                    # 心跳消息（💓）不算进度，不重置任何计时器。
                     if msg.startswith("__EVENT__:"):
                         try:
                             payload = json.loads(msg[len("__EVENT__:"):])
@@ -868,7 +887,7 @@ class ChatLoopMixin:
             _crawl_hard_timeout = _crawl_cfg.total_timeout
             # fast 模式大幅缩短爬虫超时（crawl_timeout 是给纯爬虫的，total_timeout 是整轮）
             if _crawl_cfg.mode.value == "fast":
-                _crawl_hard_timeout = min(_crawl_cfg.crawl_timeout, 120)
+                _crawl_hard_timeout = min(_crawl_cfg.crawl_timeout, 240)
                 _crawl_silent = 60
             else:
                 _crawl_silent = 180
@@ -1275,6 +1294,48 @@ class ChatLoopMixin:
                     }
 
                 self.sitemap.save()
+
+                # ★ 主动目录爆破（目标可达时也执行，补充爬虫未覆盖的端点）
+                # 爬虫只走浏览器可见的菜单/链接，很多 API 端点（/actuator/env、
+                # /swagger-ui.html、/api/v1 等）不会出现在页面中。
+                # 此处用轻量目录爆破补充发现，命中路径回写 sitemap。
+                try:
+                    from core.dir_scanner import DirectoryScanner
+                    _dir_auth = getattr(self, "auth_headers", None) or {}
+                    _dir_scanner = DirectoryScanner(
+                        max_workers=15, timeout=6.0,
+                        recursive=False,  # 轻量模式：不递归，只扫顶层
+                    )
+                    _dir_result = await _dir_scanner.scan(
+                        url, auth_headers=_dir_auth,
+                    )
+                    if _dir_result.discovered_count > 0:
+                        _dir_added = 0
+                        for _entry in _dir_result.entries:
+                            if self.sitemap:
+                                self.sitemap.add_page(_entry.url, title=_entry.title or _entry.path)
+                                if self._is_api_like_path(_entry.path, _entry.content_type):
+                                    try:
+                                        self.sitemap.add_api("GET", _entry.url, discovered_by="dir_scan_active")
+                                        _dir_added += 1
+                                    except Exception:
+                                        pass
+                        if _dir_added > 0:
+                            yield self._event("system",
+                                f"📂 主动目录爆破: 发现 {_dir_result.discovered_count} 个存活路径, "
+                                f"新增 {_dir_added} 个 API（请求 {_dir_result.total_requests} 次）")
+                            self.sitemap.save()
+                    # 敏感路径发现
+                    if _dir_result.findings:
+                        _sens = [
+                            f"  [{f.severity.upper()}] {f.vuln_type} - {f.url}"
+                            for f in _dir_result.findings[:10]
+                        ]
+                        yield self._event("system",
+                            f"🔴 主动目录爆破发现 {len(_dir_result.findings)} 个敏感信息泄露:\n"
+                            + "\n".join(_sens))
+                except Exception as _dir_e:
+                    log.debug("主动目录爆破失败（非致命）: %s", _dir_e)
 
                 # ★ 策略回调：Phase 0 爬取完成（实时模式启动 FlowWatcher）
                 async for evt in self.strategy.on_crawl_complete(self, crawl_result):
@@ -1736,6 +1797,29 @@ class ChatLoopMixin:
                 messages = self.current_context.get_messages()
                 # ★ max_retries=3：内层 LLMClient.chat() 负责 3 次指数退避重试
                 response = await asyncio.to_thread(self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test", max_retries=3)
+            except ContextLimitError as cle:
+                # ★ Token 预检超限 → 自动压缩上下文后重试一次
+                # compress() 会将历史摘要化，大幅减少 input tokens
+                log.warning("[%s] 上下文超限，自动压缩后重试: 估算 %d tokens > 窗口 %d",
+                            cle.model, cle.estimated_tokens, cle.context_window)
+                yield self._event("system", "⚠️ 上下文超限，正在压缩历史...")
+                self.current_context.compress()
+                messages = self.current_context.get_messages()
+                try:
+                    response = await asyncio.to_thread(
+                        self.llm.chat, messages, ALL_MAIN_TOOLS, caller="main:test", max_retries=3)
+                except Exception as e_inner:
+                    log.error("压缩后重试仍失败: %s", e_inner)
+                    yield self._event("system", f"❌ 上下文压缩后仍超限: {e_inner}")
+                    yield self._event("task_failed", json.dumps({
+                        "reason": "context_limit",
+                        "phase": self.phase,
+                        "round": round_num,
+                        "error": str(e_inner)[:300],
+                        "message": "上下文持续超限，无法继续",
+                    }, ensure_ascii=False))
+                    _exit_reason = "context_limit"
+                    break
             except Exception as e:
                 err_str = str(e).lower()
                 err_type = type(e).__name__.lower()

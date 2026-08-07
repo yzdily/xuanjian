@@ -58,7 +58,7 @@ class APIEndpoint:
     headers_of_interest: list[str] = field(default_factory=list)
     request_body_sample: str = ""
     response_sample: str = ""
-    auth_required: bool = True
+    auth_required: bool = False  # ★ 默认 False：匿名爬取发现的 API 默认无需认证
     content_type: str = ""
     discovered_by: str = ""  # 来源标识：crawler/mitmproxy/browse_worker 等
     source_type: str = "unknown"  # real_flow/crawler_flow/js_static/api_doc/inferred/menu_api/unknown
@@ -120,8 +120,24 @@ class FeaturePoint:
                    evidence_request: str = "", evidence_response: str = "",
                    severity: str = "", reproduce_steps: str = "",
                    fix_suggestion: str = "") -> CheckItem | None:
+        # 1. 精确匹配
         for c in self.checklist:
             if c.vuln_type == vuln_type:
+                c.result = result
+                c.detail = detail
+                c.severity = severity
+                c.reproduce_steps = reproduce_steps
+                c.fix_suggestion = fix_suggestion
+                c.evidence_flow_id = evidence_flow_id
+                c.evidence_request = evidence_request
+                c.evidence_response = evidence_response
+                c.skill_used = skill_used
+                c.tested_at = time.time()
+                return c
+        # 2. 模糊匹配：去空格+忽略大小写（解决 "IDOR 越权" vs "IDOR越权" 等问题）
+        normalized_input = vuln_type.replace(" ", "").lower()
+        for c in self.checklist:
+            if c.vuln_type.replace(" ", "").lower() == normalized_input:
                 c.result = result
                 c.detail = detail
                 c.severity = severity

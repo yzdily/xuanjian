@@ -1,7 +1,7 @@
 """
 Context — 上下文管理与压缩
 
-当对话轮数超过阈值时，将历史消息压缩为摘要，
+当对话轮数超过阈值或 token 估算超过阈值时，将历史消息压缩为摘要，
 保持"高信号、低噪音"的上下文窗口。
 
 参考 BreachWeave 的 RTK 三层压缩机制。
@@ -10,10 +10,18 @@ Context — 上下文管理与压缩
 from __future__ import annotations
 
 import os
-from core.llm import LLMClient, Message
+from core.llm import LLMClient, Message, estimate_messages_tokens
 
 
+# ---- 压缩触发阈值 ----
+
+# 轮次触发（兜底）：assistant 消息数达到此值时触发压缩
 COMPRESS_THRESHOLD = int(os.getenv("CONTEXT_COMPRESS_THRESHOLD", "30"))
+
+# ★ Token 触发（主触发）：上下文 token 估算达到此值时触发压缩
+# 默认 24000：对 32K 模型（75% 窗口）提前压缩，对 64K+ 模型更早压缩以降低成本
+# 可通过环境变量 CONTEXT_TOKEN_COMPRESS_THRESHOLD 覆盖
+CONTEXT_TOKEN_COMPRESS_THRESHOLD = int(os.getenv("CONTEXT_TOKEN_COMPRESS_THRESHOLD", "24000"))
 
 COMPRESS_PROMPT = """你是一个渗透测试过程记录压缩器。请将以下对话历史压缩为精简摘要，保留：
 1. 已发现的所有资产信息（URL、API端点、技术栈、Cookie/Token 结构）
@@ -47,7 +55,12 @@ BROWSE_COMPRESS_PROMPT = """你是一个浏览器操作过程记录压缩器。�
 
 
 class ContextManager:
-    """管理对话上下文，支持自动压缩。"""
+    """管理对话上下文，支持自动压缩。
+
+    压缩触发条件（满足任一即触发）：
+    1. Token 估算超过 CONTEXT_TOKEN_COMPRESS_THRESHOLD（主触发，防止 context 爆炸）
+    2. 轮次超过 COMPRESS_THRESHOLD（兜底，防止估算偏差导致不压缩）
+    """
 
     def __init__(self, llm: "LLMClient | None" = None, compress_mode: str = "default"):
         """
@@ -61,18 +74,26 @@ class ContextManager:
         self.system_messages: list[Message] = []
         self.history: list[Message] = []
         self._compressed_summary: str = ""
+        # ★ Token 估算缓存：避免每次 should_compress() 都重新计算
+        # _token_estimate_dirty 标记 history/system 是否变化，变化后需重新估算
+        self._cached_token_estimate: int = 0
+        self._token_estimate_dirty: bool = True
 
     def add_system(self, content: str) -> None:
         self.system_messages.append(Message(role="system", content=content))
+        self._token_estimate_dirty = True
 
     def add_user(self, content: str) -> None:
         self.history.append(Message(role="user", content=content))
+        self._token_estimate_dirty = True
 
     def add_assistant(self, msg: Message) -> None:
         self.history.append(msg)
+        self._token_estimate_dirty = True
 
     def add_tool_result(self, tool_call_id: str, content: str) -> None:
         self.history.append(Message(role="tool", content=content, tool_call_id=tool_call_id))
+        self._token_estimate_dirty = True
 
     def get_messages(self) -> list[Message]:
         """构建完整的消息列表，含系统提示 + 压缩摘要 + 近期历史。
@@ -136,7 +157,35 @@ class ContextManager:
     def turn_count(self) -> int:
         return sum(1 for m in self.history if m.role == "assistant")
 
+    def estimate_tokens(self) -> int:
+        """估算当前完整上下文（system + summary + history）的 token 数。
+
+        使用基于字符的启发式估算（无需 tokenizer），结果缓存到
+        _cached_token_estimate，仅在 history 变化时重新计算。
+
+        估算包含 tool_calls JSON 和 tool_call_id 的开销，但不包含
+        tools 定义（工具 schema）的开销——后者由 LLMClient.chat() 的
+        预检逻辑单独计算。
+        """
+        if self._token_estimate_dirty:
+            messages = self.get_messages()
+            self._cached_token_estimate = estimate_messages_tokens(messages)
+            self._token_estimate_dirty = False
+        return self._cached_token_estimate
+
+    def should_compress_by_tokens(self) -> bool:
+        """仅检查 token 估算是否超过阈值。"""
+        return self.estimate_tokens() >= CONTEXT_TOKEN_COMPRESS_THRESHOLD
+
     def should_compress(self) -> bool:
+        """判断是否需要压缩。
+
+        双触发条件（满足任一即触发）：
+        1. Token 估算超过 CONTEXT_TOKEN_COMPRESS_THRESHOLD（主触发）
+        2. 轮次超过 COMPRESS_THRESHOLD（兜底，防止估算偏差）
+        """
+        if self.should_compress_by_tokens():
+            return True
         return self.turn_count >= COMPRESS_THRESHOLD
 
     def compress(self) -> str:
@@ -188,6 +237,7 @@ class ContextManager:
         # ★ llm 未配置时跳过压缩（fast/无 LLM 模式），直接保留近期历史
         if self.llm is None:
             self.history = to_keep
+            self._token_estimate_dirty = True
             return self._compressed_summary
 
         result = self.llm.chat(compress_messages, temperature=0.1, max_tokens=4096)
@@ -195,5 +245,8 @@ class ContextManager:
 
         # 替换历史，确保 to_keep 的第一条不是 tool
         self.history = to_keep
+
+        # ★ 压缩后标记需要重新估算 token
+        self._token_estimate_dirty = True
 
         return self._compressed_summary

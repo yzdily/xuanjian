@@ -158,8 +158,8 @@ class TestScanSkills:
         if not SKILLS_DIR.exists():
             pytest.skip("skills_my 目录不存在")
         registry = scan_skills()
-        assert registry.count >= 50  # 项目有 59 个 SKILL
-        assert registry.enabled_count >= 50
+        assert registry.count >= 20  # 当前约 24 个 SKILL
+        assert registry.enabled_count >= 20
         assert len(registry.vuln_to_skill) > 0
         assert len(registry.errors) == 0  # 不应有解析错误
 

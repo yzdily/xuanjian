@@ -647,3 +647,191 @@ class TestApiKeyEncryption:
         from core.llm import _encrypt_api_key
         already = "enc$v1$someciphertext"
         assert _encrypt_api_key(already) == already
+
+
+class TestTokenEstimation:
+    """测试 token 估算工具函数。"""
+
+    def test_estimate_text_tokens_empty(self):
+        from core.llm import estimate_text_tokens
+        assert estimate_text_tokens("") == 0
+        assert estimate_text_tokens(None) == 0
+
+    def test_estimate_text_tokens_ascii(self):
+        from core.llm import estimate_text_tokens
+        # 8 个 ASCII 字符 ≈ 2 tokens
+        assert estimate_text_tokens("abcdefgh") == 2
+
+    def test_estimate_text_tokens_cjk(self):
+        from core.llm import estimate_text_tokens
+        # 6 个中文字符 ≈ 6 tokens（每个 CJK 字符 1 token）
+        assert estimate_text_tokens("你好世界测试") == 6
+
+    def test_estimate_text_tokens_mixed(self):
+        from core.llm import estimate_text_tokens
+        # 4 个中文 + 8 个 ASCII = 4 + 2 = 6 tokens
+        assert estimate_text_tokens("你好世界abcdefgh") == 6
+
+    def test_estimate_messages_tokens_basic(self):
+        from core.llm import estimate_messages_tokens, Message
+        msgs = [Message(role="user", content="hello world")]
+        tokens = estimate_messages_tokens(msgs)
+        # role 开销 4 + content "hello world" = 11 chars / 4 = 2 → 6 tokens
+        assert tokens > 0
+
+    def test_estimate_messages_tokens_empty(self):
+        from core.llm import estimate_messages_tokens
+        assert estimate_messages_tokens([]) == 0
+
+    def test_estimate_messages_tokens_with_tools(self):
+        from core.llm import estimate_messages_tokens, Message
+        msgs = [Message(role="user", content="test")]
+        tools = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
+        tokens_without_tools = estimate_messages_tokens(msgs)
+        tokens_with_tools = estimate_messages_tokens(msgs, tools)
+        # 每个工具约 80 tokens
+        assert tokens_with_tools == tokens_without_tools + 80
+
+    def test_estimate_messages_tokens_with_tool_calls(self):
+        from core.llm import estimate_messages_tokens, Message
+        msgs = [
+            Message(role="user", content="test"),
+            Message(role="assistant", content="", tool_calls=[
+                {"id": "call_1", "function": {"name": "fn", "arguments": "{}"}}
+            ]),
+            Message(role="tool", content="result", tool_call_id="call_1"),
+        ]
+        tokens = estimate_messages_tokens(msgs)
+        assert tokens > 0
+        # tool_calls 和 tool_call_id 都有额外开销
+        assert tokens > estimate_messages_tokens([msgs[0]])
+
+
+class TestModelContextWindow:
+    """测试模型上下文窗口查询。"""
+
+    def test_known_model_exact(self):
+        from core.llm import get_model_context_window
+        assert get_model_context_window("deepseek-chat") == 65536
+
+    def test_known_model_case_insensitive(self):
+        from core.llm import get_model_context_window
+        assert get_model_context_window("DeepSeek-Chat") == 65536
+
+    def test_known_model_fuzzy(self):
+        from core.llm import get_model_context_window
+        # 模型名包含 "deepseek-chat" 的变体
+        assert get_model_context_window("deepseek-chat-v3") == 65536
+
+    def test_unknown_model_default(self):
+        from core.llm import get_model_context_window
+        # 未知模型返回默认值
+        result = get_model_context_window("totally-unknown-model-xyz")
+        assert result > 0  # 默认 32768 或环境变量值
+
+    def test_empty_model(self):
+        from core.llm import get_model_context_window
+        result = get_model_context_window("")
+        assert result > 0
+
+
+class TestContextLimitError:
+    """测试 ContextLimitError 异常类。"""
+
+    def test_error_attributes(self):
+        from core.llm import ContextLimitError
+        err = ContextLimitError(estimated_tokens=50000, context_window=32768, model="test-model")
+        assert err.estimated_tokens == 50000
+        assert err.context_window == 32768
+        assert err.model == "test-model"
+
+    def test_error_message_contains_values(self):
+        from core.llm import ContextLimitError
+        err = ContextLimitError(estimated_tokens=50000, context_window=32768, model="test-model")
+        msg = str(err)
+        assert "50000" in msg
+        assert "32768" in msg
+        assert "test-model" in msg
+
+    def test_error_is_exception(self):
+        from core.llm import ContextLimitError
+        err = ContextLimitError(100, 50, "m")
+        assert isinstance(err, Exception)
+
+
+class TestChatPrecheck:
+    """测试 chat() 方法的 token 预检逻辑。"""
+
+    def test_precheck_raises_on_oversized_input(self):
+        """输入 token 超限时抛出 ContextLimitError。"""
+        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError, _response_cache
+        _response_cache.clear()
+
+        cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
+                        api_key="sk-test", model="test-model", name="test")
+        client = LLMClient(cfg)
+
+        # 构造超大消息（~12500 tokens）
+        big_content = "A" * 50000
+        msgs = [Message(role="user", content=big_content)]
+
+        # mock 小上下文窗口
+        with patch("core.llm.get_model_context_window", return_value=1000):
+            with pytest.raises(ContextLimitError) as exc_info:
+                client.chat(msgs, caller="test", use_cache=False, max_tokens=100)
+            assert exc_info.value.estimated_tokens > 1000
+            assert exc_info.value.context_window == 1000
+
+    def test_precheck_passes_small_input(self):
+        """输入 token 未超限时正常调用 API。"""
+        from core.llm import LLMClient, LLMConfig, Message, _response_cache
+        _response_cache.clear()
+
+        cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
+                        api_key="sk-test", model="test-model", name="test")
+        client = LLMClient(cfg)
+
+        msgs = [Message(role="user", content="small message")]
+        mock_resp = Message(role="assistant", content="response")
+        with patch.object(client, "_chat_openai", return_value=mock_resp):
+            result = client.chat(msgs, caller="test", use_cache=False)
+            assert result.content == "response"
+
+    def test_precheck_skipped_on_cache_hit(self):
+        """缓存命中时跳过预检（不调 API，无需检查超限）。"""
+        from core.llm import LLMClient, LLMConfig, Message, _response_cache
+        _response_cache.clear()
+
+        cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
+                        api_key="sk-test", model="test-model", name="test")
+        client = LLMClient(cfg)
+
+        big_content = "A" * 50000
+        msgs = [Message(role="user", content=big_content)]
+        expected = Message(role="assistant", content="cached")
+        _response_cache.put(msgs, cfg.model, None, 0.2, 4096, expected)
+
+        # 即使输入超大 + 窗口极小，缓存命中也不应抛 ContextLimitError
+        with patch("core.llm.get_model_context_window", return_value=100):
+            result = client.chat(msgs, caller="test", use_cache=True)
+            assert result.content == "cached"
+
+    def test_context_limit_error_not_retryable(self):
+        """ContextLimitError 不应触发重试（不可重试错误）。"""
+        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError, _response_cache
+        _response_cache.clear()
+
+        cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
+                        api_key="sk-test", model="test-model", name="test")
+        client = LLMClient(cfg)
+
+        big_content = "A" * 50000
+        msgs = [Message(role="user", content=big_content)]
+
+        # 即使 max_retries=3，预检超限也应立即抛出，不重试
+        with patch("core.llm.get_model_context_window", return_value=100):
+            with patch.object(client, "_chat_openai") as mock_api:
+                with pytest.raises(ContextLimitError):
+                    client.chat(msgs, caller="test", use_cache=False, max_retries=3)
+                # API 不应被调用
+                mock_api.assert_not_called()

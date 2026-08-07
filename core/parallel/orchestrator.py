@@ -36,6 +36,138 @@ if TYPE_CHECKING:
 log = get_logger("parallel.orchestrator")
 
 
+# ============================================================
+# mitmproxy 健康检查 + 自动重启
+# ============================================================
+
+def _check_mitmproxy_health(port: int | None = None) -> bool:
+    """检测 mitmproxy 代理端口是否在监听。
+
+    Returns:
+        True 如果端口可连接，False 如果不可连接。
+    """
+    import socket
+    _port = port or int(os.getenv("PROXY_PORT", "18080"))
+    try:
+        _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _sock.settimeout(1.0)
+        _ok = _sock.connect_ex(("127.0.0.1", _port)) == 0
+        _sock.close()
+        return _ok
+    except Exception:
+        return False
+
+
+def _try_restart_mitmproxy(port: int | None = None) -> bool:
+    """尝试重启 mitmproxy 代理（在后台启动新的 mitmdump 进程）。
+
+    策略：
+    1. 检查端口是否已在监听（可能已自恢复）
+    2. 查找 mitmdump 可执行文件
+    3. 启动新进程，带 addon 脚本
+    4. 轮询等待端口就绪（最多 10 秒）
+
+    Returns:
+        True 如果重启成功且端口就绪，False 如果失败。
+    """
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path as _Path
+
+    _port = port or int(os.getenv("PROXY_PORT", "18080"))
+
+    # 1. 先检查是否已自恢复
+    if _check_mitmproxy_health(_port):
+        log.info("mitmproxy 代理（端口 %d）已恢复可用", _port)
+        return True
+
+    log.warning("mitmproxy 代理（端口 %d）不可用，尝试自动重启...", _port)
+
+    # 2. 查找 mitmdump
+    import shutil
+    project_dir = _Path(os.getenv("PROJECT_DIR", os.getcwd()))
+    addon_path = project_dir / "mcp_servers" / "mitm_addon.py"
+    if not addon_path.exists():
+        # 打包模式：尝试 bundle 目录
+        bundle_dir = _Path(getattr(sys, '_MEIPASS', project_dir))
+        addon_path = bundle_dir / "mcp_servers" / "mitm_addon.py"
+
+    mitmdump_path = None
+    candidates = [
+        _Path(sys.executable).parent / "mitmdump",
+        _Path(sys.executable).parent.parent.parent.parent / "bin" / "mitmdump",
+    ]
+    try:
+        import sysconfig
+        scripts_dir = sysconfig.get_path("scripts")
+        if scripts_dir:
+            candidates.append(_Path(scripts_dir) / "mitmdump")
+    except Exception:
+        pass
+
+    for cand in candidates:
+        if cand and cand.exists():
+            mitmdump_path = cand
+            break
+
+    if mitmdump_path:
+        mitm_cmd = [
+            str(mitmdump_path),
+            "-s", str(addon_path),
+            "-p", str(_port),
+            "--set", "stream_large_bodies=10m",
+            "--set", "connection_strategy=lazy",
+            "--quiet",
+        ]
+    elif shutil.which("mitmdump"):
+        mitm_cmd = [
+            "mitmdump",
+            "-s", str(addon_path),
+            "-p", str(_port),
+            "--set", "stream_large_bodies=10m",
+            "--set", "connection_strategy=lazy",
+            "--quiet",
+        ]
+    else:
+        log.error("mitmproxy 重启失败: 未找到 mitmdump 可执行文件")
+        return False
+
+    # 3. 启动新进程
+    try:
+        kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.PIPE,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        proc = subprocess.Popen(mitm_cmd, **kwargs)
+        log.info("mitmproxy 重启进程已启动 (PID: %d)", proc.pid)
+    except Exception as e:
+        log.error("mitmproxy 重启失败: %s", e)
+        return False
+
+    # 4. 轮询等待端口就绪
+    for attempt in range(10):
+        if proc.poll() is not None:
+            # 进程已退出
+            stderr_out = ""
+            try:
+                stderr_out = proc.stderr.read().decode("utf-8", errors="replace")[:300]
+            except Exception:
+                pass
+            log.error("mitmproxy 重启进程已退出 (code=%s): %s", proc.returncode, stderr_out)
+            return False
+        import time as _time
+        _time.sleep(1)
+        if _check_mitmproxy_health(_port):
+            log.info("mitmproxy 重启成功 (PID: %d, 端口: %d)", proc.pid, _port)
+            return True
+
+    log.warning("mitmproxy 重启后 10s 内端口未就绪，可能需要手动检查")
+    return False
+
+
 def _check_stuck_workers(
     active_workers: dict[str, asyncio.Task],
     worker_last_event: dict[str, float],
@@ -74,11 +206,12 @@ async def _run_fast_scanner_core(
     可在后台 asyncio.create_task 运行，与 LLM 准备阶段并行。
     """
     from core.fast_scanner import FastScanner
-    from core.config import FAST_SCAN_MAX_WORKERS, FAST_MODE_TIMEOUTS
+    from core.config import FAST_SCAN_MAX_WORKERS, FAST_SCAN_RATE_LIMIT, FAST_MODE_TIMEOUTS
 
     scanner = FastScanner(
         max_workers=FAST_SCAN_MAX_WORKERS,
         timeout=FAST_MODE_TIMEOUTS.get("request", 6.0),
+        request_rate_limit=FAST_SCAN_RATE_LIMIT,
     )
     findings = await scanner.scan_sitemap_features(
         untested, session_info=session_info, sitemap=sitemap
@@ -148,6 +281,9 @@ def _write_fast_scanner_results(
                 "fix_suggestion": finding.fix_suggestion,
                 # ★ 证据质量（header_only/body_confirmed/content_match）
                 "evidence_quality": getattr(finding, "evidence_quality", "") or "",
+                # ★ 优化.md 建议6：溯源 ID + 规则标签
+                "trace_id": getattr(finding, "trace_id", "") or "",
+                "rule_tag": getattr(finding, "rule_tag", "") or "",
             })
 
     # 将 orphan findings 存入 sitemap，确保不丢失
@@ -159,6 +295,48 @@ def _write_fast_scanner_results(
     if sitemap:
         sitemap.save()
     return hit_count
+
+
+def _apply_skill_routing(findings: list, sitemap, top_n: int = 3) -> None:
+    """Fast 模式 skill 引导（确定性，零 LLM）：给 FastScanner 发现打 skill 标签 + 挂 skill_routes 到 sitemap。
+
+    仅做 VULN_TO_SKILL 查表（经 core.skill_router），不调用 LLM、不消耗 API。
+    供报告展示「每个发现由哪个 SKILL 治理」，以及 top-N 最相关 SKILL 指引。
+    异常安全：失败只记日志，绝不阻断主流程。
+    """
+    if not findings:
+        return
+    vuln_types = {getattr(f, "vuln_type", "") for f in findings if getattr(f, "vuln_type", "")}
+    if not vuln_types:
+        return
+    try:
+        from core.skill_router import build_vuln_to_skill_routes, route_vuln_types_to_skills
+
+        lookup = build_vuln_to_skill_routes(vuln_types)
+        for f in findings:
+            vt = getattr(f, "vuln_type", "")
+            route = lookup.get(vt)
+            if route:
+                f.skill = route.skill_name
+                f.skill_path = route.skill_path
+
+        top_routes = route_vuln_types_to_skills(vuln_types, top_n=top_n)
+        if sitemap is not None:
+            sitemap.skill_routes = {
+                "enabled": True,
+                "zero_llm": True,
+                "routes": [r.to_dict() for r in top_routes],
+            }
+            # orphan findings 也补打标，避免 skill 溯源信息丢失
+            orphans = getattr(sitemap, "_fast_scanner_orphan_findings", None) or []
+            for o in orphans:
+                vt = o.get("vuln_type", "")
+                route = lookup.get(vt)
+                if route:
+                    o["skill"] = route.skill_name
+                    o["skill_path"] = route.skill_path
+    except Exception as e:
+        log.warning("skill 路由标注失败（不影响主流程）: %s", e)
 
 
 async def _run_scripted_scan_core(sitemap, session_info: dict | None) -> tuple[list[dict], dict]:
@@ -368,6 +546,20 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
     if not session.sitemap:
         return
 
+    # ★ Phase 2 开始前：mitmproxy 健康检查 + 自动重启
+    # 确保 Phase 2 期间产生的流量被正确记录到 flows.jsonl，供 Phase 2.55 补测使用
+    _p2_proxy_port = int(os.getenv("PROXY_PORT", "18080"))
+    if not _check_mitmproxy_health(_p2_proxy_port):
+        log.warning("Phase 2 开始: mitmproxy 代理不可用（端口 %d），尝试自动重启", _p2_proxy_port)
+        _p2_restart_ok = _try_restart_mitmproxy(_p2_proxy_port)
+        if _p2_restart_ok:
+            yield session._event("system",
+                f"✅ Phase 2: mitmproxy 代理已自动重启（端口 {_p2_proxy_port}）")
+        else:
+            yield session._event("system",
+                f"⚠️ Phase 2: mitmproxy 代理不可用且重启失败，"
+                f"流量记录将依赖 Playwright 降级写入")
+
     untested = session.sitemap.get_untested_features()
     if not untested:
         async for evt in _enter_report_phase(session):
@@ -460,8 +652,10 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
     if enable_fast:
         from core.config import FAST_MODE_TIMEOUTS as _FST
         _lead_time = _FST.get("lead_time", 120.0)
+        _hard_timeout = _FST.get("hard_timeout", 600.0)
         yield session._event("system",
             f"🚀 FastScanner 先行: 本地规则引擎检测（LLM 准备阶段待其完成，超时 {_lead_time:.0f}s）")
+        _fast_start_time = time.monotonic()
         fast_task = asyncio.create_task(
             _run_fast_scanner_core(untested, session_info, sitemap=session.sitemap)
         )
@@ -472,6 +666,8 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
                 fast_findings, fast_stats = fast_task.result()
                 session._fast_scanner_stats = fast_stats
                 hit_count = _write_fast_scanner_results(fast_findings, untested, session.sitemap)
+                if scan_cfg.enable_skill_routing:
+                    _apply_skill_routing(fast_findings, session.sitemap, scan_cfg.skill_routing_top_n)
                 yield session._event("system",
                     f"⚡ FastScanner 完成: {len(fast_findings)} 条命中, {hit_count} 个功能点已标记")
                 _fast_done = True
@@ -509,12 +705,23 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
 
     # ---- Step 5: 等待 FastScanner 后台完成（仅超时降级路径）----
     if fast_task is not None:
+        # ★ 硬超时：从 FastScanner 启动算起的总预算，超过则取消 task 避免无限拖慢
+        _elapsed = time.monotonic() - _fast_start_time
+        _remaining = max(1.0, _hard_timeout - _elapsed)
         try:
-            fast_findings, fast_stats = await fast_task
+            fast_findings, fast_stats = await asyncio.wait_for(fast_task, timeout=_remaining)
             session._fast_scanner_stats = fast_stats
             hit_count = _write_fast_scanner_results(fast_findings, untested, session.sitemap)
+            if scan_cfg.enable_skill_routing:
+                _apply_skill_routing(fast_findings, session.sitemap, scan_cfg.skill_routing_top_n)
             yield session._event("system",
                 f"⚡ FastScanner 后台完成: {len(fast_findings)} 条命中, {hit_count} 个功能点已标记")
+        except asyncio.TimeoutError:
+            fast_task.cancel()
+            log.warning("FastScanner 硬超时（>%ds），取消后台任务，放弃剩余扫描结果",
+                        int(_hard_timeout))
+            yield session._event("system",
+                f"⏱️ FastScanner 硬超时（>{int(_hard_timeout)}s），已取消，使用 LLM 路径结果")
         except Exception as e:
             log.warning("FastScanner 后台异常: %s", e)
             yield session._event("system", f"⚠️ FastScanner 异常（不影响 LLM 路径）: {str(e)[:120]}")
@@ -1435,6 +1642,26 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
             yield session._event("system",
                 f"ℹ️ 业务理解状态为 {bu_status},跳过 Phase 2.5 对账")
 
+    # ★ 代理健康检查 + 自动重启：Phase 2.55 补测前检测 mitmproxy 是否可用
+    # 代理不可用时尝试自动重启；重启失败则使用降级方案：
+    #   1. Playwright 降级写入 flows.jsonl（crawler_core.py）
+    #   2. 主动目录爆破发现新 API（supplemental_test_agent.py）
+    _proxy_port = int(os.getenv("PROXY_PORT", "18080"))
+    if not _check_mitmproxy_health(_proxy_port):
+        yield session._event("system",
+            f"⚠️ mitmproxy 代理（端口 {_proxy_port}）未运行，尝试自动重启...")
+        log.warning("Phase 2.55: mitmproxy 代理不可用（端口 %d），尝试自动重启", _proxy_port)
+
+        _restart_ok = _try_restart_mitmproxy(_proxy_port)
+        if _restart_ok:
+            yield session._event("system",
+                f"✅ mitmproxy 代理已自动重启成功（端口 {_proxy_port}）")
+        else:
+            yield session._event("system",
+                f"⚠️ mitmproxy 代理自动重启失败，补测将依赖主动目录爆破 + Playwright 降级写入。"
+                f"flows.jsonl 可能不完整。")
+            log.warning("Phase 2.55: mitmproxy 重启失败，使用降级模式")
+
     # ★ Phase 2.55: 补测 Agent (2026-05-22)
     # ★ P2-A: FAST 模式不再完全跳过补测，改用本地规则版（FastScanner 替代 WorkerAgent）
     _fast_mode = getattr(session, "user_scan_mode", "smart") == "fast"
@@ -1513,10 +1740,11 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                     s = supp_evt.get("summary", {})
                     session._supplemental_summary = s
                     supp_elapsed = s.get("elapsed", time.time() - supp_started)
-                    if s.get("error"):
+                    if s.get("error") or s.get("warning"):
+                        _alert = s.get("error") or s.get("warning")
                         yield session._event("system",
-                            f"⚠️ Phase 2.55 本地补测完成（含异常，耗时 {supp_elapsed:.1f}s）:\n"
-                            f"  - 错误原因: {s.get('error')}\n"
+                            f"⚠️ Phase 2.55 本地补测完成（含提示，耗时 {supp_elapsed:.1f}s）:\n"
+                            f"  - 原因: {_alert}\n"
                             f"  - 发现新 API: {s.get('discovered', 0)} 个\n"
                             f"  - 新建 feature: {s.get('new_features', 0)} 个\n"
                             f"  - 测试 feature: {s.get('tested_features', 0)} 个\n"

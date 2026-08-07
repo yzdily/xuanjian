@@ -197,6 +197,10 @@ def render_to_markdown(hv_result: dict) -> str:
             extra_parts.append(f"证据强度: {vd.get('evidence_strength', '')}")
             extra_parts.append(f"修复优先级: {vd.get('fix_priority', '')}")
             extra_parts.append(f"原漏洞 ID: `{vd.get('vuln_id', '')}`")
+            # ★ 优化.md 建议6：溯源 ID
+            _trace = orig.get("trace_id", "") or vd.get("trace_id", "")
+            if _trace:
+                extra_parts.append(f"溯源 ID: `{_trace}`")
             if extra_parts:
                 lines.append(f"<details><summary>附加信息</summary>\n\n{'  '.join(extra_parts)}\n\n</details>")
                 lines.append("")
@@ -352,6 +356,18 @@ def _render_checklist_vulns_block(vulns: list[dict]) -> list[str]:
         lines.append(f"| URL | `{url}` |")
         lines.append(f"| 参数 | {params_str} |")
         lines.append(f"| 影响 | {impact_text} |")
+        # ★ 优化.md 建议5/2：CWE 映射 + 四维定级依据（checklist 兜底展示同样补 CWE）
+        from core.cwe_mapping import enrich_finding_with_cwe as _enrich_cwe
+        from core.severity_rules import apply_severity as _apply_sev
+        _enrich_cwe(v)
+        _apply_sev(v)
+        cwe_id = v.get("cwe_id", "")
+        cwe_name = v.get("cwe_name", "")
+        if cwe_id:
+            lines.append(f"| CWE | [{cwe_id} {cwe_name}]({v.get('cwe_url', '')}) |")
+        sev_rationale = v.get("severity_rationale", "")
+        if sev_rationale:
+            lines.append(f"| 定级依据 | {sev_rationale} |")
         lines.append("")
 
         # 复现步骤
@@ -489,11 +505,104 @@ def _get_test_summary_from_sitemap(task_id: str) -> list[str]:
         return []
 
 
+def merge_similar_findings(verdicts: list[dict], threshold: int = 3) -> list[dict]:
+    """合并同类漏洞（优化.md 建议7）。
+
+    同组（漏洞类型 + 严重度）> threshold 条时，合并为一条带端点清单的发现，
+    避免报告中大量同类条目堆叠（如 109 条敏感路径 200 合并为 1 条）。
+    合并后保留第一条作为代表，其余 URL 收进 _merged_endpoints 字段。
+    """
+    if not verdicts:
+        return []
+    from core.cwe_mapping import normalize_vuln_type
+
+    def _group_key(vd: dict) -> str:
+        orig = vd.get("_original", {}) or {}
+        vt = normalize_vuln_type(orig.get("vuln_type", "") or vd.get("vuln_id", ""))
+        level = (vd.get("platform_level") or "").lower()
+        return f"{vt}|{level}"
+
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for vd in verdicts:
+        k = _group_key(vd)
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(vd)
+
+    result: list[dict] = []
+    for k in order:
+        grp = groups[k]
+        if len(grp) <= threshold:
+            result.extend(grp)
+            continue
+        # 合并：取第一条作为代表
+        rep = dict(grp[0])
+        endpoints: list[str] = []
+        for g in grp:
+            orig = g.get("_original", {}) or {}
+            url = orig.get("url", "") or g.get("vuln_id", "")
+            if url and url not in endpoints:
+                endpoints.append(url)
+        rep["_merged_endpoints"] = endpoints
+        rep["_merged_count"] = len(grp)
+        orig = rep.get("_original", {}) or {}
+        merged_title = f"{orig.get('vuln_type', '同类漏洞')} ×{len(grp)}（已合并端点清单）"
+        orig_merged = dict(orig)
+        orig_merged["title"] = merged_title
+        rep["_original"] = orig_merged
+        result.append(rep)
+    return result
+
+
+def _compliance_footer(target_label: str, scope_label: str) -> list[str]:
+    """★ 优化.md 建议3：生成合规章节尾部（测试范围/免责声明/复测建议）。
+
+    可在 render_proven_only 的所有分支中复用，确保无论有无漏洞都包含合规章节。
+    """
+    return [
+        "---",
+        "",
+        "## 测试范围与局限性",
+        "",
+        "**测试范围**：",
+        f"- 目标: `{target_label}`",
+        f"- 测试范围: {scope_label}",
+        "- 测试方式: 自动化漏洞扫描 + LLM 危害验证 + 人工研判标准过滤",
+        "",
+        "**局限性声明**：",
+        "- 本报告仅覆盖测试期间可访问的接口和功能点，不保证发现所有潜在漏洞。",
+        "- 自动化扫描可能遗漏需要复杂业务逻辑上下文的漏洞（如多步组合利用链）。",
+        "- 危害验证基于当前测试环境，实际风险可能因部署配置差异而不同。",
+        "- 标记为「边缘」的漏洞需人工进一步复核确认。",
+        "",
+        "## 免责声明",
+        "",
+        "本报告由自动化安全测试工具生成，仅供授权方在授权范围内参考使用。",
+        "测试人员已尽合理努力确保报告准确性，但不对其完整性作任何担保。",
+        "报告接收方应根据自身业务场景进行独立评估，并决定是否采纳修复建议。",
+        "",
+        "## 复测建议",
+        "",
+        "1. **修复后复测时间点**：建议在漏洞修复完成后 3 个工作日内安排复测。",
+        "2. **复测验证清单**：",
+        "   - 逐条验证本报告中列出的每个漏洞是否已修复",
+        "   - 对「边缘」漏洞确认是否为真实漏洞并决定是否纳入修复范围",
+        "   - 重新运行扫描以确认无新增漏洞",
+        "3. **溯源验证**：每条漏洞的「溯源 ID」可在测试日志中检索原始请求/响应证据，",
+        "   复测时可对照验证修复效果。",
+        "",
+    ]
+
+
 def render_proven_only(
     hv_result: dict,
     target: str = "",
     task_id: str = "",
     orphan_findings: list | None = None,
+    tester: str = "",
+    scan_scope: str = "",
 ) -> str:
     """渲染【已证明漏洞】独立报告（报告 B）。
 
@@ -507,23 +616,37 @@ def render_proven_only(
     - ★ orphan_findings: FastScanner 未匹配功能点的发现。当 harm_validation
       未产出 accepted 时，把它们作为"待人工确认"列出，避免报告永远空、
       用户以为系统没发现任何问题。
+    - ★ 优化.md 建议3：补合规章节（封面/执行摘要/范围局限性/免责声明/复测建议）
+      tester/scan_scope 由调用方注入，禁止写死测试人员姓名。
     """
     import time as _time
 
     target_label = target or "（未知目标）"
     task_label = task_id or "default"
+    tester_label = tester or "（未指定）"
+    scope_label = scan_scope or "由测试配置决定（详见测试覆盖摘要）"
     timestamp = _time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # ★ 优化.md 建议3：合规章节 — 封面
     header = [
-        "# 已证明漏洞报告",
+        "# 安全测试报告 — 已证明漏洞",
         "",
         f"> 这份报告**只包含被审核员判定为有实际危害、达到 SRC / 赏金平台收录标准**的漏洞。",
         f"> 已剔除：CORS 配置不规范、防御纵深建议、形式合规问题等无实际利用链的条目。",
         f"> 完整测试发现请查看「完整报告」。",
         "",
-        f"- 目标: `{target_label}`",
-        f"- 任务 ID: `{task_label}`",
-        f"- 生成时间: {timestamp}",
+        "---",
+        "",
+        "## 封面信息",
+        "",
+        "| 项目 | 内容 |",
+        "|------|------|",
+        f"| 测试目标 | `{target_label}` |",
+        f"| 测试日期 | {timestamp} |",
+        f"| 测试人员 | {tester_label} |",
+        f"| 任务 ID | `{task_label}` |",
+        f"| 测试范围 | {scope_label} |",
+        f"| 授权声明 | 本次测试已在授权范围内执行，所有测试行为基于已获取的合法授权。 |",
         "",
         "---",
         "",
@@ -536,24 +659,25 @@ def render_proven_only(
         # 避免 54 个漏洞的任务 proven 报告只显示"暂无数据"
         checklist_vulns = _get_vulns_from_sitemap(task_label)
         checklist_block = _render_checklist_vulns_block(checklist_vulns)
+        _footer = _compliance_footer(target_label, scope_label)
         if orphan_block:
-            return "\n".join(header + test_summary + checklist_block + orphan_block)
+            return "\n".join(header + test_summary + checklist_block + orphan_block + _footer)
         if checklist_block:
             # 有 checklist 漏洞时，说明测试已发现漏洞但危害验证没运行
-            return "\n".join(header + test_summary + checklist_block)
+            return "\n".join(header + test_summary + checklist_block + _footer)
         return "\n".join(header + test_summary + [
             "## 暂无数据",
             "",
             "尚未运行漏洞危害验证（Phase 2.6）。请等待测试结束或在测试完成后查看。",
             "",
-        ])
+        ] + _footer)
 
     status = hv_result.get("status", "")
     if status == "no_vulns":
         orphan_block = _render_orphan_block(orphan_findings)
         test_summary = _get_test_summary_from_sitemap(task_label)
         if orphan_block:
-            return "\n".join(header + test_summary + orphan_block)
+            return "\n".join(header + test_summary + orphan_block + _compliance_footer(target_label, scope_label))
         return "\n".join(header + test_summary + [
             "## 无已证明的漏洞",
             "",
@@ -562,7 +686,7 @@ def render_proven_only(
             "> 以上测试覆盖摘要展示了本次测试的覆盖范围和结论。",
             "> 完整的测试详情请查看「完整报告」。",
             "",
-        ])
+        ] + _compliance_footer(target_label, scope_label))
     if status != "ok":
         err = hv_result.get("error", "未知错误")
         # ★ 危害验证失败时也展示 checklist 漏洞，避免报告空
@@ -578,7 +702,7 @@ def render_proven_only(
             "",
             "请查看「完整报告」中的漏洞详情。",
             "",
-        ])
+        ] + _compliance_footer(target_label, scope_label))
 
     verdicts = hv_result.get("verdicts", []) or []
     accepted = [v for v in verdicts if v.get("verdict") == "accepted"]
@@ -636,6 +760,16 @@ def render_proven_only(
         return result
 
     accepted = _dedupe_verdicts(accepted)
+
+    # ★ 优化.md 建议5/2/7：补 CWE + 四维定级，并合并同类项
+    from core.cwe_mapping import enrich_finding_with_cwe
+    from core.severity_rules import apply_severity
+    for vd in accepted:
+        orig = vd.get("_original")
+        if isinstance(orig, dict):
+            enrich_finding_with_cwe(orig)
+            apply_severity(orig)
+    accepted = merge_similar_findings(accepted)
 
     if not accepted:
         rej_count = sum(1 for v in verdicts if v.get("verdict") == "rejected")
@@ -760,10 +894,31 @@ def render_proven_only(
             body.append("")
         if summary:
             body.extend(["**审核员总评**:", "", summary, ""])
-        return "\n".join(header + body)
+        return "\n".join(header + body + _compliance_footer(target_label, scope_label))
 
     # 有 accepted 漏洞 → 正式渲染
     lines = list(header)
+
+    # ★ 优化.md 建议3：执行摘要 + 定级说明
+    lines.append("## 执行摘要")
+    lines.append("")
+    lines.append(f"本次安全测试对目标 `{target_label}` 进行了自动化漏洞扫描与危害验证。")
+    lines.append(f"经专业安全人员视角二次研判，共发现 **{len(accepted)} 个**达到 SRC/赏金平台收录标准的漏洞。")
+    lines.append("")
+    lines.append("**定级说明（评级口径）**：")
+    lines.append("")
+    lines.append("本报告采用四维定级法（数据敏感度 × 可利用性 × 认证要求 × 影响范围）：")
+    lines.append("")
+    lines.append("| 等级 | 定义 |")
+    lines.append("|------|------|")
+    lines.append("| 🔴 严重 | 无凭证可直接读写核心敏感数据/执行管理操作 |")
+    lines.append("| 🟠 高危 | 存在可利用的漏洞链，需有限条件即可触发 |")
+    lines.append("| 🟡 中危 | 需特定条件或认证后方可利用，影响有限 |")
+    lines.append("| 🔵 低危 | 信息泄露/配置建议，无直接利用链 |")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
     lines.append(f"## 📊 总览")
     lines.append("")
     lines.append(f"**已证明的漏洞数: {len(accepted)} 个**")
@@ -830,6 +985,22 @@ def render_proven_only(
         lines.append(f"| URL | `{url}` |")
         lines.append(f"| 参数 | {params_str} |")
         lines.append(f"| 影响 | {impact_text} |")
+        # ★ 优化.md 建议5/2：CWE 映射 + 四维定级依据
+        cwe_id = orig.get("cwe_id", "")
+        cwe_name = orig.get("cwe_name", "")
+        if cwe_id:
+            cwe_url = orig.get("cwe_url", "")
+            if cwe_url:
+                lines.append(f"| CWE | [{cwe_id} {cwe_name}]({cwe_url}) |")
+            else:
+                lines.append(f"| CWE | {cwe_id} {cwe_name} |")
+        sev_rationale = orig.get("severity_rationale", "")
+        if sev_rationale:
+            lines.append(f"| 定级依据 | {sev_rationale} |")
+        # ★ 优化.md 建议6：溯源 ID（日志→报告溯源）
+        trace_id = orig.get("trace_id", "") or vd.get("trace_id", "")
+        if trace_id:
+            lines.append(f"| 溯源 ID | `{trace_id}` |")
         lines.append("")
 
         # 复现步骤
@@ -936,8 +1107,25 @@ def render_proven_only(
         extra_parts.append(f"修复优先级: {vd.get('fix_priority', '')}")
         if vid:
             extra_parts.append(f"原漏洞 ID: `{vid}`")
+        # ★ 优化.md 建议6：溯源 ID（附加信息中也列出，方便折叠查看）
+        if not trace_id:
+            trace_id = orig.get("trace_id", "") or vd.get("trace_id", "")
+        if trace_id:
+            extra_parts.append(f"溯源 ID: `{trace_id}`（可在测试日志中检索对应请求/响应）")
         if extra_parts:
             lines.append(f"<details><summary>附加信息</summary>\n\n{'  '.join(extra_parts)}\n\n</details>")
+            lines.append("")
+
+        # ★ 优化.md 建议7：合并端点清单（同类漏洞合并后展示）
+        merged_endpoints = vd.get("_merged_endpoints") or []
+        merged_count = vd.get("_merged_count", 0)
+        if merged_endpoints:
+            lines.append(f"<details><summary>已合并端点清单（共 {merged_count} 个同类端点）</summary>\n\n")
+            for ep_url in merged_endpoints[:50]:
+                lines.append(f"- `{ep_url}`")
+            if len(merged_endpoints) > 50:
+                lines.append(f"- ... 还有 {len(merged_endpoints) - 50} 个端点未列出")
+            lines.append("\n</details>")
             lines.append("")
 
         lines.append("---")
@@ -948,6 +1136,9 @@ def render_proven_only(
         lines.append("")
         lines.append(summary)
         lines.append("")
+
+    # ★ 优化.md 建议3：测试范围与局限性 / 免责声明 / 复测建议
+    lines.extend(_compliance_footer(target_label, scope_label))
 
     return "\n".join(lines)
 

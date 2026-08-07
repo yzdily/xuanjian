@@ -315,28 +315,47 @@ def build_rescue_messages(
 
 
 def generate_placeholder_verdicts(vulns: list[dict]) -> str:
-    """救援彻底失败时的兜底：基于原漏洞数据生成 rejected 占位 verdicts。
+    """救援彻底失败时的兜底：基于原漏洞证据质量生成确定性裁决（优化.md P0-3）。
 
     设计原则：
     - 哪怕 LLM 完全摆烂，至少给报告生成器一份可解析的数据
-    - ★ 2026-08-05：从 borderline 改为 rejected，避免无 PoC 的占位数据
-      进入"待人工复核"区误导用户。LLM 调用失败 ≠ 有漏洞待复核，
-      无 PoC 数据无法人工复核，归入"拒收（透明披露）"更准确。
-    - poc_note 明确写"LLM 救援失败 - 无 PoC 数据"
+    - ★ 确定性降级规则（LLM 不可用时不再一刀切 rejected）：
+      * evidence_quality == body_confirmed / content_match（响应体级强证据）
+        → borderline（保留待人工复核，避免丢弃真实漏洞）
+      * header_only / 未知（仅响应头/状态码弱证据）
+        → rejected（弱证据无法人工复核，归入拒收透明披露）
+    - 这样 LLM 故障时，有响应体敏感数据证据的漏洞不会被误丢弃。
     """
+    # 证据质量 -> 确定性裁决
+    _STRONG = ("body_confirmed", "content_match")
     verdicts = []
     for v in vulns:
-        verdicts.append({
-            "vuln_id": v.get("vuln_id", "?"),
-            "verdict": "rejected",
-            "platform_level": "信息",
-            "harm_story": f"{v.get('vuln_type', '?')}：危害验证 LLM 调用失败，无 PoC 数据",
-            "evidence_strength": "弱",
-            "poc_request": "未生成",
-            "poc_response": "未生成",
-            "poc_note": "LLM 救援失败 - 无 PoC 数据，危害验证未执行成功",
-            "reject_reason": "危害验证 LLM 调用失败，未生成 PoC，无法人工复核",
-        })
+        eq = (v.get("evidence_quality", "") or "").lower()
+        if eq in _STRONG:
+            verdicts.append({
+                "vuln_id": v.get("vuln_id", "?"),
+                "verdict": "borderline",
+                "platform_level": "中危",
+                "harm_story": f"{v.get('vuln_type', '?')}：危害验证 LLM 调用失败，"
+                              f"但存在响应体级强证据({eq})，保留待人工复核",
+                "evidence_strength": "中",
+                "poc_request": "未生成（LLM 故障）",
+                "poc_response": v.get("evidence", "")[:500] or "未生成",
+                "poc_note": f"LLM 救援失败，但证据质量={eq}（响应体级），"
+                            f"自动保留为 borderline 待人工复核",
+            })
+        else:
+            verdicts.append({
+                "vuln_id": v.get("vuln_id", "?"),
+                "verdict": "rejected",
+                "platform_level": "信息",
+                "harm_story": f"{v.get('vuln_type', '?')}：危害验证 LLM 调用失败，无 PoC 数据",
+                "evidence_strength": "弱",
+                "poc_request": "未生成",
+                "poc_response": "未生成",
+                "poc_note": "LLM 救援失败 - 无 PoC 数据，危害验证未执行成功",
+                "reject_reason": "危害验证 LLM 调用失败，未生成 PoC，无法人工复核",
+            })
     return "```json\n" + json.dumps(verdicts, ensure_ascii=False, indent=2) + "\n```"
 
 

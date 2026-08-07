@@ -25,8 +25,11 @@ import json
 import logging
 import re
 import os
+import time
+import uuid
 from urllib.parse import urlparse, urljoin
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 log = logging.getLogger("auto_crawler")
@@ -78,6 +81,74 @@ MENU_API_KEYWORDS = (
     # 新增：常见后台框架
     "/antdpro/menu", "/umi/routes",
 )
+
+
+# ============================================================
+# 降级写入 flows.jsonl（mitmproxy 不可用时替代方案）
+# ============================================================
+
+# 静态资源扩展名（与 mitm_addon.py IGNORE_EXTENSIONS 保持一致）
+_FALLBACK_IGNORE_EXTS = (
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".mp4", ".mp3",
+)
+
+
+async def _write_flow_fallback(resp, url: str, content_type: str, captured: list) -> None:
+    """当 mitmproxy 不可用时，把 Playwright 拦截的响应写入 flows.jsonl。
+
+    确保补测 Agent（discover_new_apis_from_flows）有数据可分析。
+    记录格式与 mitm_addon.py FlowRecorder.response 保持一致。
+    """
+    # 过滤静态资源
+    path = url.split("?")[0].lower()
+    if any(path.endswith(ext) for ext in _FALLBACK_IGNORE_EXTS):
+        return
+
+    # 过滤非业务 Content-Type
+    if any(content_type.startswith(ig) for ig in (
+        "image/", "font/", "video/", "audio/", "text/css", "application/javascript",
+    )):
+        return
+
+    # 从 captured 列表中找到匹配的请求信息
+    matched_req = next((r for r in reversed(captured) if r.get("url") == url), {})
+
+    # 获取响应体（限制大小）
+    response_body = ""
+    try:
+        if any(marker in content_type for marker in ("json", "xml", "html", "text", "javascript")):
+            response_body = (await resp.text())[:10000]
+    except Exception:
+        pass
+
+    # 获取请求体
+    request_body = matched_req.get("post_data", "")[:2000] if matched_req else ""
+
+    flow_file = Path(os.getenv(
+        "PROXY_FLOW_FILE",
+        str(Path(os.getcwd()) / "data" / "pentest_agent_flows.jsonl"),
+    ))
+
+    record = {
+        "id": f"flow_{uuid.uuid4().hex[:8]}",
+        "timestamp": time.time(),
+        "method": matched_req.get("method", "GET") if matched_req else "GET",
+        "url": url,
+        "request_headers": matched_req.get("headers", {}) if matched_req else {},
+        "request_body": request_body,
+        "status_code": resp.status,
+        "response_headers": dict(resp.headers),
+        "response_body": response_body,
+        "content_type": content_type,
+    }
+
+    try:
+        flow_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(flow_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuilderMixin):
@@ -331,6 +402,12 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         self._user_aborted: bool = False  # 区分"用户主动中止"和"静默超时"
         # 进度计数器（供外部判断"静默期"使用）
         self._progress_tick: int = 0  # 每点完一个菜单 / 抓到一个 API +1
+        # ★ 细粒度活动时间戳：记录最后一次有意义的爬虫活动（网络响应/API发现/JS分析等）
+        # 外部 silent_timeout 检测同时使用 progress_tick 和 _last_activity_time，
+        # 避免在慢操作（LLM JS 分析、大页面加载）期间误判为"静默"而提前停止
+        self._last_activity_time: float = time.time()
+        # ★ 网络活动计数：每次收到业务响应 +1，用于辅助判断爬虫是否还在工作
+        self._network_activity_count: int = 0
         # ★ ID 子页去重：记录各路径模式的入队次数，防列表详情子页耗光配额
         self._id_page_pattern_count: dict[str, int] = {}
 
@@ -371,6 +448,22 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
     def progress_tick(self) -> int:
         """单调递增的进度计数。外部用它判断'是否还在产新东西'。"""
         return self._progress_tick
+
+    @property
+    def last_activity_time(self) -> float:
+        """最后一次有意义的爬虫活动的时间戳（time.time()）。
+
+        外部 silent_timeout 检测同时使用 progress_tick 和 last_activity_time：
+        - progress_tick 只在页面/菜单/API 粗粒度事件时 +1
+        - last_activity_time 在更细粒度的活动（网络响应、JS 分析等）时更新
+        两者任一有进展就不触发静默超时，避免慢操作期间误判。
+        """
+        return self._last_activity_time
+
+    def _touch_activity(self) -> None:
+        """更新活动时间戳（内部方法，在各活动点调用）。"""
+        self._last_activity_time = time.time()
+        self._network_activity_count += 1
 
     def get_partial_result(self) -> dict[str, Any]:
         """随时获取当前已抓的快照（不等爬虫跑完）。
@@ -995,6 +1088,21 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                 url = resp.url
                 ct = (resp.headers.get("content-type") or "").lower()
 
+                # ★ 细粒度活动追踪：业务 API 响应到达即更新活动时间戳，
+                # 防止 silent_timeout 在页面加载/API 响应慢时误触发
+                if self._is_in_scope(url) and resp.status < 500:
+                    self._touch_activity()
+
+                # ---- 降级写入 flows.jsonl（代理不可用时替代 mitmproxy） ----
+                # 当 mitmproxy 未运行时，浏览器直连目标，flows.jsonl 为空，
+                # 导致 Phase 2.55 补测无法发现新 API。此处降级把 Playwright
+                # 拦截的响应写入 flows.jsonl，确保补测有数据可分析。
+                if not use_proxy:
+                    try:
+                        await _write_flow_fallback(resp, url, ct, captured)
+                    except Exception:
+                        pass
+
                 # ---- GraphQL / SSE 响应拆解（不影响后续菜单树和文档发现） ----
                 try:
                     response_text = ""
@@ -1064,6 +1172,9 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                                     },
                                 })
                                 self._report(f"  🗺️ 菜单树 API 命中: {url[:80]} (角色 {role}, 响应 {len(body_str)} 字符)")
+                                # ★ 发现菜单树 = 重大进展，更新活动时间 + 进度计数
+                                self._touch_activity()
+                                self._progress_tick += 1
 
                         elif not is_menu_api and isinstance(root, list) and len(root) >= 3:
                             # ★ 启发式检测：对非关键词命中的 JSON 响应检测树形结构
@@ -1098,6 +1209,9 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                                         f"  🗺️ 启发式菜单树发现: {url[:80]} "
                                         f"(角色 {role}, {len(root)} 节点, {len(paths_h)} 路径, {len(body_str)} 字符)"
                                     )
+                                    # ★ 启发式菜单树发现也是重大进展
+                                    self._touch_activity()
+                                    self._progress_tick += 1
 
                 # ---- API 文档指纹检测（轻量，只记录命中） ----
                 if api_doc_hits is not None and ("html" in ct or "json" in ct or "javascript" in ct):
@@ -1113,6 +1227,8 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                                     "name": h.name,
                                 })
                             self._report(f"  🔍 API 文档发现: {url[:80]} → {', '.join(h.name for h in hits)}")
+                            # ★ API 文档发现 = 进展
+                            self._touch_activity()
                     except Exception as _e:
                         log.debug("API 文档发现失败 (不影响主流程): %s", _e)
 
@@ -1537,6 +1653,9 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     f"发现 {len(js_analysis.api_calls)} 个 API 路径, "
                     f"{len(js_analysis.routes)} 个前端路由"
                 )
+                # ★ JS 分析产出 = 进展，更新活动时间戳 + 进度计数
+                self._touch_activity()
+                self._progress_tick += 1
 
             # 汇总 API
             # ★ 区分业务 API 和其他请求，给用户更丰富的信息

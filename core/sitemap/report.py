@@ -60,6 +60,10 @@ class ReportMixin:
         orphan_findings = []
         orphan_findings.extend(getattr(self, "_fast_scanner_orphan_findings", None) or [])
         orphan_findings.extend(getattr(self, "_scripted_scan_findings", None) or [])
+        # ★ 优化.md 建议3：补合规章节 — 传入扫描范围信息
+        _page_count = self._count_pages() if hasattr(self, "_count_pages") else 0
+        _api_count = self._count_apis() if hasattr(self, "_count_apis") else 0
+        _scan_scope = f"共 {_page_count} 个页面、{_api_count} 个 API 接口"
         content = render_proven_only(
             hv_result,
             target=getattr(self, "target", "") or "",
@@ -67,6 +71,7 @@ class ReportMixin:
             # ★ 传入孤儿发现：当 harm_validation 无 accepted 时，至少列出
             # 广扫发现的未匹配候选，避免 proven 报告永远空
             orphan_findings=orphan_findings,
+            scan_scope=_scan_scope,
         )
         try:
             self._proven_report_path().write_text(content, encoding="utf-8")
@@ -125,7 +130,17 @@ class ReportMixin:
         if task_summary:
             lines.append(f"| LLM 调用次数 | {task_summary.get('calls', 0)} |")
             lines.append(f"| LLM Token 总量 | {task_summary.get('total_tokens', 0)} |")
+        skill_routes = getattr(self, "skill_routes", None)
+        if skill_routes and skill_routes.get("routes"):
+            lines.append(f"| Skill 引导(零LLM) | {len(skill_routes['routes'])} 个 SKILL |")
         lines.append("")
+
+        if skill_routes and skill_routes.get("routes"):
+            lines.append("**Skill 引导（确定性映射 · 零 LLM）**：")
+            lines.append("")
+            for r in skill_routes["routes"]:
+                lines.append(f"- `{r['skill_name']}`（优先级 {r['priority']}）← 治理 `{r['vuln_type']}`")
+            lines.append("")
 
         if pending:
             lines.append(f"> ⚠️ 仍有 {len(pending)} 项未完成。报告可用于阶段性审阅，但不应声明为完整测试。")

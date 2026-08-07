@@ -342,6 +342,9 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
             "candidate_level": "suspected",
             # ★ 证据质量（FastScanner 已标注）
             "evidence_quality": f.get("evidence_quality", "") or "",
+            # ★ 优化.md 建议6：溯源 ID + 规则标签（日志→报告溯源）
+            "trace_id": f.get("trace_id", "") or "",
+            "rule_tag": f.get("rule_tag", "") or "",
         })
 
     # 4. 脚本广扫发现（统一作为 suspected 候选）
@@ -373,6 +376,9 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
             "confidence": f.get("confidence", 0),
             "public_api_evidence": public_evidence,
             "candidate_level": "suspected",
+            # ★ 优化.md 建议6：溯源 ID + 规则标签（日志→报告溯源）
+            "trace_id": f.get("trace_id", "") or "",
+            "rule_tag": f.get("rule_tag", "") or "",
         })
 
     return vulns

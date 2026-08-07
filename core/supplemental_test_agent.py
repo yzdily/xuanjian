@@ -462,6 +462,142 @@ def _is_non_business_path(path: str) -> bool:
 
 
 # ============================================================
+# L1b: 主动目录爆破发现新 API（dirsearch 风格）
+# ============================================================
+
+async def discover_apis_from_dirscan(
+    sitemap: Sitemap,
+    target_url: str,
+    auth_headers: dict | None = None,
+    existing_apis: list[_DiscoveredAPI] | None = None,
+) -> tuple[list[_DiscoveredAPI], dict[str, int]]:
+    """使用 DirectoryScanner 主动爆破目标，发现 sitemap 中没有的 API 端点。
+
+    与 discover_new_apis_from_flows 互补：
+    - flows 扫描依赖被动流量（mitmproxy 记录），代理不可用时为空
+    - dirscan 主动发请求探测，不依赖代理
+
+    Args:
+        existing_apis: 已从 flows 发现的 API，用于去重（避免重复）。
+
+    Returns:
+        (apis, stats): apis 是新发现的 API 列表，stats 是统计信息。
+    """
+    stats = {
+        "dirscan_total": 0,
+        "dirscan_discovered": 0,
+        "dirscan_sensitive": 0,
+        "dirscan_already_known": 0,
+        "dirscan_duplicate": 0,
+        "dirscan_error": "",
+    }
+
+    if not target_url:
+        return [], stats
+
+    try:
+        from core.dir_scanner import DirectoryScanner
+    except ImportError:
+        stats["dirscan_error"] = "DirectoryScanner 导入失败"
+        return [], stats
+
+    # 计算已知 API 集合（用于 dedup）
+    known_keys: set[str] = set()
+    try:
+        for api_key in (sitemap.apis or {}).keys():
+            parts = api_key.split(" ", 1)
+            if len(parts) == 2:
+                m = parts[0].upper()
+                u = parts[1].strip()
+                pu = urlparse(u)
+                if pu.netloc:
+                    known_keys.add(f"{m} {pu.netloc.lower()}{pu.path}")
+                else:
+                    known_keys.add(f"{m} {pu.path}")
+    except Exception:
+        pass
+
+    # 已从 flows 发现的 API 也加入去重集合
+    if existing_apis:
+        for api in existing_apis:
+            known_keys.add(api.key)
+
+    target_host = urlparse(target_url).netloc.lower()
+
+    try:
+        scanner = DirectoryScanner(
+            max_workers=20,
+            timeout=8.0,
+            recursive=True,
+            max_depth=2,
+        )
+        dir_result = await scanner.scan(
+            target_url,
+            auth_headers=auth_headers,
+        )
+    except Exception as e:
+        log.warning("supplemental: dirscan 失败（非致命）: %s", e)
+        stats["dirscan_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        return [], stats
+
+    stats["dirscan_total"] = dir_result.total_requests
+    stats["dirscan_sensitive"] = dir_result.sensitive_count
+
+    # 把目录扫描发现的存活路径转换为 _DiscoveredAPI
+    discovered: list[_DiscoveredAPI] = []
+    for entry in dir_result.entries:
+        # 跳过非业务路径
+        if _is_non_business_path(entry.path):
+            continue
+
+        # 构造 _DiscoveredAPI（复用 flows 的数据结构）
+        flow_like = {
+            "method": "GET",
+            "url": entry.url,
+            "status_code": entry.status,
+            "response_body": "",
+            "content_type": entry.content_type,
+            "timestamp": time.time(),
+            "id": f"dirscan_{entry.path}",
+            "request_body": "",
+        }
+        api = _DiscoveredAPI(flow_like)
+
+        # scope 过滤
+        if api.host != target_host and not _host_in_scope(api.host, {target_host} | {
+            d.lower().lstrip(".") for d in (getattr(sitemap, "extra_scope", None) or []) if d
+        }):
+            continue
+
+        # 已知 API 去重
+        if api.key in known_keys:
+            stats["dirscan_already_known"] += 1
+            continue
+
+        # 与已有发现去重
+        if any(a.key == api.key for a in discovered):
+            stats["dirscan_duplicate"] += 1
+            continue
+
+        known_keys.add(api.key)
+        discovered.append(api)
+
+    # 把敏感路径发现也记录到 stats（供报告体现）
+    if dir_result.findings:
+        stats["dirscan_sensitive_findings"] = [
+            {"vuln_type": f.vuln_type, "severity": f.severity, "url": f.url}
+            for f in dir_result.findings
+        ]
+
+    stats["dirscan_discovered"] = len(discovered)
+    log.info(
+        "supplemental: dirscan 完成 — 请求 %d, 发现 %d 个新 API, %d 个敏感泄露",
+        dir_result.total_requests, len(discovered), dir_result.sensitive_count,
+    )
+    return discovered, stats
+
+
+# ============================================================
 # L2: 挂载新 API 到 sitemap（优先挂现有 feature，找不到才建新的）
 # ============================================================
 
@@ -725,6 +861,37 @@ async def run_supplemental_test(
                 f"非业务 {scan_stats['non_business']}, 重复 {scan_stats['duplicate']})"
             ),
         }
+
+        # ---- Step 2b: 主动目录爆破发现新 API（不依赖 mitmproxy 流量） ----
+        auth_headers = {}
+        cookies = getattr(session, "_inject_cookies", "") or ""
+        if cookies:
+            auth_headers["Cookie"] = cookies
+        inject_headers = getattr(session, "_inject_headers", {}) or {}
+        auth_headers.update(inject_headers)
+
+        try:
+            dirscan_apis, dirscan_stats = await discover_apis_from_dirscan(
+                sitemap=sitemap,
+                target_url=target_url,
+                auth_headers=auth_headers or None,
+                existing_apis=apis,
+            )
+            summary["dirscan_stats"] = dirscan_stats
+
+            if dirscan_apis:
+                yield {
+                    "type": "info",
+                    "msg": (
+                        f"目录爆破发现 {len(dirscan_apis)} 个新 API "
+                        f"(请求 {dirscan_stats.get('dirscan_total', 0)}, "
+                        f"敏感泄露 {dirscan_stats.get('dirscan_sensitive', 0)})"
+                    ),
+                }
+                apis.extend(dirscan_apis)
+                summary["discovered"] = len(apis)
+        except Exception as e:
+            yield {"type": "warn", "msg": f"目录爆破失败（非致命）: {type(e).__name__}: {str(e)[:120]}"}
 
         if not apis:
             # ★ 区分"真的没有新 API"和"因异常导致结果为空"
@@ -1032,9 +1199,46 @@ async def run_supplemental_test_local(
             yield {
                 "type": "warn",
                 "msg": (
-                    "[本地补测] 没有可分析的新流量，因此不会产生新 API。"
-                    "如果预期应有补测结果，请检查浏览器代理/mitmproxy 是否生效，"
-                    "或确认 Phase 2 期间是否实际产生了目标站点请求。"
+                    "[本地补测] 没有可分析的新流量（flows.jsonl 为空），"
+                    "将启动主动目录爆破补充发现。"
+                ),
+            }
+
+        # ---- L1b: 主动目录爆破发现新 API（不依赖 mitmproxy 流量） ----
+        auth_headers = {}
+        cookies = getattr(session, "_inject_cookies", "") or ""
+        if cookies:
+            auth_headers["Cookie"] = cookies
+        inject_headers = getattr(session, "_inject_headers", {}) or {}
+        auth_headers.update(inject_headers)
+
+        dirscan_apis, dirscan_stats = await discover_apis_from_dirscan(
+            sitemap=sitemap,
+            target_url=target_url,
+            auth_headers=auth_headers or None,
+            existing_apis=apis,
+        )
+        summary["dirscan_stats"] = dirscan_stats
+
+        if dirscan_apis:
+            yield {
+                "type": "info",
+                "msg": (
+                    f"[本地补测] 目录爆破发现 {len(dirscan_apis)} 个新 API "
+                    f"(请求 {dirscan_stats.get('dirscan_total', 0)}, "
+                    f"敏感泄露 {dirscan_stats.get('dirscan_sensitive', 0)}, "
+                    f"已知 {dirscan_stats.get('dirscan_already_known', 0)})"
+                ),
+            }
+            apis.extend(dirscan_apis)
+            summary["discovered"] = len(apis)
+        elif dirscan_stats.get("dirscan_total", 0) > 0:
+            yield {
+                "type": "info",
+                "msg": (
+                    f"[本地补测] 目录爆破完成: {dirscan_stats.get('dirscan_total', 0)} 次请求, "
+                    f"未发现新 API（已知 {dirscan_stats.get('dirscan_already_known', 0)}, "
+                    f"敏感 {dirscan_stats.get('dirscan_sensitive', 0)}）"
                 ),
             }
 
