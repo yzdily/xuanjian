@@ -110,6 +110,57 @@ FEATURE_VULN_MAPPING: list[tuple[list[str], list[str]]] = [
 # 通用检查项（critical/high 优先级功能点额外附加）
 UNIVERSAL_CHECKS = ["未授权访问", "CORS配置"]
 
+# ============================================================
+# ★ 登录页专用 checklist — 登录页目标 5/5 产出 0 漏洞的专项治理
+# ============================================================
+# 问题根因：登录页目标在补测阶段被 _AUTH_PATH_PREFIXES 过滤为"非业务路径"，
+# checklist 由通用 _auto_suggest_tests 生成，验证码绕过等关键项优先级=4 易被裁剪。
+# 解决方案：对 /login /cas/login /Home/Login 等登录页，强制使用专用 checklist，
+# 不受 MAX_CHECKLIST_PER_FP 裁剪影响，确保验证码安全等关键检测不被遗漏。
+
+# 登录页 URL 匹配模式（case-insensitive，匹配路径片段）
+LOGIN_PAGE_PATTERNS = (
+    "/login", "/signin", "/sign-in", "/sign_in",
+    "/cas/login", "/home/login", "/account/login", "/user/login",
+    "/auth/login", "/sso/login", "/oauth/authorize",
+    "/admin/login", "/manage/login", "/backend/login",
+    "/登录", "/管理员登录",
+)
+
+# 登录页专用 checklist（按优先级排序，验证码安全提到最前）
+LOGIN_PAGE_CHECKLIST = [
+    "验证码绕过",              # 验证码答案泄露/复用/客户端校验（P0，曾因优先级=4被裁剪）
+    "JS代码审计(硬编码密钥/绕过逻辑/敏感信息)",  # AES密钥/APPSECRET硬编码（P0）
+    "SQL注入",                # 登录表单注入（P1）
+    "弱密码/默认密码",         # admin/admin 等（P1）
+    "用户枚举",               # 登录失败信息差异（P1）
+    "未授权访问",             # 登录后接口直接可达（P1）
+    "密码重置逻辑",           # 重置任意账号密码（P2）
+    "Cookie/JWT安全",         # 会话固定/Token泄露（P2）
+    "CSRF",                   # 登录CSRF（P2）
+    "开放重定向",             # redirect 参数注入（P3）
+    "Host头投毒",             # 密码重置链接 Host 注入（P3）
+    "信息泄露",               # 报错信息/版本泄露（P3）
+    "CORS配置",               # 跨域凭证泄露（P3）
+]
+
+
+def is_login_page(page_url: str) -> bool:
+    """检测 URL 是否为登录页（case-insensitive 路径片段匹配）。
+
+    纯函数，无 IO。用于 feature_gen 和 supplemental_test_agent 决定是否
+    使用登录页专用 checklist。
+    """
+    if not page_url:
+        return False
+    _url_lower = page_url.lower()
+    # 去掉 query/fragment 后匹配路径片段
+    _path = _url_lower.split("?")[0].split("#")[0]
+    for _pattern in LOGIN_PAGE_PATTERNS:
+        if _pattern.lower() in _path:
+            return True
+    return False
+
 # 需要浏览器才能完整测试的漏洞类型
 BROWSER_REQUIRED_VULNS = {
     "XSS", "存储型XSS", "反射型XSS", "DOM XSS",

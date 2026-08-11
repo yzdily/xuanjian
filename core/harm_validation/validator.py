@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,169 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "harm_validation.md"
+
+
+# ============================================================
+# ★ 确定性预筛 — 对已有充分证据的候选直接判 accepted，跳过 LLM
+# ============================================================
+# 问题根因：Phase 2.6 全程依赖 LLM，LLM 429/超时/不可用时所有候选
+# 都降级为"待人工复核"，导致 10/10 任务 0 已确认漏洞。
+# 解决方案：对已有 body_confirmed/content_match 证据且响应体含明文
+# 敏感数据的候选，用硬规则直接判 accepted，不送 LLM。
+# 这是纯函数，无 IO，可独立单测。
+
+# 敏感数据特征模式（响应体命中任一即判定为含明文敏感数据）
+_SENSITIVE_PATTERNS = [
+    # PEM 私钥
+    r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
+    # API key / secret / token（key: value 格式，value 长度≥16）
+    r"api[_-]?key['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+    r"secret[_-]?key['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+    r"access[_-]?token['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{20,}['\"]",
+    r"app[_-]?secret['\"]?\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+    # AWS 凭证
+    r"aws_access[_-]?key[_-]?id['\"]?\s*[:=]\s*['\"]?[A-Z0-9]{16,}",
+    r"aws_secret[_-]?access[_-]?key['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9/+=]{32,}",
+    # 密码字段（JSON/YAML/表单）
+    r"password['\"]?\s*[:=]\s*['\"][^'\"]{4,}['\"]",
+    r"passwd['\"]?\s*[:=]\s*['\"][^'\"]{4,}['\"]",
+    r"pwd['\"]?\s*[:=]\s*['\"][^'\"]{4,}['\"]",
+    # 验证码答案泄露（如 {"y":39,"array":"6,7,14,..."}）
+    r"['\"]y['\"]\s*[:=]\s*\d+",
+    r"['\"]?captcha['\"]?\s*[:=]\s*['\"]?\d{1,6}['\"]?",
+    r"['\"]?captcha[_-]?code['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9]{3,}['\"]?",
+    r"['\"]?answer['\"]?\s*[:=]\s*['\"]?\d{1,6}['\"]?",
+    # 堆栈/调试信息
+    r"Traceback \(most recent call last\)",
+    r"at\s+\S+\.\S+\([^)]+:\d+:\d+\)",
+    r"#\d+\s+\w+\(",
+    r"java\.lang\.Exception",
+    r"System\.NullReferenceException",
+    # 内部 IP（非公网）
+    r"\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
+    r"\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b",
+    r"\b192\.168\.\d{1,3}\.\d{1,3}\b",
+    # 身份证号
+    r"\b\d{17}[\dXx]\b",
+    # 手机号
+    r"\b1[3-9]\d{9}\b",
+    # 银行卡号
+    r"\b\d{16,19}\b",
+    # .git/config / .env 内容指纹
+    r"\[remote \"origin\"\]",
+    r"DB_PASSWORD\s*=",
+    r"DATABASE_URL\s*=",
+]
+
+_SENSITIVE_RE = [re.compile(p, re.IGNORECASE) for p in _SENSITIVE_PATTERNS]
+
+
+def _contains_sensitive_data(text: str) -> bool:
+    """检测响应体是否包含明文敏感数据。
+
+    纯函数，无 IO。命中任一敏感数据模式即返回 True。
+    """
+    if not text or len(text) < 8:
+        return False
+    for r in _SENSITIVE_RE:
+        if r.search(text):
+            return True
+    return False
+
+
+def _deterministic_prescreen(vulns: list[dict]) -> tuple[list[dict], list[dict]]:
+    """确定性预筛：对已有充分证据的候选直接判 accepted，跳过 LLM。
+
+    纯函数，无 IO，可独立单测。
+
+    判定规则（任一命中即 accepted）：
+    1. evidence_quality == "content_match"
+       敏感路径内容指纹已匹配（如 .git/config, .env, .js.map 的
+       sourcesContent）—— FastScanner 已做内容指纹校验，确定性证据
+    2. evidence_quality == "body_confirmed" 且响应体含明文敏感数据
+       响应体已确认含敏感数据（如密钥/验证码答案/堆栈/内部 IP）
+
+    header_only 证据不预筛，必须送 LLM 实测复现。
+
+    Returns:
+        (accepted_verdicts, remaining_vulns):
+        - accepted_verdicts: 确定性判定为 accepted 的裁决结果（格式与
+          LLM 返回的 verdicts 一致，含 _original 字段供报告渲染）
+        - remaining_vulns: 需要继续送 LLM 的候选
+    """
+    accepted: list[dict] = []
+    remaining: list[dict] = []
+
+    for v in vulns:
+        eq = (v.get("evidence_quality") or "").lower()
+        # 优先用 evidence_response，兜底用 evidence 字段
+        evidence_resp = (v.get("evidence_response") or v.get("evidence") or "")
+
+        should_accept = False
+        reason = ""
+
+        if eq == "content_match":
+            # 敏感路径内容指纹已匹配 → 确定性证据
+            should_accept = True
+            reason = "content_match: 敏感路径内容指纹已匹配，确定性证据"
+        elif eq == "body_confirmed" and _contains_sensitive_data(evidence_resp):
+            # 响应体已确认含明文敏感数据 → 确定性证据
+            should_accept = True
+            reason = "body_confirmed: 响应体含明文敏感数据（密钥/验证码/堆栈/内部IP等）"
+
+        if should_accept:
+            accepted.append({
+                "vuln_id": v.get("vuln_id", ""),
+                "verdict": "accepted",
+                "reason": reason,
+                "poc_note": f"确定性预筛：{reason}，无需 LLM 复现",
+                "poc_request": (v.get("evidence_request") or "")[:500],
+                "poc_response": evidence_resp[:500],
+                "_original": v,
+                "_deterministic": True,  # 标记为确定性判定，便于报告区分
+            })
+        else:
+            remaining.append(v)
+
+    return accepted, remaining
+
+
+def _merge_prescreened(result: dict, prescreen_accepted: list[dict],
+                       total_vulns: int) -> dict:
+    """把确定性预筛的 accepted 裁决合并进 LLM 返回的结果。
+
+    核心价值：即使 LLM 失败（429/超时/不可用），预筛 accepted 仍然保留，
+    确保有充分证据的漏洞能被确认，不再因 LLM 不可用而全部降级为"待人工复核"。
+    这是纯函数，无 IO。
+    """
+    if not prescreen_accepted:
+        return result
+
+    status = result.get("status", "")
+
+    if status == "ok":
+        # LLM 成功：合并 verdicts 和 stats
+        result["verdicts"] = (result.get("verdicts") or []) + prescreen_accepted
+        stats = result.get("stats") or {"accepted": 0, "borderline": 0, "rejected": 0}
+        stats["accepted"] = stats.get("accepted", 0) + len(prescreen_accepted)
+        result["stats"] = stats
+        old_summary = result.get("summary") or ""
+        result["summary"] = (
+            f"{old_summary}\n确定性预筛: {len(prescreen_accepted)} 个候选因充分证据直接判 accepted"
+        ).strip()
+    else:
+        # LLM 失败/超时：仍然返回预筛 accepted（确定性兜底）
+        result["status"] = "ok"
+        result["verdicts"] = prescreen_accepted
+        result["stats"] = {"accepted": len(prescreen_accepted),
+                           "borderline": 0, "rejected": 0}
+        result["summary"] = (
+            f"确定性预筛: {len(prescreen_accepted)} 个候选漏洞已确认"
+            f"（LLM {status}，剩余 {total_vulns - len(prescreen_accepted)} 个候选需人工复核）"
+        )
+
+    result["total_vulns"] = total_vulns
+    return result
 
 
 async def validate_harm(
@@ -74,17 +238,41 @@ async def validate_harm(
                 "stats": {"accepted": 0, "borderline": 0, "rejected": 0},
                 "elapsed": time.time() - started}
 
+    # ★ 确定性预筛：对已有充分证据（content_match / body_confirmed + 敏感数据）
+    # 的候选直接判 accepted，跳过 LLM。即使 LLM 不可用，这些漏洞也能被确认。
+    prescreen_accepted, remaining_vulns = _deterministic_prescreen(vulns)
+    if prescreen_accepted:
+        log.info("harm_validation 确定性预筛: %d 个候选直接判 accepted，剩余 %d 个送 LLM",
+                 len(prescreen_accepted), len(remaining_vulns))
+    if not remaining_vulns:
+        # 所有候选都通过确定性预筛判定，无需 LLM
+        return {
+            "status": "ok",
+            "verdicts": prescreen_accepted,
+            "summary": f"确定性预筛判定 {len(prescreen_accepted)} 个候选漏洞全部 accepted，无需 LLM 验证",
+            "stats": {"accepted": len(prescreen_accepted), "borderline": 0, "rejected": 0},
+            "total_vulns": len(vulns),
+            "raw_response": "",
+            "elapsed": time.time() - started,
+        }
+
+    # 剩余候选送 LLM（用 remaining_vulns 替换原 vulns）
+    vulns = remaining_vulns
+    _total_vulns = len(vulns) + len(prescreen_accepted)
+
     try:
         system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
         user_context = build_context_for_llm(sitemap, vulns)
     except Exception as e:
-        return {"status": "error", "error": f"上下文拼装失败: {e}",
-                "elapsed": time.time() - started}
+        return _merge_prescreened(
+            {"status": "error", "error": f"上下文拼装失败: {e}",
+             "elapsed": time.time() - started},
+            prescreen_accepted, _total_vulns)
 
     # ★ with-tools 模式：让 LLM 真实调用 proxy_send_request 等工具复现 PoC
     if tool_executor is not None:
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 _validate_harm_with_tools(
                     sitemap=sitemap,
                     llm=llm,
@@ -97,15 +285,20 @@ async def validate_harm(
                 ),
                 timeout=timeout,
             )
+            return _merge_prescreened(result, prescreen_accepted, _total_vulns)
         except asyncio.TimeoutError:
-            return {"status": "timeout",
-                    "error": f"with-tools 模式超过 {timeout}s",
-                    "elapsed": time.time() - started}
+            return _merge_prescreened(
+                {"status": "timeout",
+                 "error": f"with-tools 模式超过 {timeout}s",
+                 "elapsed": time.time() - started},
+                prescreen_accepted, _total_vulns)
         except Exception as e:
             log.exception("harm_validation with-tools 模式失败")
-            return {"status": "error",
-                    "error": f"with-tools 模式失败: {e}",
-                    "elapsed": time.time() - started}
+            return _merge_prescreened(
+                {"status": "error",
+                 "error": f"with-tools 模式失败: {e}",
+                 "elapsed": time.time() - started},
+                prescreen_accepted, _total_vulns)
 
     from core.llm import Message
     messages = [
@@ -120,22 +313,28 @@ async def validate_harm(
         )
         raw_text = response.content or ""
     except asyncio.TimeoutError:
-        return {"status": "timeout",
-                "error": f"LLM 调用超过 {timeout}s",
-                "elapsed": time.time() - started}
+        return _merge_prescreened(
+            {"status": "timeout",
+             "error": f"LLM 调用超过 {timeout}s",
+             "elapsed": time.time() - started},
+            prescreen_accepted, _total_vulns)
     except Exception as e:
         log.exception("harm_validation LLM call failed")
-        return {"status": "error",
-                "error": f"LLM 调用失败: {e}",
-                "elapsed": time.time() - started}
+        return _merge_prescreened(
+            {"status": "error",
+             "error": f"LLM 调用失败: {e}",
+             "elapsed": time.time() - started},
+            prescreen_accepted, _total_vulns)
 
     elapsed = time.time() - started
     verdicts, summary = parse_response(raw_text)
     if verdicts is None:
-        return {"status": "error",
-                "error": "无法解析 JSON 数组",
-                "raw_response": raw_text[:5000],
-                "elapsed": elapsed}
+        return _merge_prescreened(
+            {"status": "error",
+             "error": "无法解析 JSON 数组",
+             "raw_response": raw_text[:5000],
+             "elapsed": elapsed},
+            prescreen_accepted, _total_vulns)
 
     # 把原漏洞数据合并回 verdict (用于报告渲染时引用原始证据)
     vuln_by_id = {v["vuln_id"]: v for v in vulns}
@@ -180,7 +379,7 @@ async def validate_harm(
         if v in stats:
             stats[v] += 1
 
-    return {
+    return _merge_prescreened({
         "status": "ok",
         "verdicts": verdicts,
         "summary": summary,
@@ -188,7 +387,7 @@ async def validate_harm(
         "total_vulns": len(vulns),
         "raw_response": raw_text[:30000],
         "elapsed": elapsed,
-    }
+    }, prescreen_accepted, _total_vulns)
 
 
 async def _validate_harm_with_tools(

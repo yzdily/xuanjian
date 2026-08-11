@@ -103,19 +103,24 @@ class ReportMixin:
                 elif c.result == CheckResult.NOT_VULN:
                     not_vuln += 1
 
-        completed = total_checks - len(pending)
-        completion_rate = (completed / total_checks * 100) if total_checks else 100.0
+        # ★ 真实完成 = 已测试（vulnerable + needs_review + not_vuln），不含 SKIPPED
+        # SKIPPED 是"跳过"而非"完成"，原来把 SKIPPED 算进 completed 导致
+        # Fast 模式 98.6% 完成的空心假象。
+        # ★ 0 功能点/0 checklist 时完成率=0%（原为 100%，产生"100%完成 0漏洞"的空心假象）
+        real_completed = vulnerable + needs_review + not_vuln
+        completion_rate = (real_completed / total_checks * 100) if total_checks else 0.0
+        skipped_rate = (len(skipped) / total_checks * 100) if total_checks else 0.0
         lines = ["### 1.2 生产级执行摘要", ""]
         lines.append("| 指标 | 数量 |")
         lines.append("|------|------|")
         lines.append(f"| Checklist 总数 | {total_checks} |")
-        lines.append(f"| 已完成/跳过 | {completed} |")
+        lines.append(f"| 真实完成 | {real_completed} |")
         lines.append(f"| 完成率 | {completion_rate:.1f}% |")
+        lines.append(f"| 跳过 | {len(skipped)} ({skipped_rate:.1f}%) |")
         lines.append(f"| 已确认漏洞 | {vulnerable} |")
         lines.append(f"| 疑似待确认 | {needs_review} |")
         lines.append(f"| 已确认安全 | {not_vuln} |")
         lines.append(f"| 未完成 | {len(pending)} |")
-        lines.append(f"| 跳过 | {len(skipped)} |")
 
         scripted_stats = getattr(self, "_scripted_scan_stats", None) or {}
         if scripted_stats:
@@ -193,7 +198,62 @@ class ReportMixin:
             f"",
         ]
 
+        # ★ 终止原因横幅：Fast 模式 / 降级模式等情况下在报告头部醒目提示
+        # 避免"98.6% 完成 0 漏洞"的空心假象误导用户
+        _term_reason = getattr(self, "termination_reason", "") or ""
+        _phase_status = getattr(self, "phase_status", "") or ""
+        if _term_reason or _phase_status:
+            lines.append(f"> ⚠️ **扫描状态提醒**：{_term_reason or _phase_status}")
+            lines.append(f"> 完成率含跳过项，请参考下方「真实完成」指标判断测试覆盖度。")
+            lines.append(f"")
+
+        # ★ mitmproxy 降级横幅：代理不可用时流量记录可能不完整，需醒目提示
+        _traffic_degraded = getattr(self, "traffic_degraded", False)
+        _traffic_degraded_reason = getattr(self, "traffic_degraded_reason", "") or ""
+        if _traffic_degraded:
+            lines.append(f"> 🔴 **流量抓取降级模式**：{_traffic_degraded_reason or 'mitmproxy 代理不可用，flows.jsonl 由 Playwright 降级写入，可能不完整。'}")
+            lines.append(f"> 流量不完整可能影响补测覆盖度，请审慎评估本次测试结果。")
+            lines.append(f"")
+
         lines.extend(self._render_execution_quality_summary())
+
+        # ★ 探测失败诊断章节：功能点=0 时插入诊断信息，替代空白报告
+        # 避免"100% 完成 0 漏洞"的空心假象，明确告知用户探测失败的原因
+        _total_features = len(self.features)
+        _total_apis = len(getattr(self, "apis", {}) or {})
+        if _total_features == 0 and _total_apis == 0:
+            lines.append("### 1.3 探测失败诊断")
+            lines.append("")
+            lines.append("> 🔴 **目标探测失败**：本次扫描未发现任何功能点或 API 端点。")
+            lines.append('> 报告中"0% 完成"是正常的——因为没有任何测试目标可供执行。')
+            lines.append("")
+            _scan_issue = getattr(self, "_scan_health_issue", None) or {}
+            _traffic_health = getattr(self, "_traffic_health", None) or {}
+            if _scan_issue:
+                lines.append("**诊断信息**：")
+                lines.append("")
+                lines.append(f"- 失败类型：`{_scan_issue.get('type', 'unknown')}`")
+                if _scan_issue.get("pages") is not None:
+                    lines.append(f"- 已抓取页面数：{_scan_issue.get('pages', 0)}")
+                if _scan_issue.get("apis") is not None:
+                    lines.append(f"- 已发现 API 数：{_scan_issue.get('apis', 0)}")
+                if _scan_issue.get("menu_clicked") is not None:
+                    lines.append(f"- 菜单点击数：{_scan_issue.get('menu_clicked', 0)}")
+                lines.append("")
+            if _traffic_health:
+                lines.append("**流量健康度**：")
+                lines.append("")
+                for _k, _v in _traffic_health.items():
+                    lines.append(f"- {_k}：{_v}")
+                lines.append("")
+            lines.append("**可能原因与建议**：")
+            lines.append("")
+            lines.append("- 目标页面加载超时 → 尝试增大 `SCAN_TIMEOUT` 或使用 FAST 模式")
+            lines.append("- SPA 站点前端渲染 → 检查 JS 分析器是否提取到路由")
+            lines.append("- 需要登录凭据 → 在任务配置中提供有效的用户名/密码")
+            lines.append("- 目标不可达 → 检查目标 URL 是否可访问、是否有 WAF 拦截")
+            lines.append("- mitmproxy 未生效 → 检查代理端口 18080 是否可用")
+            lines.append("")
 
         # 漏洞等级分布（从 vuln_list 统计）
         # ★ 区分 confirmed / suspected，避免把疑似项混入已确认统计误导用户
@@ -356,6 +416,20 @@ class ReportMixin:
             lines.append(f"| 请求异常 | {scanner_stats.get('error', 0)} |")
             if scanner_stats.get("log_suppressed"):
                 lines.append(f"| 重复响应日志已抑制 | {scanner_stats.get('log_suppressed', 0)} |")
+            # ★ 扫描受限标志：WAF 封禁/超时熔断时在报告中醒目标注
+            _waf_blocked = scanner_stats.get("waf_blocked", False)
+            _timeout_blocked = scanner_stats.get("timeout_blocked", False)
+            _global_slowdown = scanner_stats.get("global_slowdown", False)
+            if _waf_blocked or _timeout_blocked or _global_slowdown:
+                lines.append("")
+                _limits = []
+                if _waf_blocked:
+                    _limits.append("🔴 WAF 封禁")
+                if _timeout_blocked:
+                    _limits.append("🔴 超时熔断")
+                if _global_slowdown:
+                    _limits.append("🟡 全局降速")
+                lines.append(f"> ⚠️ **扫描受限**：{' / '.join(_limits)} — 部分规则被跳过，测试覆盖度可能不完整。")
             lines.append("")
 
         # 覆盖矩阵

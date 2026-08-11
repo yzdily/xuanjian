@@ -11,6 +11,7 @@ from core.config import (
     FEATURE_VULN_MAPPING, UNIVERSAL_CHECKS, BROWSER_REQUIRED_VULNS,
     VULN_TO_SKILL, VULN_DETAIL_HINTS, VULN_SYNONYMS,
     MAX_CHECKLIST_PER_FP, VULN_PRIORITY, VULN_PRIORITY_DEFAULT,
+    LOGIN_PAGE_CHECKLIST, is_login_page,
 )
 from core.sitemap.constants import GENERIC_NAMES, STATIC_EXTS
 
@@ -199,6 +200,8 @@ class FeatureGenMixin:
         # ★ 持久化 JS 分析结果
         self.js_routes = crawl_result.get("js_routes", [])
         self.js_api_calls = crawl_result.get("js_api_calls", [])
+        # ★ 保存 JS 文件 URL 列表，供 FastScanner 动态推导 .map 探测
+        self.js_file_urls = crawl_result.get("js_file_urls", [])
         if self.js_routes or self.js_api_calls:
             log.info("保存 JS 分析结果: %d 个路由, %d 个 API 调用",
                      len(self.js_routes), len(self.js_api_calls))
@@ -470,10 +473,17 @@ class FeatureGenMixin:
             if canonical not in unique_vulns:
                 unique_vulns.append(canonical)
 
-        # ★ 上下文感知过滤：根据 API 特征排除明显不适用的检查项
-        unique_vulns = self._context_filter_tests(unique_vulns,
-                                                    [api_key] if api_key else None,
-                                                    desc)
+        # ★ 登录页专用 checklist：爬取阶段发现登录页时，强制使用 LOGIN_PAGE_CHECKLIST
+        # 替代通用 _infer_vulns_from_api 结果，确保验证码绕过等关键检测不被遗漏。
+        if is_login_page(page_url or ""):
+            unique_vulns = list(LOGIN_PAGE_CHECKLIST)
+            log.info("登录页专用 checklist(原子): url=%s 使用 %d 项专用检测",
+                     page_url, len(unique_vulns))
+        else:
+            # ★ 上下文感知过滤：根据 API 特征排除明显不适用的检查项
+            unique_vulns = self._context_filter_tests(unique_vulns,
+                                                        [api_key] if api_key else None,
+                                                        desc)
 
         self._feature_counter += 1
         has_page = self._has_frontend_page(page_url)
@@ -1039,17 +1049,26 @@ class FeatureGenMixin:
         if deferred:
             checklist = [CheckItem(vuln_type="未授权访问", needs_browser=False)]
         else:
-            auto_tests = self._auto_suggest_tests(name, description, priority, related_apis)
-            # ★ 上下文感知过滤：根据 API 特征排除明显不适用的检查项
-            auto_tests = self._context_filter_tests(auto_tests, related_apis, description)
-            all_tests = list(auto_tests)
-            for t in (suggested_tests or []):
-                canonical = VULN_SYNONYMS.get(t, t)
-                if canonical not in all_tests and t not in all_tests:
-                    all_tests.append(canonical)
+            # ★ 登录页专用 checklist：对 /login /cas/login /Home/Login 等登录页，
+            # 强制使用 LOGIN_PAGE_CHECKLIST，不受 MAX_CHECKLIST_PER_FP 裁剪，
+            # 确保验证码绕过等关键检测不被遗漏。
+            _is_login = is_login_page(page_url or "")
+            if _is_login:
+                all_tests = list(LOGIN_PAGE_CHECKLIST)
+                log.info("登录页专用 checklist: 功能点 '%s' (url=%s) 使用 %d 项专用检测",
+                         name, page_url, len(all_tests))
+            else:
+                auto_tests = self._auto_suggest_tests(name, description, priority, related_apis)
+                # ★ 上下文感知过滤：根据 API 特征排除明显不适用的检查项
+                auto_tests = self._context_filter_tests(auto_tests, related_apis, description)
+                all_tests = list(auto_tests)
+                for t in (suggested_tests or []):
+                    canonical = VULN_SYNONYMS.get(t, t)
+                    if canonical not in all_tests and t not in all_tests:
+                        all_tests.append(canonical)
 
-            # ★ 二次过滤：LLM suggested_tests 合并后再过滤一遍（LLM 也可能建议不适用项）
-            all_tests = self._context_filter_tests(all_tests, related_apis, description)
+                # ★ 二次过滤：LLM suggested_tests 合并后再过滤一遍（LLM 也可能建议不适用项）
+                all_tests = self._context_filter_tests(all_tests, related_apis, description)
 
             all_apis_saturated = False
             if related_apis:
@@ -1061,7 +1080,7 @@ class FeatureGenMixin:
                 if saturated_count == len(related_apis):
                     all_apis_saturated = True
 
-            if all_apis_saturated:
+            if all_apis_saturated and not _is_login:
                 checklist = []
                 log.info("功能点 '%s' 的所有 API 已被 >=%d 个功能点覆盖，跳过 checklist",
                          name, self.MAX_API_TEST_OWNERS)

@@ -50,6 +50,8 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         # ★ JS 分析结果
         self.js_routes: list[dict] = []
         self.js_api_calls: list[dict] = []
+        # ★ 所有外链 JS 文件 URL（供 FastScanner 动态推导 .map 探测）
+        self.js_file_urls: list[str] = []
         # ★ 加密配置
         self.crypto_configs: list[dict] = []
         # ★ 多角色菜单/认证上下文
@@ -205,6 +207,7 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
                 "api_samples": self.api_samples,
                 "js_routes": self.js_routes,
                 "js_api_calls": self.js_api_calls,
+                "js_file_urls": self.js_file_urls,
                 "crypto_configs": self.crypto_configs,
                 "roles_crawled": getattr(self, "roles_crawled", []) or [],
                 "login_status": getattr(self, "login_status", {}) or {},
@@ -281,6 +284,7 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         self.api_samples = data.get("api_samples", {})
         self.js_routes = data.get("js_routes", [])
         self.js_api_calls = data.get("js_api_calls", [])
+        self.js_file_urls = data.get("js_file_urls", [])
         self.crypto_configs = data.get("crypto_configs", [])
         self.roles_crawled = data.get("roles_crawled", [])
         self.login_status = data.get("login_status", {})

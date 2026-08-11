@@ -556,6 +556,18 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
             yield session._event("system",
                 f"✅ Phase 2: mitmproxy 代理已自动重启（端口 {_p2_proxy_port}）")
         else:
+            # ★ 缓存重启失败状态：Phase 2.55 不再重复尝试（同一次扫描内重启原因相同）
+            session._mitmproxy_restart_failed = True
+            # ★ 降级透明化：在 sitemap 上持久化标记，供报告渲染醒目横幅
+            try:
+                session.sitemap.traffic_degraded = True
+                _degraded_reason = getattr(session.sitemap, "traffic_degraded_reason", "") or ""
+                session.sitemap.traffic_degraded_reason = (
+                    f"Phase 2: mitmproxy 代理不可用且重启失败（端口 {_p2_proxy_port}），"
+                    "流量记录依赖 Playwright 降级写入，flows.jsonl 可能不完整。"
+                )
+            except Exception:
+                pass
             yield session._event("system",
                 f"⚠️ Phase 2: mitmproxy 代理不可用且重启失败，"
                 f"流量记录将依赖 Playwright 降级写入")
@@ -1647,7 +1659,19 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
     #   1. Playwright 降级写入 flows.jsonl（crawler_core.py）
     #   2. 主动目录爆破发现新 API（supplemental_test_agent.py）
     _proxy_port = int(os.getenv("PROXY_PORT", "18080"))
-    if not _check_mitmproxy_health(_proxy_port):
+    # ★ Phase 2 已缓存重启失败状态时，跳过重复尝试（避免 4 条重复日志）
+    if getattr(session, "_mitmproxy_restart_failed", False):
+        if not _check_mitmproxy_health(_proxy_port):
+            yield session._event("system",
+                f"⚠️ mitmproxy 代理（端口 {_proxy_port}）仍未恢复，补测依赖主动目录爆破 + Playwright 降级写入。"
+                f"flows.jsonl 可能不完整。")
+            log.warning("Phase 2.55: mitmproxy 仍不可用（Phase 2 重启已失败，跳过重复尝试）")
+            # ★ 降级透明化：确保 sitemap 标记已设置（Phase 2 已设，此处兜底）
+            try:
+                session.sitemap.traffic_degraded = True
+            except Exception:
+                pass
+    elif not _check_mitmproxy_health(_proxy_port):
         yield session._event("system",
             f"⚠️ mitmproxy 代理（端口 {_proxy_port}）未运行，尝试自动重启...")
         log.warning("Phase 2.55: mitmproxy 代理不可用（端口 %d），尝试自动重启", _proxy_port)
@@ -1661,6 +1685,15 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                 f"⚠️ mitmproxy 代理自动重启失败，补测将依赖主动目录爆破 + Playwright 降级写入。"
                 f"flows.jsonl 可能不完整。")
             log.warning("Phase 2.55: mitmproxy 重启失败，使用降级模式")
+            # ★ 降级透明化：Phase 2.55 独立重启失败时也设置 sitemap 标记
+            try:
+                session.sitemap.traffic_degraded = True
+                session.sitemap.traffic_degraded_reason = (
+                    f"Phase 2.55: mitmproxy 代理重启失败（端口 {_proxy_port}），"
+                    "补测依赖主动目录爆破 + Playwright 降级写入，flows.jsonl 可能不完整。"
+                )
+            except Exception:
+                pass
 
     # ★ Phase 2.55: 补测 Agent (2026-05-22)
     # ★ P2-A: FAST 模式不再完全跳过补测，改用本地规则版（FastScanner 替代 WorkerAgent）

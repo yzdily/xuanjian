@@ -509,8 +509,13 @@ _ADMIN_PANEL_PATHS = (
     "/backend", "/cpanel", "/control", "/cp",
     "/dashboard", "/manager", "/webadmin",
 )
+# ★ /login /signin 已从过滤列表移除：登录页是主要测试目标，应使用
+# LOGIN_PAGE_CHECKLIST 专用检测（验证码绕过/弱口令/SQL注入等），
+# 而非被当作"非业务路径"过滤掉。
+# 保留 /register /signup /sso /oauth /logout 过滤：这些是次要认证路径，
+# 仍需过滤防止 wildcard 站点 feature 爆炸。
 _AUTH_PATH_PREFIXES = (
-    "/login", "/signin", "/register", "/signup",
+    "/register", "/signup",
     "/sso", "/oauth", "/logout",
 )
 

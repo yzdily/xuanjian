@@ -71,6 +71,9 @@ class JSAnalysisResult:
     js_files_analyzed: int = 0
     total_js_size: int = 0  # 总 JS 大小（字节）
     router_mode: str = ""   # "hash" / "history" / ""（未探测到，默认 hash 处理）
+    # ★ 所有外链 JS 文件 URL（含 hash 文件名，如 chunk-2cd2c088.a68ccc9c.js）
+    # 用于 Source Map 动态推导探测：对每个 JS URL 追加 .map 检测
+    js_file_urls: list[str] = field(default_factory=list)
 
 
 # ============================================================
@@ -878,6 +881,8 @@ async def analyze_page_js(page, base_url: str = "", llm_chat_fn=None) -> JSAnaly
     cache_js_sources(js_contents, target=base_url)
 
     result = analyze_js(js_contents, base_url)
+    # ★ 记录所有外链 JS URL，供 FastScanner 动态推导 .map 探测
+    result.js_file_urls = [u for u, _ in js_contents if u.startswith("http")]
 
     # ★ LLM 增强分析：对关键业务 JS 文件（main.js / index.js / app.js 等）
     #   用 LLM 理解代码逻辑，提取正则遗漏的 API（minified 变量名、baseURL 拼接、相对路径等）
@@ -1285,6 +1290,7 @@ def js_result_to_crawl_data(result: JSAnalysisResult, base_url: str = "") -> dic
         "js_auth_patterns": [],
         "js_sensitive_info": [],
         "js_source_maps": result.source_maps,
+        "js_file_urls": list(result.js_file_urls),
         "js_stats": {
             "files_analyzed": result.js_files_analyzed,
             "total_size_kb": result.total_js_size // 1024,

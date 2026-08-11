@@ -54,6 +54,17 @@ DEFAULT_USER_AGENTS = [
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
 ]
 
+# ★ 移动端 UA 池：WAF 拦截桌面 UA 时切换移动 UA 绕过
+# （infer.md 发现 Jiasule WAF 可用移动 UA 绕过）
+MOBILE_USER_AGENTS = [
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 "
+    "Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 "
+    "Mobile Safari/537.36",
+]
+
 
 # ============================================================
 # 数据模型
@@ -108,6 +119,9 @@ class ScanResult:
     timeout_count: int = 0
     error_count: int = 0
     log_suppressed_count: int = 0
+    # ★ 封禁/熔断标志：标记本次扫描是否因 WAF/超时而提前终止
+    waf_blocked: bool = False
+    timeout_blocked: bool = False
 
     @property
     def vuln_count(self) -> int:
@@ -129,6 +143,9 @@ class ScanResult:
             "timeout_count": self.timeout_count,
             "error_count": self.error_count,
             "log_suppressed_count": self.log_suppressed_count,
+            # ★ 封禁/熔断标志：让报告能展示扫描是否因 WAF/超时而受限
+            "waf_blocked": getattr(self, "waf_blocked", False),
+            "timeout_blocked": getattr(self, "timeout_blocked", False),
             "findings": [
                 {
                     "vuln_type": f.vuln_type,
@@ -735,6 +752,11 @@ class FastScanner:
         # 避免对已被 WAF 全量拦截的目标继续打数千次无效请求（实测 zzidc.com 拦截 1737 次仍在打）
         self._waf_blocked = False
         self._waf_block_threshold = 20  # 连续 20 次 403/418/429/503 即判定 WAF 封禁
+        # ★ WAF/超时 跳过日志去重：scan_targets 并发多个 scan_target，封禁后
+        #   每个并发任务都会命中 break 并打印一条日志，导致 20 条重复。
+        #   此标志确保每次 scan_targets 只打印一次"已封禁"日志。
+        self._waf_skip_logged = False
+        self._timeout_skip_logged = False
         # ★ 超时熔断：连续超时达到阈值后置 True，避免对不可达目标继续打无效请求
         self._consecutive_timeout_count = 0
         self._timeout_blocked = False
@@ -779,7 +801,7 @@ class FastScanner:
         count = self._response_log_counts.get(key, 0) + 1
         self._response_log_counts[key] = count
 
-        noisy_status = status >= 500 or status in (403, 404, 429)
+        noisy_status = status >= 500 or status in (403, 404, 418, 429)
         milestones = {1, 2, 3, 10, 30, 100, 300, 1000}
         if noisy_status and count not in milestones:
             self._response_log_suppressed += 1
@@ -946,6 +968,7 @@ class FastScanner:
                 )
 
                 _need_sleep = 0.0
+                _should_retry_with_browser_headers = False
                 async with self._lock:
                     self._total_requests += 1
                     # 请求成功，重置连续超时计数
@@ -953,6 +976,11 @@ class FastScanner:
                     # WAF 拦截检测
                     if resp.status_code in (403, 418, 429, 503):
                         self._blocked_count += 1
+                        # ★ 首次拦截时标记需要浏览器头重试：区分"反爬 vs WAF"
+                        #   很多站点对非浏览器 UA 返回 418/403，加上 Referer + 真实浏览器
+                        #   UA + Sec-Fetch 头后可能恢复正常（反爬而非 WAF）
+                        if self._blocked_count == 1:
+                            _should_retry_with_browser_headers = True
                         # ★ WAF 日志指数退避采样：仅在 3/10/30/100/300/1000 次时输出
                         # 原逻辑每 3 次输出一条，拦截 576 次产生 192 条几乎相同的 WARNING
                         _log_milestones = {3, 10, 30, 100, 300, 1000, 3000}
@@ -972,6 +1000,62 @@ class FastScanner:
                 # ★ sleep 移到锁外执行，避免持锁期间阻塞其他协程
                 if _need_sleep > 0:
                     await asyncio.sleep(_need_sleep)
+
+                # ★ 首次拦截后浏览器头重试：区分反爬 vs WAF
+                #   若加上 Referer + Sec-Fetch 头后响应恢复正常（非 403/418/429/503），
+                #   说明是反爬而非 WAF，重置拦截计数避免误判封禁
+                if _should_retry_with_browser_headers and not self._waf_blocked:
+                    retry_headers = dict(req_headers)
+                    retry_headers["User-Agent"] = (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/126.0.0.0 Safari/537.36"
+                    )
+                    retry_headers["Referer"] = url
+                    retry_headers["Sec-Fetch-Dest"] = "document"
+                    retry_headers["Sec-Fetch-Mode"] = "navigate"
+                    retry_headers["Sec-Fetch-Site"] = "none"
+                    retry_headers["Sec-Fetch-User"] = "?1"
+                    retry_headers["Upgrade-Insecure-Requests"] = "1"
+                    try:
+                        retry_resp = await client.request(
+                            method=method, url=url,
+                            headers=retry_headers, content=content,
+                        )
+                        if retry_resp.status_code not in (403, 418, 429, 503):
+                            # 反爬绕过成功：重置拦截计数，使用浏览器头继续
+                            log.info("[SCAN] 首次拦截后浏览器头重试成功: %d → %d，判定为反爬非 WAF",
+                                     resp.status_code, retry_resp.status_code)
+                            async with self._lock:
+                                self._blocked_count = 0
+                            self._record_scan_response_log(rule_tag, method, url, payload_tag, retry_resp)
+                            return retry_resp
+                    except Exception:
+                        pass  # 重试失败则继续用原响应
+
+                    # ★ 移动 UA 重试：浏览器头仍被拦截时，尝试移动 UA 绕过 WAF
+                    # （infer.md 发现 Jiasule WAF 可用移动 UA 绕过）
+                    if not self._waf_blocked:
+                        import random as _rnd
+                        _mobile_ua = _rnd.choice(MOBILE_USER_AGENTS)
+                        mobile_headers = dict(req_headers)
+                        mobile_headers["User-Agent"] = _mobile_ua
+                        mobile_headers["Referer"] = url
+                        try:
+                            mobile_resp = await client.request(
+                                method=method, url=url,
+                                headers=mobile_headers, content=content,
+                            )
+                            if mobile_resp.status_code not in (403, 418, 429, 503):
+                                log.info("[SCAN] 移动 UA 绕过 WAF 成功: %d → %d (UA=%s...)",
+                                         resp.status_code, mobile_resp.status_code,
+                                         _mobile_ua[:30])
+                                async with self._lock:
+                                    self._blocked_count = 0
+                                self._record_scan_response_log(rule_tag, method, url, payload_tag, mobile_resp)
+                                return mobile_resp
+                        except Exception:
+                            pass  # 移动 UA 重试失败则继续用原响应
 
                 self._record_scan_response_log(rule_tag, method, url, payload_tag, resp)
                 return resp
@@ -1028,6 +1112,7 @@ class FastScanner:
             "unauthorized", "auth_matrix", "weak_password", "cors",
             "path_traversal", "command_injection", "ssrf",
             "csrf", "xxe", "ssti", "file_upload",
+            "open_redirect", "jwt",
         ]
 
         t0 = time.time()
@@ -1077,10 +1162,14 @@ class FastScanner:
         for i in range(0, len(all_handlers), batch_size):
             # 批次间检查熔断标志，跳过剩余规则
             if self._waf_blocked:
-                log.info("[SCAN] WAF 已封禁，跳过剩余 %d 个规则", len(all_handlers) - i)
+                if not self._waf_skip_logged:
+                    self._waf_skip_logged = True
+                    log.info("[SCAN] WAF 已封禁，跳过剩余 %d 个规则", len(all_handlers) - i)
                 break
             if self._timeout_blocked:
-                log.info("[SCAN] 超时已熔断，跳过剩余 %d 个规则", len(all_handlers) - i)
+                if not self._timeout_skip_logged:
+                    self._timeout_skip_logged = True
+                    log.info("[SCAN] 超时已熔断，跳过剩余 %d 个规则", len(all_handlers) - i)
                 break
 
             # ★ 调用 handler(target) 获取协程对象
@@ -1111,6 +1200,8 @@ class FastScanner:
             timeout_count=self._timeout_count,
             error_count=self._error_count,
             log_suppressed_count=max(0, self._response_log_suppressed - suppressed_before),
+            waf_blocked=self._waf_blocked,
+            timeout_blocked=self._timeout_blocked,
         )
 
     async def scan_targets(
@@ -1122,6 +1213,9 @@ class FastScanner:
         results = []
         # 分批并发，避免连接爆炸
         batch_size = self.max_workers
+        # ★ 重置跳过日志去重标志：每次 scan_targets 只打印一次"已封禁/已熔断"日志
+        self._waf_skip_logged = False
+        self._timeout_skip_logged = False
         for i in range(0, len(targets), batch_size):
             # ★ WAF/超时熔断后跳过剩余批次：scan_target 每次重置 _waf_blocked，
             # 若不在此拦截，每个新批次的首个目标都会重新触发 WAF 封禁（日志中
@@ -3135,6 +3229,241 @@ class FastScanner:
 
         return findings
 
+    async def _check_open_redirect(self, target: ScanTarget) -> list[VulnFinding]:
+        """开放重定向检测
+
+        检测 redirect / url / callback / next / returnTo / target / goto 等参数
+        是否可跳转到外部域名。该漏洞常用于钓鱼攻击，是 SRC 必测项。
+
+        检测原理：
+        1. 识别可疑的重定向参数（关键词匹配）
+        2. 注入外部域名 payload
+        3. 检查响应：Location 头反射 / 响应体中包含 payload URL / JS 跳转代码
+        """
+        findings: list[VulnFinding] = []
+
+        # 重定向参数关键词（与 SSRF 共享部分关键词，但 open_redirect 更宽）
+        redirect_param_keywords = (
+            "redirect", "redirect_to", "redirect_url", "redirecturi",
+            "url", "next", "returnto", "return_to", "returnurl", "return_url",
+            "callback", "goto", "target", "to", "dest", "destination",
+            "continue", "back", "ref", "rurl", "image_url",
+        )
+
+        # 找到可疑参数
+        suspect_params = [
+            k for k in target.params
+            if any(kw in k.lower() for kw in redirect_param_keywords)
+        ]
+        if not suspect_params:
+            return findings
+
+        # 外部域名 payload（多绕过变体）
+        redirect_payloads = [
+            ("https://evil-xuanjian.example.com/", "标准外部域名"),
+            ("//evil-xuanjian.example.com/", "协议相对 URL（绕过 http(s) 前缀校验）"),
+            ("https://evil-xuanjian.example.com@%s" % (target.url.split("/")[2] if "/" in target.url else "host"), "@ 符号绕过"),
+            ("/\\evil-xuanjian.example.com", "斜杠反斜杠绕过"),
+        ]
+
+        for param_name in suspect_params:
+            for payload, technique in redirect_payloads:
+                test_params = dict(target.params)
+                test_params[param_name] = payload
+                test_url = self._build_url(target.url, test_params)
+
+                resp = await self._request(
+                    "GET", test_url,
+                    headers={**target.auth_headers, **target.headers},
+                    rule_tag="OpenRedirect", payload_tag=f"{param_name}={payload}",
+                )
+                if not resp:
+                    continue
+                # WAF 拦截页 → 跳过
+                if _is_waf_block_page(resp):
+                    continue
+
+                # 检查 Location 头是否反射 payload（强证据）
+                location = resp.headers.get("location", "")
+                evidence_quality = ""
+                detail_suffix = ""
+
+                if location and "evil-xuanjian.example.com" in location:
+                    evidence_quality = "body_confirmed"
+                    detail_suffix = f"Location 头反射外部域名: {location[:200]}"
+                elif "evil-xuanjian.example.com" in resp.text:
+                    # 检查是否在 JS 跳转代码中
+                    text = resp.text
+                    _has_js_redirect = any(
+                        pat in text for pat in
+                        ["window.location", "location.href", "location.replace",
+                         "location.assign", "top.location", "self.location"]
+                    )
+                    if _has_js_redirect:
+                        evidence_quality = "body_confirmed"
+                        detail_suffix = "响应体 JS 跳转代码中包含外部域名"
+                    else:
+                        evidence_quality = "header_only"
+                        detail_suffix = "响应体中包含外部域名（未发现 JS 跳转代码）"
+
+                if evidence_quality:
+                    findings.append(VulnFinding(
+                        vuln_type="开放重定向",
+                        severity="medium" if evidence_quality == "body_confirmed" else "low",
+                        url=test_url,
+                        method="GET",
+                        detail=(f"参数 '{param_name}' 存在开放重定向（{technique}）。"
+                                f"{detail_suffix}"),
+                        evidence=(f"Location: {location[:300]}\n"
+                                  f"Body excerpt: {resp.text[:300]}"),
+                        payload=payload,
+                        fix_suggestion=("对重定向参数进行白名单校验，只允许跳转到同站根路径；"
+                                        "禁止跳转到外部域名或协议相对 URL"),
+                        evidence_quality=evidence_quality,
+                        rule_tag="OpenRedirect",
+                    ))
+                    # 找到一个有效 payload 后，该参数不再继续测试其他变体
+                    break
+
+        return findings
+
+    async def _check_jwt(self, target: ScanTarget) -> list[VulnFinding]:
+        """JWT 安全检测
+
+        检测原理：
+        1. 从认证头 / Cookie / 响应体中提取 JWT
+        2. 解码 header，检测 alg=none（critical，可绕过签名校验）
+        3. 解码 payload，检测弱配置（无 exp / 弱密钥泄露 / 敏感信息）
+        4. 检测弱算法（HS256 + 短密钥可爆破）
+
+        纯被动分析，不发送额外请求。
+        """
+        import base64
+        import json as _json
+
+        findings: list[VulnFinding] = []
+
+        def _decode_jwt_segment(seg: str) -> dict | None:
+            """解码 JWT 的一个 base64url 段"""
+            # 补齐 padding
+            padding = 4 - len(seg) % 4
+            if padding != 4:
+                seg += "=" * padding
+            try:
+                decoded = base64.urlsafe_b64decode(seg)
+                return _json.loads(decoded)
+            except Exception:
+                return None
+
+        def _extract_jwt(s: str) -> str | None:
+            """从字符串中提取 JWT（匹配 eyJ... 格式）"""
+            # JWT 格式: header.payload.signature，三段 base64url
+            m = re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*', s)
+            return m.group(0) if m else None
+
+        # 收集所有可能的 JWT 来源
+        jwt_candidates: list[str] = []
+        # 1. 认证头
+        for h_name in ("Authorization", "authorization", "X-Auth-Token",
+                        "X-Access-Token", "Bearer"):
+            val = (target.auth_headers or {}).get(h_name, "")
+            if val:
+                token = _extract_jwt(val) or (val if val.startswith("eyJ") else "")
+                if token:
+                    jwt_candidates.append(token)
+        # 2. Cookie
+        cookie = (target.headers or {}).get("Cookie", "") or (target.headers or {}).get("cookie", "")
+        if cookie:
+            token = _extract_jwt(cookie)
+            if token:
+                jwt_candidates.append(token)
+        # 3. 请求参数
+        for v in target.params.values():
+            if v and isinstance(v, str):
+                token = _extract_jwt(v)
+                if token:
+                    jwt_candidates.append(token)
+
+        if not jwt_candidates:
+            return findings
+
+        for jwt in jwt_candidates[:5]:  # 最多分析 5 个
+            parts = jwt.split(".")
+            if len(parts) < 2:
+                continue
+            header = _decode_jwt_segment(parts[0]) or {}
+            payload = _decode_jwt_segment(parts[1]) or {}
+
+            if not header:
+                continue
+
+            # 检测1: alg=none（critical）
+            alg = (header.get("alg") or "").lower()
+            if alg == "none":
+                findings.append(VulnFinding(
+                    vuln_type="JWT 安全漏洞",
+                    severity="critical",
+                    url=target.url,
+                    method=target.method,
+                    detail="JWT 使用 none 算法，可绕过签名校验构造任意 payload",
+                    evidence=f"Header: {_json.dumps(header)}\nPayload: {_json.dumps(payload)}",
+                    payload=jwt[:100] + "...",
+                    fix_suggestion="禁止 none 算法，服务端必须校验签名算法白名单",
+                    evidence_quality="content_match",
+                    rule_tag="JWT",
+                ))
+                continue  # none 算法已是最严重，不再检查其他项
+
+            # 检测2: 无 exp（high，token 永不过期）
+            if "exp" not in payload:
+                findings.append(VulnFinding(
+                    vuln_type="JWT 安全漏洞",
+                    severity="high",
+                    url=target.url,
+                    method=target.method,
+                    detail="JWT payload 无 exp 字段，token 永不过期",
+                    evidence=f"Payload: {_json.dumps(payload)}",
+                    payload=jwt[:100] + "...",
+                    fix_suggestion="JWT 必须包含 exp 字段，设置合理过期时间（建议 ≤2h）",
+                    evidence_quality="content_match",
+                    rule_tag="JWT",
+                ))
+
+            # 检测3: 弱算法 HS256 + 短 payload（medium，可能爆破密钥）
+            if alg == "hs256" and len(parts[2]) < 20:
+                findings.append(VulnFinding(
+                    vuln_type="JWT 安全漏洞",
+                    severity="medium",
+                    url=target.url,
+                    method=target.method,
+                    detail="JWT 使用 HS256 且签名较短，密钥可能可被爆破",
+                    evidence=f"Header: {_json.dumps(header)}\n签名长度: {len(parts[2])}",
+                    payload=jwt[:100] + "...",
+                    fix_suggestion="使用足够长的随机密钥（≥32 字节），或改用 RS256/ES256 非对称算法",
+                    evidence_quality="header_only",
+                    rule_tag="JWT",
+                ))
+
+            # 检测4: payload 含敏感信息（密码/密钥等）
+            sensitive_keys = ("password", "secret", "key", "passwd", "pwd", "apikey", "api_key")
+            for k, v in payload.items():
+                if any(sk in k.lower() for sk in sensitive_keys) and v:
+                    findings.append(VulnFinding(
+                        vuln_type="JWT 安全漏洞",
+                        severity="medium",
+                        url=target.url,
+                        method=target.method,
+                        detail=f"JWT payload 包含敏感字段: {k}",
+                        evidence=f"Payload: {_json.dumps(payload)}",
+                        payload=jwt[:100] + "...",
+                        fix_suggestion="JWT payload 不应包含敏感信息，只放必要的身份标识",
+                        evidence_quality="content_match",
+                        rule_tag="JWT",
+                    ))
+                    break
+
+        return findings
+
     async def scan_sitemap_features(
         self,
         features: list,
@@ -3255,7 +3584,201 @@ class FastScanner:
         for result in results:
             findings.extend(result.findings)
 
+        # ★ Source Map 动态推导探测：对爬取到的每个 JS URL 追加 .map 检测
+        #   原 SENSITIVE_PATHS 只硬编码 /app.js.map 等 4 个路径，无法覆盖 hash 文件名
+        #   （如 chunk-2cd2c088.a68ccc9c.js.map）。这里从 sitemap.js_file_urls 动态推导。
+        if sitemap and getattr(sitemap, "js_file_urls", None):
+            sm_findings = await self._check_js_source_maps(
+                sitemap.js_file_urls, auth_headers
+            )
+            findings.extend(sm_findings)
+
+        # ★ WAF 封禁后被动模式：主动扫描被 WAF 全局封禁，但已获取的 JS 源码仍可分析
+        #   红队原则：WAF 封禁不等于放弃，立即切换被动分析——
+        #   从 JS 源码中提取硬编码密钥、内网域名、调试接口等
+        if getattr(self, "_waf_blocked", False) and sitemap:
+            passive_findings = await self._passive_js_analysis(sitemap, auth_headers)
+            findings.extend(passive_findings)
+
         return findings
+
+    async def _passive_js_analysis(
+        self, sitemap, auth_headers: dict
+    ) -> list[VulnFinding]:
+        """WAF 封禁后被动模式：分析已缓存的 JS 源码
+
+        无需向目标发送请求（已被 WAF 封禁），从 sitemap 已持久化的 JS 分析结果中提取：
+        1. 调试接口（/debug /test /dev 等隐藏路径，来自 js_routes / js_api_calls）
+        2. source map 已知可访问 URL（来自爬取阶段检测结果）
+
+        注：硬编码密钥等敏感信息在爬取阶段已由 js_analyzer 检测并生成功能点，
+        这里只补充被动分析阶段能产出的额外发现。
+        """
+        findings: list[VulnFinding] = []
+        try:
+            # 1. 检查 js_routes / js_api_calls 中的调试接口
+            debug_keywords = ("/debug", "/test", "/dev", "/mock", "/demo",
+                              "/api-docs", "/swagger", "/actuator",
+                              "/console", "/admin/debug")
+            seen_paths = set()
+            for route in getattr(sitemap, "js_routes", []):
+                path = (route.get("path") or "") if isinstance(route, dict) else ""
+                if not path or path in seen_paths:
+                    continue
+                if any(kw in path.lower() for kw in debug_keywords):
+                    seen_paths.add(path)
+                    full_url = path if path.startswith("http") else sitemap.target.rstrip("/") + path
+                    findings.append(VulnFinding(
+                        vuln_type="信息泄露",
+                        severity="low",
+                        url=full_url,
+                        method="GET",
+                        detail=f"JS 路由中发现调试接口: {path}（WAF 封禁后被动分析发现）",
+                        evidence=f"路由来源: {route.get('source_file', '') if isinstance(route, dict) else ''}",
+                        payload="",
+                        fix_suggestion="生产环境移除调试接口或添加访问控制",
+                        evidence_quality="header_only",
+                        rule_tag="InfoLeak",
+                    ))
+            for api_call in getattr(sitemap, "js_api_calls", []):
+                path = (api_call.get("path") or "") if isinstance(api_call, dict) else ""
+                if not path or path in seen_paths:
+                    continue
+                if any(kw in path.lower() for kw in debug_keywords):
+                    seen_paths.add(path)
+                    full_url = path if path.startswith("http") else sitemap.target.rstrip("/") + path
+                    findings.append(VulnFinding(
+                        vuln_type="信息泄露",
+                        severity="low",
+                        url=full_url,
+                        method="GET",
+                        detail=f"JS API 调用中发现调试接口: {path}（WAF 封禁后被动分析发现）",
+                        evidence=f"来源: {api_call.get('source_file', '') if isinstance(api_call, dict) else ''}",
+                        payload="",
+                        fix_suggestion="生产环境移除调试接口或添加访问控制",
+                        evidence_quality="header_only",
+                        rule_tag="InfoLeak",
+                    ))
+
+            # 2. 尝试从 JS 缓存中提取敏感信息（如果缓存未被清理）
+            try:
+                from core.js_analyzer import _js_source_cache, _normalize_target_key, analyze_js
+                target_key = _normalize_target_key(sitemap.target)
+                bucket = _js_source_cache.get(target_key, {})
+                if bucket:
+                    log.info("[PASSIVE] WAF 封禁被动模式: 分析 %d 个缓存 JS 文件", len(bucket))
+                    js_contents = list(bucket.items())
+                    result = analyze_js(js_contents, sitemap.target)
+                    for info in result.sensitive_info:
+                        sev = "high" if info.info_type in ("api_key", "secret", "password") else "medium"
+                        findings.append(VulnFinding(
+                            vuln_type="客户端硬编码密钥泄露" if info.info_type in ("api_key", "secret", "password") else "信息泄露",
+                            severity=sev,
+                            url=info.source_file or sitemap.target,
+                            method="GET",
+                            detail=(f"JS 源码中发现{info.info_type}: {info.value[:80]}"
+                                    f"（WAF 封禁后被动分析发现）"),
+                            evidence=f"文件: {info.source_file}\n上下文: {info.context[:300]}",
+                            payload="",
+                            fix_suggestion=("将密钥迁移到服务端环境变量，前端只通过接口获取临时 token；"
+                                            "已泄露的密钥立即轮换"),
+                            evidence_quality="content_match",
+                            rule_tag="InfoLeak",
+                        ))
+            except ImportError:
+                pass
+
+            log.info("[PASSIVE] WAF 封禁被动模式完成: 发现 %d 个泄露", len(findings))
+        except Exception as e:
+            log.warning("[PASSIVE] 被动分析失败: %s", e)
+
+        return findings
+
+
+    async def _check_js_source_maps(
+        self, js_urls: list[str], auth_headers: dict
+    ) -> list[VulnFinding]:
+        """Source Map 动态推导探测
+
+        对每个 JS URL 追加 .map 后缀探测（如 main.js → main.js.map），
+        覆盖 hash 文件名场景（SENSITIVE_PATHS 硬编码路径无法覆盖）。
+
+        判定逻辑（多因素）：
+        1. .map 返回 200 + Content-Type 为 JSON/JS
+        2. 响应体含 source map 特征字段（version / sources / mappings / sourcesContent）
+        """
+        if not js_urls:
+            return []
+
+        findings: list[VulnFinding] = []
+        # 去重 + 限制数量避免请求爆炸
+        unique_urls: list[str] = []
+        seen = set()
+        for u in js_urls:
+            if u not in seen and u.startswith("http"):
+                seen.add(u)
+                unique_urls.append(u)
+        unique_urls = unique_urls[:30]  # 最多探测 30 个
+
+        async def check_one(js_url: str) -> VulnFinding | None:
+            # 构造 .map URL
+            if js_url.endswith(".js"):
+                map_url = js_url + ".map"
+            elif js_url.endswith(".mjs"):
+                map_url = js_url + ".map"
+            else:
+                return None
+            # 跳过已知的第三方 CDN（如 cdnjs/jquery.com）——它们的 .map 无安全价值
+            from urllib.parse import urlparse as _up
+            host = _up(map_url).netloc.lower()
+            if any(h in host for h in ("cdnjs.", "jquery.com", "unpkg.com",
+                                        "cdn.jsdelivr.net", "ajax.googleapis.com")):
+                return None
+
+            resp = await self._request(
+                "GET", map_url, headers=auth_headers,
+                rule_tag="InfoLeak", payload_tag=".map"
+            )
+            if not resp or resp.status_code != 200:
+                return None
+            # 多因素验证：响应体必须含 source map 特征字段
+            text = resp.text or ""
+            sm_features = ["\"version\"", "\"sources\"", "\"mappings\"",
+                           "\"sourcesContent\"", "version:1", "sourceRoot"]
+            matched = sum(1 for f in sm_features if f in text)
+            if matched < 2:
+                return None
+            # sourcesContent 泄露最严重（包含完整源码）
+            has_sources_content = "\"sourcesContent\"" in text
+            severity = "high" if has_sources_content else "medium"
+            quality = "content_match" if matched >= 3 else "body_confirmed"
+            return VulnFinding(
+                vuln_type="信息泄露",
+                severity=severity,
+                url=map_url,
+                method="GET",
+                detail=(f"Source Map 文件可访问: {map_url}（"
+                        f"{'含 sourcesContent，泄露完整源码' if has_sources_content else '含 sources/mappings，可还原源码结构'}）"),
+                evidence=f"HTTP {resp.status_code}, Content-Length: {len(text)}\n"
+                         f"特征匹配: {matched}/6\n响应体片段: {text[:300]}",
+                payload="",
+                fix_suggestion=("生产环境关闭 Source Map 生成，或部署后删除 .map 文件；"
+                                "至少移除 sourcesContent 字段（它包含完整源码）"),
+                evidence_quality=quality,
+                rule_tag="InfoLeak",
+            )
+
+        tasks = [check_one(u) for u in unique_urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, VulnFinding):
+                findings.append(r)
+
+        if findings:
+            log.info("[SCAN] Source Map 动态推导: 探测 %d 个 JS，发现 %d 个 .map 可访问",
+                     len(unique_urls), len(findings))
+        return findings
+
 
     @staticmethod
     def _extract_sample_from_sitemap(

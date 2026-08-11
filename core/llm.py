@@ -45,6 +45,51 @@ def get_current_task() -> str:
 
 
 # ============================================================
+# ★ LLM 并发池 — 按 caller 隔离，避免扫描阶段挤占危害验证导致 429
+# ============================================================
+# 问题根因：服务端 org max concurrency=3，扫描 worker 和 harm_validation
+# 共享同一并发上限，互相挤占导致大量 429 重试浪费。
+# 解决方案：为关键 caller 注册独立信号量，使其不被扫描阶段饿死。
+# 注意：这是限流器不是放大器——总调用量持平或下降（429 重试减少）。
+
+_LLM_CALLER_SEMAPHORES: dict[str, "threading.Semaphore"] = {}
+_LLM_SEMAPHORES_LOCK = threading.Lock()
+_DEFAULT_LLM_CONCURRENCY = 3  # 贴合常见 org concurrency 上限
+
+
+def register_llm_caller_pool(caller_prefix: str,
+                             concurrency: int = _DEFAULT_LLM_CONCURRENCY) -> None:
+    """注册一个独立的 LLM 并发池。
+
+    不同 caller 共享同一 org concurrency 上限，但独立池可让关键阶段
+    （如 harm_validation）不被扫描阶段挤占，从而减少 429 重试浪费。
+    """
+    with _LLM_SEMAPHORES_LOCK:
+        if caller_prefix not in _LLM_CALLER_SEMAPHORES:
+            _LLM_CALLER_SEMAPHORES[caller_prefix] = threading.Semaphore(concurrency)
+            log.info("注册 LLM 并发池: caller_prefix=%s, concurrency=%d",
+                     caller_prefix, concurrency)
+
+
+def _get_caller_semaphore(caller: str) -> "threading.Semaphore | None":
+    """按 caller 名称获取独立信号量。未注册的 caller 返回 None（不限流）。"""
+    if not caller:
+        return None
+    with _LLM_SEMAPHORES_LOCK:
+        # 精确匹配优先，前缀匹配兜底
+        if caller in _LLM_CALLER_SEMAPHORES:
+            return _LLM_CALLER_SEMAPHORES[caller]
+        for key, sem in _LLM_CALLER_SEMAPHORES.items():
+            if caller.startswith(key):
+                return sem
+    return None
+
+
+# 默认为 harm_validation 注册独立池，确保危害验证不被扫描阶段挤占
+register_llm_caller_pool("harm_validation", concurrency=_DEFAULT_LLM_CONCURRENCY)
+
+
+# ============================================================
 # ★ LLM 响应缓存 — 避免测试中相同请求重复消耗 API
 # ============================================================
 # 测试场景中常出现相同 messages+tools 的重复调用（如重试、多 worker
@@ -1411,13 +1456,13 @@ class LLMClient:
         temperature: float = 0.2,
         max_tokens: int = 4096,
         caller: str = "",
-        max_retries: int = 3,
+        max_retries: int = 6,
         use_cache: bool = True,
     ) -> Message:
         """调用 LLM，带指数退避重试。
 
         可重试错误（429/5xx/超时/连接错误）会自动重试 max_retries 次，
-        每次间隔指数退避（1s, 2s, 4s）+ 随机抖动。
+        每次间隔指数退避（1s, 2s, 4s, 8s, 16s, 32s）+ 随机抖动。
         不可重试错误（401/403/400）直接抛出，由上层 fallback 逻辑处理。
 
         ★ use_cache=True 时优先查响应缓存，命中则直接返回不消耗 API。
@@ -1425,6 +1470,8 @@ class LLMClient:
         ★ 上层已自带重试时传 max_retries=0 可避免三层重试叠加。
         ★ Token 预检：缓存未命中时，发送前估算输入 token，超限抛
           ContextLimitError（不可重试），由上层捕获后触发 compress() 再重试。
+        ★ 并发隔离：harm_validation 等关键 caller 有独立信号量，
+          避免与扫描阶段互相挤占导致 429（限流器，不增加总调用量）。
         """
         self._check_task_budget(max_tokens=max_tokens, caller=caller)
 
@@ -1449,46 +1496,57 @@ class LLMClient:
             )
             raise ContextLimitError(estimated_input, context_window, self.config.model)
 
-        last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                if self.config.provider == "anthropic":
-                    resp = self._chat_anthropic(messages, tools, temperature, max_tokens, caller)
-                else:
-                    resp = self._chat_openai(messages, tools, temperature, max_tokens, caller)
-                # ★ 成功调用写入缓存，后续相同请求可复用
-                if use_cache:
-                    _response_cache.put(messages, self.config.model, tools, temperature, max_tokens, resp)
-                return resp
-            except Exception as exc:
-                last_exc = exc
-                # 最后一次尝试不再等待
-                if attempt >= max_retries:
-                    raise
-                # 不可重试错误直接抛出（交给上层 fallback）
-                if not self._is_retryable_error(exc):
-                    raise
-                # ★ 自适应退避：取 max(Retry-After, 指数退避)，
-                # 服务端明确告知冷却时间时以服务端为准，避免窗口内反复撞限流。
-                import random
-                exp_backoff = (2 ** attempt) + random.uniform(0, 0.5)
-                retry_after = self._extract_retry_after(exc)
-                if retry_after is not None:
-                    # 上限 60s，防止异常 Retry-After 把任务挂死
-                    backoff = min(max(retry_after, exp_backoff), 60.0)
-                    log.warning(
-                        "LLM 调用失败（第 %d/%d 次），服务端 Retry-After=%.1fs，%0.1fs 后重试: %s",
-                        attempt + 1, max_retries, retry_after, backoff, str(exc)[:200],
-                    )
-                else:
-                    backoff = exp_backoff
-                    log.warning(
-                        "LLM 调用失败（第 %d/%d 次），%0.1fs 后重试: %s",
-                        attempt + 1, max_retries, backoff, str(exc)[:200],
-                    )
-                time.sleep(backoff)
-        # 理论上不会走到这里
-        raise last_exc  # type: ignore[misc]
+        # ★ 并发隔离：关键 caller（如 harm_validation）使用独立信号量，
+        # 避免与扫描阶段 LLM 调用互相挤占 org concurrency 上限导致 429。
+        # 信号量在整个重试循环外层获取，确保重试期间也持有限流槽位。
+        sem = _get_caller_semaphore(caller)
+        if sem is not None:
+            sem.acquire()
+        try:
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    if self.config.provider == "anthropic":
+                        resp = self._chat_anthropic(messages, tools, temperature, max_tokens, caller)
+                    else:
+                        resp = self._chat_openai(messages, tools, temperature, max_tokens, caller)
+                    # ★ 成功调用写入缓存，后续相同请求可复用
+                    if use_cache:
+                        _response_cache.put(messages, self.config.model, tools, temperature, max_tokens, resp)
+                    return resp
+                except Exception as exc:
+                    last_exc = exc
+                    # 最后一次尝试不再等待
+                    if attempt >= max_retries:
+                        raise
+                    # 不可重试错误直接抛出（交给上层 fallback）
+                    if not self._is_retryable_error(exc):
+                        raise
+                    # ★ 自适应退避：取 max(Retry-After, 指数退避)，
+                    # 服务端明确告知冷却时间时以服务端为准，避免窗口内反复撞限流。
+                    # 抖动幅度从 0.5 扩大到 1.0，降低多 worker 同步重试撞限流概率。
+                    import random
+                    exp_backoff = (2 ** attempt) + random.uniform(0, 1.0)
+                    retry_after = self._extract_retry_after(exc)
+                    if retry_after is not None:
+                        # 上限 120s，给 429 更充分冷却时间（原 60s 在高并发下仍会撞限流）
+                        backoff = min(max(retry_after, exp_backoff), 120.0)
+                        log.warning(
+                            "LLM 调用失败（第 %d/%d 次），服务端 Retry-After=%.1fs，%0.1fs 后重试: %s",
+                            attempt + 1, max_retries, retry_after, backoff, str(exc)[:200],
+                        )
+                    else:
+                        backoff = exp_backoff
+                        log.warning(
+                            "LLM 调用失败（第 %d/%d 次），%0.1fs 后重试: %s",
+                            attempt + 1, max_retries, backoff, str(exc)[:200],
+                        )
+                    time.sleep(backoff)
+            # 理论上不会走到这里
+            raise last_exc  # type: ignore[misc]
+        finally:
+            if sem is not None:
+                sem.release()
 
     def _chat_openai(self, messages, tools, temperature, max_tokens, caller="") -> Message:
         import uuid
