@@ -223,13 +223,185 @@ PUT    /api/users/1002/role {"role":"admin"}  → 提权操作，禁止
 
 ## Phase 4: 垂直越权
 
-用普通用户身份访问管理功能：
+> **实战教训**：AOMS priv_esc.py 只测了 getallFtpInfo.do，其余7个敏感接口未做矩阵，漏了垂直越权系统性结论。禁止只测1个接口就下"有角色控制"结论。
+
+### 4.0 垂直越权矩阵 (MUST)
+
+**强制项**：所有"敏感数据接口"必须跑三角色垂直越权矩阵
 
 ```
-GET  /api/admin/users          → 管理员用户列表？
-POST /api/admin/create-user    → 能创建用户？
-GET  /api/admin/config         → 系统配置泄露？
-GET  /api/internal/dashboard   → 内部面板？
+三角色矩阵：
+├─ 高权限角色 (adminsafe) — 管理员/超级用户/系统管理员
+├─ 普通用户角色 (co_jianghaichao) — 普通用户/已认证用户
+└─ 低权限角色 (aiTest) — 游客/只读用户/受限用户
+```
+
+**测试流程**：
+
+```python
+async def vertical_privilege_matrix_test(task):
+    """
+    垂直越权矩阵测试
+    """
+    results = {}
+    
+    # 高权限角色测试
+    admin_resp = await send_request_as_admin(task)
+    results["admin"] = admin_resp
+    
+    # 普通用户角色测试
+    user_resp = await send_request_as_user(task)
+    results["user"] = user_resp
+    
+    # 低权限角色测试
+    low_resp = await send_request_as_low_priv(task)
+    results["low_priv"] = low_resp
+    
+    # 判定逻辑
+    if admin_resp.status_code == 200 and has_sensitive_data(admin_resp):
+        if user_resp.status_code in [403, 401] or not has_sensitive_data(user_resp):
+            if low_resp.status_code in [403, 401] or not has_sensitive_data(low_resp):
+                return "垂直越权漏洞确认", results
+    
+    return "无垂直越权漏洞", results
+```
+
+**判定标准**：
+
+| 响应组合 | 判定 | 结论 |
+|---------|------|------|
+| 仅高权限返回200 + 敏感数据 | ✅ 垂直越权漏洞确认 | **High** |
+| 高权限+普通用户都返回200 | 需进一步验证数据差异 | **需Review** |
+| 三角色都返回200 + 相同数据 | 无角色控制 | **需Review** |
+| 三角色都返回403/401 | 有权限控制 | **Not Vuln** |
+
+**禁止行为**：
+
+- ❌ 禁止只测1个接口就下"有角色控制"结论
+- ❌ 禁止只用1个角色测试就标"安全"
+- ❌ 禁止跳过低权限角色测试
+
+### 4.1 敏感数据接口识别
+
+```python
+SENSITIVE_API_PATTERNS = [
+    # 用户管理
+    r"/admin/.*",
+    r"/manage/.*",
+    r"/system/.*",
+    r"/config/.*",
+    r"/user/.*",
+    
+    # 数据操作
+    r"/export/.*",
+    r"/download/.*",
+    r"/backup/.*",
+    r"/log/.*",
+    
+    # 审批流程
+    r"/approval/.*",
+    r"/approve/.*",
+    r"/review/.*",
+    
+    # 财务相关
+    r"/payment/.*",
+    r"/order/.*",
+    r"/invoice/.*",
+    r"/refund/.*",
+]
+```
+
+### 4.2 敏感数据识别
+
+```python
+SENSITIVE_DATA_PATTERNS = [
+    # 个人信息
+    r"email",
+    r"phone",
+    r"mobile",
+    r"id_card",
+    r"身份证",
+    r"手机号",
+    r"邮箱",
+    
+    # 财务信息
+    r"balance",
+    r"余额",
+    r"payment",
+    r"支付",
+    r"银行卡",
+    
+    # 权限信息
+    r"role",
+    r"权限",
+    r"admin",
+    r"管理员",
+    
+    # 系统信息
+    r"config",
+    r"配置",
+    r"password",
+    r"密码",
+    r"secret",
+    r"密钥",
+]
+```
+
+### 4.3 垂直越权测试清单
+
+```markdown
+## 垂直越权测试清单 (MUST)
+
+### 敏感数据接口
+- [ ] GET /api/admin/users — 管理员用户列表
+- [ ] GET /api/admin/config — 系统配置
+- [ ] GET /api/admin/logs — 系统日志
+- [ ] POST /api/admin/create-user — 创建用户
+- [ ] PUT /api/admin/update-user/:id — 更新用户
+- [ ] DELETE /api/admin/delete-user/:id — 删除用户
+
+### 审批流程接口
+- [ ] POST /api/approval/approve — 审批操作
+- [ ] PUT /api/approval/reject — 拒绝操作
+- [ ] GET /api/approval/pending — 待审批列表
+
+### 财务相关接口
+- [ ] GET /api/payment/list — 支付列表
+- [ ] POST /api/payment/refund — 退款操作
+- [ ] GET /api/invoice/list — 发票列表
+
+### 数据导出接口
+- [ ] GET /api/export/users — 导出用户数据
+- [ ] GET /api/export/orders — 导出订单数据
+- [ ] POST /api/backup/create — 创建备份
+```
+
+### 4.4 垂直越权证据收集
+
+```python
+def collect_vertical_privilege_evidence(admin_resp, user_resp, low_resp):
+    """
+    收集垂直越权证据
+    """
+    evidence = {
+        "admin_response": {
+            "status_code": admin_resp.status_code,
+            "has_sensitive_data": has_sensitive_data(admin_resp),
+            "data_summary": summarize_data(admin_resp.body),
+        },
+        "user_response": {
+            "status_code": user_resp.status_code,
+            "has_sensitive_data": has_sensitive_data(user_resp),
+            "data_summary": summarize_data(user_resp.body),
+        },
+        "low_priv_response": {
+            "status_code": low_resp.status_code,
+            "has_sensitive_data": has_sensitive_data(low_resp),
+            "data_summary": summarize_data(low_resp.body),
+        },
+        "conclusion": "垂直越权漏洞确认" if admin_resp.status_code == 200 and has_sensitive_data(admin_resp) else "无垂直越权漏洞",
+    }
+    return evidence
 ```
 
 ### 真实案例：审批/Workflow 系统

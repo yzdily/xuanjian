@@ -153,6 +153,43 @@ class SQLiFuzzer(BaseFuzzer):
             )
 
         # ============================================================
+        # Step 0: 假阳性预检查 — 发送基础探测，排除类型转换/WAF/业务错误
+        # ============================================================
+        # 实战教训：AOMS getrolelist.do 参数被 Integer.parseInt 转换，
+        # 单引号触发500但不是SQL报错；不预检会浪费时间在假阳性目标上。
+        probe_payload = "'"
+        probe_url, probe_body = self._inject_param(
+            task.target_url, task.body, task.param_name,
+            task.original_value, probe_payload
+        )
+        probe_resp = await self._send_request(
+            method=task.method, url=probe_url,
+            headers=task.headers, body=probe_body, timeout=task.timeout,
+        )
+        requests_sent += 1
+
+        if self._is_false_positive(probe_resp, task.original_value):
+            fp_type = self._identify_false_positive_type(probe_resp, task.original_value)
+            timeline.append({
+                "step": "false_positive_precheck",
+                "action": "假阳性预检命中",
+                "fp_type": fp_type,
+            })
+            elapsed = time.time() - t0
+            return FuzzEvidence(
+                result=FuzzResult.NOT_VULN,
+                confidence=0.9,
+                summary=f"假阳性排除：{fp_type}，非SQL注入",
+                fuzzer_name=self.NAME,
+                requests_sent=requests_sent,
+                elapsed_seconds=elapsed,
+                timeline=timeline,
+                stop_reason="false_positive_detected",
+            )
+
+        timeline.append({"step": "false_positive_precheck", "action": "通过，未命中假阳性"})
+
+        # ============================================================
         # Step 1: 尝试报错注入提取数据
         # ============================================================
         timeline.append({"step": "error_based_exploit", "action": "尝试报错注入提取数据"})
@@ -787,6 +824,11 @@ class SQLiFuzzer(BaseFuzzer):
                 # 字符串结束或搜索失败
                 break
 
+        # 验证提取结果
+        if extracted_chars and not self._validate_extraction(extracted_chars):
+            log.warning("二分搜索提取结果验证失败，返回空字符串")
+            return ""
+
         return "".join(extracted_chars)
 
     async def _boolean_blind_extract_string(
@@ -878,6 +920,11 @@ class SQLiFuzzer(BaseFuzzer):
                 log.info(f"布尔盲注提取位置 {pos}: {found_char} (ASCII {ord(found_char)})")
             else:
                 break
+
+        # 验证提取结果
+        if extracted_chars and not self._validate_extraction(extracted_chars):
+            log.warning("布尔盲注提取结果验证失败，返回空字符串")
+            return ""
 
         return "".join(extracted_chars)
 
@@ -995,6 +1042,159 @@ class SQLiFuzzer(BaseFuzzer):
                 end = min(len(body), match.end() + 30)
                 return body[start:end].strip()
         return ""
+
+    def _is_type_conversion_false_positive(self, response: dict, param_value: str) -> bool:
+        """
+        参数强制类型转换排除法
+
+        实战教训：AOMS getrolelist.do 参数被Integer.parseInt转换后入SQL，
+        单引号/OR均触发500但不是SQL报错，是假阳性。
+        """
+        # 条件1：参数是纯数字
+        if param_value and param_value.isdigit():
+            # 条件2：响应是500错误
+            status_code = response.get("status", 0)
+            if status_code == 500:
+                body = response.get("body", "")
+                # 条件3：响应中无SQL报错特征
+                sql_errors = ["SQL syntax", "MySQL", "PostgreSQL", "ORA-", "sqlite", "SQL error"]
+                has_sql_error = any(err in body for err in sql_errors)
+                
+                if not has_sql_error:
+                    # 条件4：响应包含类型转换错误
+                    type_errors = [
+                        "parseInt", "NumberFormatException", "Invalid input",
+                        "类型转换", "Type mismatch", "Conversion failed",
+                        "Value is not a valid integer", "Input was not in a correct format"
+                    ]
+                    has_type_error = any(err in body for err in type_errors)
+                    
+                    if has_type_error:
+                        log.info(f"假阳性检测：参数 {param_value} 被类型转换，非SQL注入")
+                        return True
+        return False
+
+    def _is_waf_blocked(self, response: dict) -> bool:
+        """检测WAF拦截页"""
+        status_code = response.get("status", 0)
+        if status_code in [403, 418, 429, 503]:
+            body = response.get("body", "").lower()
+            waf_keywords = ["blocked", "firewall", "拦截", "forbidden", "denied", "waf", "security"]
+            return any(kw in body for kw in waf_keywords)
+        return False
+
+    def _is_business_error(self, response: dict) -> bool:
+        """检测业务错误码（HTTP 200但业务拒绝）"""
+        status_code = response.get("status", 0)
+        if status_code == 200:
+            try:
+                import json
+                data = json.loads(response.get("body", "{}"))
+                if data.get("code") in [500, 403, 401]:
+                    return True
+                if "用户未登录" in str(data.get("message", "")):
+                    return True
+            except:
+                pass
+        return False
+
+    def _is_empty_data(self, response: dict) -> bool:
+        """检测空数据响应"""
+        status_code = response.get("status", 0)
+        if status_code == 200:
+            try:
+                import json
+                data = json.loads(response.get("body", "{}"))
+                if data.get("data") is None or data.get("data") == []:
+                    return True
+            except:
+                pass
+        return False
+
+    def _is_false_positive(self, response: dict, param_value: str) -> bool:
+        """
+        综合假阳性判定
+        """
+        # 检查1：参数类型转换
+        if self._is_type_conversion_false_positive(response, param_value):
+            return True
+
+        # 检查2：WAF拦截
+        if self._is_waf_blocked(response):
+            return True
+
+        # 检查3：业务错误码
+        if self._is_business_error(response):
+            return True
+
+        # 检查4：空数据
+        if self._is_empty_data(response):
+            return True
+
+        return False
+
+    def _identify_false_positive_type(self, response: dict, param_value: str) -> str:
+        """识别假阳性类型，返回可读的中文描述。"""
+        if self._is_type_conversion_false_positive(response, param_value):
+            return "参数类型转换（parseInt/NumberFormatException）"
+        if self._is_waf_blocked(response):
+            return "WAF拦截"
+        if self._is_business_error(response):
+            return "业务错误码（HTTP 200但业务拒绝）"
+        if self._is_empty_data(response):
+            return "空数据响应"
+        return "未知假阳性类型"
+
+    def _validate_extraction(self, extracted_chars: list, binary_results: list = None) -> bool:
+        """
+        提取脚本二分逻辑必须自带"全FALSE自检"
+        
+        实战教训：sqli_node2.js 因缺自检输出了30个DEL字符还没发现。
+        若长度二分全FALSE或字符全收敛到上界，立即报错而非输出垃圾。
+        """
+        # 检查1：提取结果为空
+        if not extracted_chars:
+            log.warning("提取验证失败：未提取到任何字符")
+            return False
+        
+        # 检查2：字符全收敛上界（ASCII 126）
+        if all(c == chr(126) for c in extracted_chars):
+            log.warning("提取验证失败：字符全收敛到上界，提取结果损坏")
+            return False
+        
+        # 检查3：字符频率异常（全是特殊字符）
+        special_count = sum(1 for c in extracted_chars if not c.isalnum())
+        if len(extracted_chars) > 0 and special_count / len(extracted_chars) > 0.5:
+            log.warning(f"提取验证失败：特殊字符比例过高 ({special_count}/{len(extracted_chars)})")
+            return False
+        
+        # 检查4：二分结果全FALSE（如果有提供）
+        if binary_results:
+            if all(r == "FALSE" for r in binary_results.get("length", [])):
+                log.warning("提取验证失败：长度二分全FALSE，注入未确认")
+                return False
+        
+        # 检查5：提取结果合理性（长度不应超过100）
+        if len(extracted_chars) > 100:
+            log.warning(f"提取验证失败：提取结果异常长 ({len(extracted_chars)} 字符)")
+            return False
+        
+        # 检查6：连续相同字符过多
+        if len(extracted_chars) > 5:
+            max_consecutive = 1
+            current_consecutive = 1
+            for i in range(1, len(extracted_chars)):
+                if extracted_chars[i] == extracted_chars[i-1]:
+                    current_consecutive += 1
+                    max_consecutive = max(max_consecutive, current_consecutive)
+                else:
+                    current_consecutive = 1
+            if max_consecutive > 10:
+                log.warning(f"提取验证失败：连续相同字符过多 ({max_consecutive} 个)")
+                return False
+        
+        log.info(f"提取验证通过：{len(extracted_chars)} 个字符")
+        return True
 
     def _find_union_data(self, resp_body: str, baseline_body: str) -> str:
         """从 UNION 注入响应中找到新出现的数据。"""
