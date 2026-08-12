@@ -51,3 +51,5 @@ targets.csv
 # 临时工作目录
 .workbuddy/
 test1.txt
+# 优化方案（本地文档，不入仓库）
+hollowing-optimization-plan/
