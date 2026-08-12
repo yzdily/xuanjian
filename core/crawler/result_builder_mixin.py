@@ -11,12 +11,51 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from urllib.parse import urlparse, urljoin
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 from .models import FORM_FILL_RULES
 from core.realtime_protocols import classify_realtime_flow, dedupe_realtime_channels
+
+
+# ★ 静态资源过滤 — 防止 JS/CSS/图片等文件 URL 污染 API 端点发现
+# 这些 URL 被爬虫抓到后会进入 all_apis，如果不过滤：
+# 1. CRUD 变体推测会用 /js/chunk-xxx.js 作为 base prefix，生成 /js/chunk-xxx.js/role 等无效路径
+# 2. 路径前缀 fuzz 会把 /js/chunk-xxx.js 加入 common_prefixes，生成海量无效候选
+_STATIC_EXTS = (
+    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".mp4",
+    ".mp3", ".pdf", ".zip", ".html", ".htm", ".woff",
+)
+_STATIC_PREFIXES = (
+    "/js/", "/css/", "/static/", "/assets/", "/public/",
+    "/images/", "/img/", "/fonts/", "/node_modules/",
+    "/dist/", "/vendor/", "/lib/",
+)
+
+
+def _is_static_resource_url(url: str) -> bool:
+    """判断 URL 是否为静态资源（JS/CSS/图片/字体等），应从 API 推测源中排除。"""
+    if not url:
+        return True
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    path = parsed.path.lower()
+    if not path:
+        return False
+    # 文件扩展名匹配
+    if any(path.endswith(ext) for ext in _STATIC_EXTS):
+        return True
+    # 静态目录前缀匹配
+    if any(path.startswith(p) for p in _STATIC_PREFIXES):
+        return True
+    return False
 
 
 # 菜单 API 关键词（从 crawler_core.py 导入，避免重复定义）
@@ -201,8 +240,20 @@ class ResultBuilderMixin:
         _user_aborted = bool(getattr(self, "_user_aborted", False))
         _skip_inference_due_to_stop = _stop_requested and not _user_aborted
         _skip_inference_due_to_5xx = False
-        if all_apis:
-            first_api_status = list(all_apis.values())[0].get("status_code", 0)
+
+        # ★ 过滤静态资源：JS/CSS/图片等文件 URL 不应作为 API 推测的源
+        # 否则 /js/chunk-xxx.js 会被当作 base prefix，生成 /js/chunk-xxx.js/role 等无效路径
+        # 导致 sitemap 被数百个无效 API 端点污染，checklist 全部 SKIPPED → 空心化
+        biz_apis: dict[str, dict] = {
+            k: v for k, v in all_apis.items()
+            if not _is_static_resource_url(v.get("url", ""))
+        }
+        _static_filtered = len(all_apis) - len(biz_apis)
+        if _static_filtered > 0:
+            self._report(f"  静态资源过滤: 从 API 推测源中排除 {_static_filtered} 个静态文件 URL（JS/CSS/图片等）")
+
+        if biz_apis:
+            first_api_status = list(biz_apis.values())[0].get("status_code", 0)
             if first_api_status >= 500:
                 _skip_inference_due_to_5xx = True
         if _skip_inference_due_to_stop:
@@ -222,7 +273,7 @@ class ResultBuilderMixin:
         ]
         seen_paths = {urlparse(a["url"]).path.rstrip("/") for a in all_apis.values()}
         if not _skip_inference_due_to_stop and not _skip_inference_due_to_5xx:
-            for api in list(all_apis.values()):
+            for api in list(biz_apis.values()):
                 parsed = urlparse(api["url"])
                 path_parts = [p for p in parsed.path.rstrip("/").split("/") if p]
                 if len(path_parts) < 2:
@@ -243,16 +294,25 @@ class ResultBuilderMixin:
         # 800 个候选几乎全部指纹验证失败（日志实测 800→0），浪费 ~46 秒
         # 另外：目标返回 5xx 时也跳过（服务不可用，fuzz 无意义）
         _target_5xx = False
-        if all_apis:
-            first_api_status = list(all_apis.values())[0].get("status_code", 0)
+        if biz_apis:
+            first_api_status = list(biz_apis.values())[0].get("status_code", 0)
             if first_api_status >= 500:
                 _target_5xx = True
-        _skip_fuzz = _skip_inference_due_to_stop or _target_5xx or (not all_apis and total_elements == 0 and not all_js_endpoints)
+        # ★ OPT1: 源 API ≤ 2 时不执行 fuzz — 仅 1 个源 API 就生成 362 个候选，
+        # 几乎全部为 catch-all 兜底响应，浪费请求并增加 WAF 封禁风险
+        _skip_fuzz = (
+            _skip_inference_due_to_stop
+            or _target_5xx
+            or (not biz_apis and total_elements == 0 and not all_js_endpoints)
+            or len(biz_apis) <= 2  # 源 API 太少时 fuzz 纯属盲猜
+        )
         if _skip_fuzz:
             if _skip_inference_due_to_stop:
                 self._report("  路径前缀 fuzz: 跳过（爬虫已超时/停止，避免额外盲探）")
             elif _target_5xx:
                 self._report("  路径前缀 fuzz: 跳过（目标返回 5xx，服务不可用）")
+            elif len(biz_apis) <= 2:
+                self._report(f"  路径前缀 fuzz: 跳过（业务 API 仅 {len(biz_apis)} 个，≤2 时不执行盲猜 fuzz）")
             else:
                 self._report("  路径前缀 fuzz: 跳过（爬取无任何业务信号：0 API / 0 元素 / 0 JS 端点）")
 
@@ -260,9 +320,9 @@ class ResultBuilderMixin:
         target_parsed = urlparse(self.target)
         target_host_root = f"{target_parsed.scheme}://{target_parsed.netloc}"
 
-        # 已发现 API 的"通用前缀"
+        # 已发现 API 的"通用前缀"（仅使用业务 API，排除静态资源）
         common_prefixes: set[str] = set()
-        for api_data in all_apis.values():
+        for api_data in biz_apis.values():
             ap = urlparse(api_data["url"]).path
             parts = [p for p in ap.strip("/").split("/") if p]
             if len(parts) >= 1:
@@ -296,7 +356,7 @@ class ResultBuilderMixin:
 
         # 每个前缀 × 模块名 × CRUD 后缀 → 候选
         fuzz_added = 0
-        max_fuzz = 800  # 全局上限避免太多请求
+        max_fuzz = 200  # ★ OPT1: 从 800 降至 200，减少 catch-all 候选数量
         for prefix in list(common_prefixes):
             if fuzz_added >= max_fuzz:
                 break
@@ -353,9 +413,9 @@ class ResultBuilderMixin:
                 f"{base_host}/api/_pentest_not_exist_8f3a2b",
                 f"{base_host}/_pentest_404_check_c7e9d1",
             ]
-            # 也在每个已知 API 前缀下探测
+            # 也在每个已知 API 前缀下探测（仅业务 API，排除静态资源）
             prefix_set: set[str] = set()
-            for api_data in list(all_apis.values())[:20]:
+            for api_data in list(biz_apis.values())[:20]:
                 parsed = urlparse(api_data["url"])
                 parts = [p for p in parsed.path.rstrip("/").split("/") if p]
                 if len(parts) >= 2:
@@ -507,6 +567,23 @@ class ResultBuilderMixin:
                                                                   resp.headers.get("content-type", "")):
                                             return None
 
+                                    # ★ OPT1: Shannon 熵值校验
+                                    # catch-all 兜底页面熵通常 < 3.0，真实 JSON API 响应熵通常 > 4.0
+                                    if resp.status_code == 200 and body:
+                                        import math
+                                        from collections import Counter
+                                        char_counts = Counter(body[:2000])
+                                        total_chars = len(body[:2000])
+                                        if total_chars > 0:
+                                            entropy = -sum(
+                                                (count / total_chars) * math.log2(count / total_chars)
+                                                for count in char_counts.values()
+                                                if count > 0
+                                            )
+                                            # 熵值极低 + 与基准指纹长度桶相同 = catch-all 兜底
+                                            if entropy < 3.0:
+                                                return None
+
                                     # HTTP 404 = 路径不存在
                                     if resp.status_code == 404:
                                         return None
@@ -571,6 +648,33 @@ class ResultBuilderMixin:
                                 f"  JS 上下文定位: {locate_calls} 次 / 跳过 {locate_skipped_budget} 次"
                                 f"（已达 {LOCATE_TOTAL_BUDGET_S:.0f}s 预算上限）"
                             )
+
+                        # ★ OPT1: 强制 catch-all 过滤 — 推测验证通过不代表真实业务 API
+                        # 对所有 inferred_verified 的 API 执行 catch-all 批量检测
+                        if verified_count > 0:
+                            try:
+                                from core.sitemap.feature_gen import FeatureGenMixin
+                                # 统计推断 API 中可能的 catch-all
+                                _catchall_filtered = 0
+                                _apis_to_check = [
+                                    (k, v) for k, v in all_apis.items()
+                                    if v.get("discovered_by") in ("path_inference_verified", "path_fuzz")
+                                ]
+                                for api_key, api_data in _apis_to_check:
+                                    url = api_data.get("url", "")
+                                    if not url:
+                                        continue
+                                    # 使用已有的 api_liveness_check 复检
+                                    is_alive = await FeatureGenMixin.api_liveness_check(url, timeout=5.0)
+                                    if not is_alive:
+                                        # 标记为 ghost endpoint，从 all_apis 移除
+                                        all_apis.pop(api_key, None)
+                                        _catchall_filtered += 1
+                                if _catchall_filtered > 0:
+                                    self._report(f"  ★ OPT1 catch-all 强制过滤: 移除 {_catchall_filtered} 个兜底响应端点")
+                                    verified_count -= _catchall_filtered
+                            except Exception as _e:
+                                log.debug("OPT1 catch-all 强制过滤异常: %s", _e)
 
             except Exception as e:
                 self._report(f"  ⚠️ 验证出错: {e}")

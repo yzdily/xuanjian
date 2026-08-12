@@ -38,6 +38,10 @@ from core.sitemap import Sitemap, Priority
 
 log = get_logger("supplemental")
 
+# ★ 路径过滤常量与函数 _is_non_business_path 已提取到 core.sitemap.filters
+# （统一初始 dirscan、探索 dirscan 和补测 dirscan 的路径过滤标准）。
+# 此处保留 _is_non_business_path 包装函数以维持向后兼容。
+
 
 # ============================================================
 # 配置
@@ -443,119 +447,10 @@ def _is_third_party(host: str) -> bool:
     return False
 
 
-_NON_BUSINESS_PATH_SUFFIXES = (
-    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp",
-)
-_NON_BUSINESS_PATH_SEGMENTS = (
-    "/assets/", "/static/", "/dist/", "/_next/static/", "/_nuxt/",
-)
-
-# ---- 敏感/基础设施路径 ----
-# 这些路径已被 FastScanner._check_info_disclosure（SENSITIVE_PATHS）和
-# dirscan 的敏感文件检测覆盖。若把它们创建为业务 feature 并跑全量 14 条
-# 漏洞规则（SQLi/XSS/XXE/CORS…），不仅浪费请求，还会触发 WAF 封禁。
-# 匹配方式：
-#   - _SENSITIVE_DIR_SEGMENTS: 路径中包含该段即命中（如 /console/.svn/entries）
-#   - _SENSITIVE_FILE_SUFFIXES: 路径等于或以该后缀结尾（如 /.env、/api/.env）
-#   - _SENSITIVE_ENDPOINT_PREFIXES: 路径等于该前缀或以 前缀/ 开头（避免 /manage 误匹配 /manager）
-_SENSITIVE_DIR_SEGMENTS = (
-    "/.svn/", "/.git/", "/.hg/", "/.bzr/",
-    "/.idea/", "/.vscode/",
-    "/web-inf/", "/meta-inf/",
-)
-_SENSITIVE_FILE_SUFFIXES = (
-    # VCS / dotfiles
-    "/.svn", "/.svn/entries", "/.svn/wc.db",
-    "/.git", "/.git/config", "/.git/head", "/.git/index",
-    "/.hg", "/.bzr",
-    "/.env", "/.env.local", "/.env.production", "/.env.bak",
-    "/.ds_store", "/.htaccess", "/.htpasswd",
-    # Config files
-    "/web.config", "/config.php.bak", "/config.yml", "/config.yaml", "/config.json",
-    "/application.yml", "/application.yaml", "/application.properties",
-    "/bootstrap.yml", "/bootstrap.properties",
-    "/docker-compose.yml", "/dockerfile", "/.dockerignore",
-    # Backup / database dumps
-    "/backup.sql", "/db.sql", "/database.sql", "/dump.sql", "/data.sql",
-    "/backup.zip", "/backup.tar.gz", "/www.zip", "/web.zip", "/site.zip",
-    "/backup.rar",
-    # Build / dependency files
-    "/package.json", "/composer.json", "/requirements.txt", "/pom.xml", "/makefile",
-    "/webpack.config.js", "/.babelrc",
-    # PHP info / shells
-    "/phpinfo.php", "/info.php", "/test.php",
-    "/shell.php", "/cmd.php", "/eval.php",
-    # Server status
-    "/server-status", "/server-info",
-    # API documentation endpoints (not business APIs to test for vulns)
-    "/swagger-ui.html", "/swagger-ui/", "/v2/api-docs", "/v3/api-docs",
-    "/api-docs", "/openapi.json", "/openapi.yaml", "/api/swagger",
-    "/swagger.json", "/swagger.yaml",
-)
-_SENSITIVE_ENDPOINT_PREFIXES = (
-    "/actuator", "/manage", "/management",
-    "/jolokia", "/eureka", "/hystrix",
-    "/druid", "/h2-console", "/phpmyadmin", "/pma", "/adminer",
-)
-
-# ---- 管理后台 & 认证路径（DirScan 字典猜测） ----
-# 这些路径是 dirscan 字典中的高频猜测项（/dashboard、/login 等），
-# 在 wildcard 站点上会全部命中 200，导致创建大量无效 feature。
-# 它们应由 FastScanner 的 info_disclosure 规则检测，而非创建业务 feature 跑全量漏洞测试。
-# 匹配方式：精确匹配 或 路径前缀匹配
-_ADMIN_PANEL_PATHS = (
-    "/admin", "/administrator", "/administrator/",
-    "/backend", "/cpanel", "/control", "/cp",
-    "/dashboard", "/manager", "/webadmin",
-)
-# ★ /login /signin 已从过滤列表移除：登录页是主要测试目标，应使用
-# LOGIN_PAGE_CHECKLIST 专用检测（验证码绕过/弱口令/SQL注入等），
-# 而非被当作"非业务路径"过滤掉。
-# 保留 /register /signup /sso /oauth /logout 过滤：这些是次要认证路径，
-# 仍需过滤防止 wildcard 站点 feature 爆炸。
-_AUTH_PATH_PREFIXES = (
-    "/register", "/signup",
-    "/sso", "/oauth", "/logout",
-)
-
-
 def _is_non_business_path(path: str) -> bool:
-    """判断路径是否为非业务路径（静态资源或敏感/基础设施路径）。
-
-    敏感路径（/.svn/entries、/.git/config、/actuator/env 等）已由 FastScanner
-    的 _check_info_disclosure 和 dirscan 的敏感文件检测覆盖，不应创建为业务
-    feature 并跑全量漏洞规则。
-
-    2026-08-08：新增管理后台/认证路径过滤——这些是 dirscan 字典高频猜测项，
-    在 wildcard 站点上全部返回 200，导致 feature 爆炸（8921 checklist）。
-    改为直接在 DirScan 摘要中记录，不创建业务 feature。
-    """
-    p = (path or "").lower().rstrip("/")
-    if not p:
-        return False
-    # 静态资源后缀
-    if any(p.endswith(s) for s in _NON_BUSINESS_PATH_SUFFIXES):
-        return True
-    # 静态资源路径段
-    if any(seg in p for seg in _NON_BUSINESS_PATH_SEGMENTS):
-        return True
-    # 敏感目录段（VCS、IDE、框架配置目录）
-    if any(seg in p for seg in _SENSITIVE_DIR_SEGMENTS):
-        return True
-    # 敏感文件（精确或后缀匹配，后缀含 / 前缀避免误匹配）
-    if any(p == s or p.endswith(s) for s in _SENSITIVE_FILE_SUFFIXES):
-        return True
-    # 敏感端点前缀（精确或 path 前缀匹配，避免 /manage 误匹配 /manager）
-    if any(p == pre or p.startswith(pre + "/") for pre in _SENSITIVE_ENDPOINT_PREFIXES):
-        return True
-    # ★ 管理后台精确匹配（字典猜测项，不应创建 feature）
-    if p in _ADMIN_PANEL_PATHS:
-        return True
-    # ★ 认证路径精确或前缀匹配（字典猜测项，不应创建 feature）
-    if any(p == pre or p.startswith(pre + "/") for pre in _AUTH_PATH_PREFIXES):
-        return True
-    return False
+    """向后兼容包装 — 实际逻辑已提取到 core.sitemap.filters。"""
+    from core.sitemap.filters import is_non_business_path
+    return is_non_business_path(path)
 
 
 # ============================================================
@@ -639,6 +534,9 @@ async def discover_apis_from_dirscan(
 
     stats["dirscan_total"] = dir_result.total_requests
     stats["dirscan_sensitive"] = dir_result.sensitive_count
+    # ★ OPT6: 透传 WAF / 超时熔断状态，供补测兜底层2 判断是否降级被动 JS 分析
+    stats["waf_blocked"] = bool(getattr(dir_result, "waf_blocked", False))
+    stats["timeout_blocked"] = bool(getattr(dir_result, "timeout_blocked", False))
 
     # 把目录扫描发现的存活路径转换为 _DiscoveredAPI
     discovered: list[_DiscoveredAPI] = []
@@ -865,6 +763,197 @@ def _normalize_related_api_for_scan(api_ref: str, target_url: str) -> tuple[str,
     if not url_part.startswith("/"):
         url_part = "/" + url_part
     return method, f"{base}{url_part}"
+
+
+# ============================================================
+# ★ P1-OPT6: 补测链路三层兜底
+#   层1 _fallback_cdp_recapture        — flows 为空时 CDP 重捕获流量
+#   层2 _fallback_passive_js_analysis  — dirscan 全被封禁时被动 JS 源码分析
+#   层3 _generate_coverage_warning     — 所有手段失败时标注测试覆盖不足
+# ============================================================
+
+
+def _filter_flow_dicts_for_new_apis(
+    flows: list[dict],
+    sitemap: Sitemap,
+    target_url: str,
+    *,
+    require_2xx: bool = True,
+    extra_known_keys: set[str] | None = None,
+) -> list[_DiscoveredAPI]:
+    """对内存中的 flow 字典列表应用与 discover_new_apis_from_flows 相同的过滤，
+    返回 scope 内、非静态、且不在 sitemap.apis 里的新 API。
+
+    与 discover_new_apis_from_flows 的区别：
+      - 不做 timestamp / task_id 过滤（CDP 流量是即时捕获的）
+      - require_2xx=False 时跳过 2xx 检查（用于被动 JS 发现的未实测候选端点）
+
+    Args:
+        flows: flow 字典列表（兼容 mitmproxy flows.jsonl 单行格式）。
+        sitemap: 站点地图，用于计算 scope 与已知 API。
+        target_url: 目标 URL，用于计算 in-scope host。
+        require_2xx: 是否强制 2xx 响应（默认 True）。
+        extra_known_keys: 额外的已知 API key 集合，用于与本轮已收集的 API 去重。
+    """
+    if not flows:
+        return []
+
+    target_host = urlparse(target_url).netloc.lower() if target_url else ""
+    extra_scope: set[str] = set()
+    try:
+        ex = getattr(sitemap, "extra_scope", None)
+        if ex:
+            extra_scope = {d.lower().lstrip(".") for d in ex if d}
+    except Exception:
+        pass
+    in_scope_hosts = ({target_host} | extra_scope) if target_host else extra_scope
+
+    known_keys: set[str] = set()
+    try:
+        for api_key in (sitemap.apis or {}).keys():
+            parts = api_key.split(" ", 1)
+            if len(parts) == 2:
+                m = parts[0].upper()
+                u = parts[1].strip()
+                pu = urlparse(u)
+                if pu.netloc:
+                    known_keys.add(f"{m} {pu.netloc.lower()}{pu.path}")
+                else:
+                    known_keys.add(f"{m} {pu.path}")
+    except Exception:
+        pass
+    if extra_known_keys:
+        known_keys |= extra_known_keys
+
+    seen: dict[str, _DiscoveredAPI] = {}
+    for flow in flows:
+        try:
+            api = _DiscoveredAPI(flow)
+        except Exception:
+            continue
+        if not api.host or not _host_in_scope(api.host, in_scope_hosts):
+            continue
+        if _is_third_party(api.host):
+            continue
+        if require_2xx and not (200 <= api.status_code < 300):
+            continue
+        if _is_non_business_path(api.path):
+            continue
+        norm_key = f"{api.method} {api.host}{api.path}"
+        if norm_key in known_keys or f"{api.method} {api.path}" in known_keys:
+            continue
+        if api.key in seen:
+            continue
+        seen[api.key] = api
+    return list(seen.values())
+
+
+async def _fallback_cdp_recapture(target_url: str) -> list[dict]:
+    """兜底层1: flows 为空时，通过 CDP 重捕获流量。
+
+    当 mitmproxy 故障导致 flows.jsonl 为空时，尝试通过 Playwright CDP
+    重新捕获 XHR/Fetch 请求作为 flows 的替代数据源。
+    """
+    try:
+        # 尝试通过 Playwright CDP 获取流量
+        from core.crawler.crawler_core import get_cdp_flows
+        cdp_flows = await get_cdp_flows(target_url, timeout=30)
+        if cdp_flows:
+            log.info("[补测兜底] CDP 流量重捕获: 获取 %d 条流量", len(cdp_flows))
+            return cdp_flows
+    except ImportError:
+        log.debug("[补测兜底] CDP 流量捕获模块不可用")
+    except Exception as e:
+        log.debug("[补测兜底] CDP 流量重捕获失败: %s", e)
+    return []
+
+
+async def _fallback_passive_js_analysis(
+    target_url: str,
+    sitemap: Sitemap | None = None,
+) -> list[dict]:
+    """兜底层2: dirscan 端点全部被封禁时，降级为被动 JS 源码分析。
+
+    从已缓存的 JS 文件中提取 API 路径模式，作为 dirscan 的替代发现手段。
+    """
+    discovered: list[dict] = []
+    try:
+        js_cache: dict | None = None
+
+        # 优先使用 core.js_analyzer 的全局 JS 源码缓存（按 target 隔离）
+        try:
+            from core.js_analyzer import _js_source_cache, _normalize_target_key
+            target_key = _normalize_target_key(target_url)
+            js_cache = _js_source_cache.get(target_key, {}) or None
+        except Exception:
+            pass
+
+        # 兼容多种属性名（sitemap / session 上可能挂载的 JS 缓存）
+        if not js_cache and sitemap is not None:
+            js_cache = (
+                getattr(sitemap, "_js_content_cache", None)
+                or getattr(sitemap, "js_cache", None)
+                or getattr(sitemap, "_js_cache", None)
+            )
+
+        if not js_cache:
+            return discovered
+
+        import re
+        # 从 JS 源码中提取 API 路径模式
+        api_pattern = re.compile(
+            r'''["'`](/(?:api|rest|service|v\d+)/[a-zA-Z0-9_/\-{}]+)["'`]''',
+            re.IGNORECASE,
+        )
+        seen: set[str] = set()
+        base = target_url.rstrip("/")
+        for js_url, js_content in js_cache.items():
+            if not js_content:
+                continue
+            matches = api_pattern.findall(js_content)
+            for path in matches:
+                if path in seen:
+                    continue
+                seen.add(path)
+                discovered.append({
+                    "path": path,
+                    "method": "GET",
+                    "source": "passive_js",
+                    "url": f"{base}{path}",
+                })
+        if discovered:
+            log.info(
+                "[补测兜底] 被动 JS 分析: 从 %d 个 JS 文件提取 %d 个 API 路径",
+                len(js_cache), len(discovered),
+            )
+    except Exception as e:
+        log.debug("[补测兜底] 被动 JS 分析失败: %s", e)
+    return discovered
+
+
+def _generate_coverage_warning(reason: str, details: dict | None = None) -> str:
+    """兜底层3: 所有手段失败时，生成测试覆盖不足告警。
+
+    返回 Markdown 格式的告警文本，供报告使用。
+    """
+    lines = [
+        "> ## ⚠️ 测试覆盖不足告警",
+        "> ",
+        "> **补测链路全部失效**——当前测试覆盖度不足，建议人工补测。",
+        "> ",
+        f"> **失效原因**: {reason}",
+    ]
+    if details:
+        lines.append("> ")
+        lines.append("> **详细信息**:")
+        for k, v in details.items():
+            lines.append(f"> - {k}: {v}")
+    lines.append("> ")
+    lines.append(
+        "> **建议**: 1) 检查 mitmproxy/CDP 流量捕获状态; "
+        "2) 降低扫描速率避免 WAF 封禁; 3) 对关键端点执行人工测试"
+    )
+    return "\n".join(lines)
 
 
 # ============================================================
@@ -1151,6 +1240,10 @@ async def run_supplemental_test(
                 continue
 
         summary["elapsed"] = time.time() - started
+        # ★ OPT6: 补测质量度量报告
+        _quality = _build_supplemental_quality_report(summary, sitemap)
+        if _quality:
+            yield {"type": "info", "msg": _quality}
         yield {"type": "done", "summary": summary}
 
     except Exception as e:
@@ -1163,6 +1256,68 @@ async def run_supplemental_test(
             "msg": f"补测 Agent 顶层异常（{type(e).__name__}: {str(e)[:160]}），已跳过",
         }
         yield {"type": "done", "summary": summary}
+
+
+def _build_supplemental_quality_report(summary: dict, sitemap) -> str:
+    """★ OPT6: 补测质量度量报告 — 补测完成后输出质量统计。
+
+    度量维度：
+    1. 流量覆盖率：扫描了多少条流量、发现多少新 API
+    2. 功能点转化率：新 API → 新功能点的转化比例
+    3. 测试覆盖率：补测功能点中实际被测试的比例
+    4. 空心化预警：如果补测 0 新 API 或 0 测试，输出警告
+    """
+    lines = ["📊 **补测质量度量报告**\n"]
+
+    # 1. 流量覆盖率
+    scan_stats = summary.get("scan_stats") or {}
+    total_scanned = scan_stats.get("total_scanned", 0)
+    discovered = summary.get("discovered", 0)
+    if total_scanned > 0:
+        api_rate = round(discovered / total_scanned * 100, 1)
+        lines.append(f"- 流量扫描: {total_scanned} 条 → 发现 {discovered} 个新 API（转化率 {api_rate}%）")
+    else:
+        lines.append(f"- 流量扫描: 未扫描到新流量")
+
+    # 2. 功能点转化率
+    new_features = summary.get("new_features", 0)
+    attached = summary.get("attached_features", 0)
+    total_new = new_features + attached
+    if discovered > 0:
+        fp_rate = round(total_new / discovered * 100, 1)
+        lines.append(f"- 功能点转化: {discovered} API → {total_new} 个功能点（转化率 {fp_rate}%）")
+    elif total_new > 0:
+        lines.append(f"- 功能点转化: {total_new} 个功能点（来自目录爆破等非流量来源）")
+
+    # 3. 测试覆盖率
+    tested = summary.get("tested_features", 0)
+    skipped = summary.get("skipped_features", 0)
+    testable = tested + skipped
+    if testable > 0:
+        test_rate = round(tested / testable * 100, 1)
+        lines.append(f"- 测试覆盖: {tested}/{testable} 功能点已测试（覆盖率 {test_rate}%）")
+        if skipped > 0:
+            lines.append(f"  - 其中 {skipped} 个因超时/异常被跳过")
+
+    # 4. 空心化预警
+    warnings = []
+    if total_scanned > 0 and discovered == 0:
+        warnings.append(f"扫描了 {total_scanned} 条流量但未发现新 API — 可能流量已被主扫描覆盖，或目标为纯前端 SPA")
+    if testable > 0 and tested == 0:
+        warnings.append(f"有 {testable} 个功能点待测但全部失败/跳过 — 补测链路可能存在异常")
+    if summary.get("error"):
+        warnings.append(f"补测过程中发生错误: {summary['error'][:100]}")
+
+    if warnings:
+        lines.append("\n⚠️ **质量告警:**")
+        for w in warnings:
+            lines.append(f"  - {w}")
+
+    # 5. 耗时
+    elapsed = summary.get("elapsed", 0.0)
+    lines.append(f"\n⏱️ 补测耗时: {elapsed:.1f}s")
+
+    return "\n".join(lines) if len(lines) > 2 else ""
 
 
 async def _run_worker_with_timeout(
@@ -1296,6 +1451,24 @@ async def run_supplemental_test_local(
                 "msg": (
                     "[本地补测] 没有可分析的新流量（flows.jsonl 为空），"
                     "将启动主动目录爆破补充发现。"
+                ),
+            }
+        elif scan_stats.get("total_scanned", 0) > 0 and len(apis) == 0:
+            # ★ 流量被抓但 0 新 API：消除"看着正常、实为空心"的误导
+            # 典型场景：登录页 GET + 静态资源被代理抓到，但登录 POST 未被抓到
+            # 或所有流量都是已知 API / 非 2xx / 非业务请求
+            _non_biz = scan_stats.get("non_business", 0)
+            _already = scan_stats.get("already_known", 0)
+            _not_2xx = scan_stats.get("not_2xx", 0)
+            _total = scan_stats.get("total_scanned", 0)
+            summary["warning"] = "flows_no_new_api"
+            yield {
+                "type": "warn",
+                "msg": (
+                    f"[本地补测] 代理抓到 {_total} 条流量但未发现新 API"
+                    f"（非业务 {_non_biz} / 已知 {_already} / 非2xx {_not_2xx}）。"
+                    f"可能原因：登录 POST 未被代理抓取、流量均为静态资源、"
+                    f"或业务 API 已在 Phase 0 全部发现。将启动主动目录爆破补充发现。"
                 ),
             }
 

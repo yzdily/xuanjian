@@ -110,3 +110,151 @@ class ReportMixin:
             "summary": "\n".join(lines),
             "new_vuln_keys": new_vuln_keys,
         }
+
+    def _compute_real_completion(self) -> dict:
+        """计算真实完成率，区分真实检测与跳过。
+
+        返回:
+            real_done: 真实完成检查数（NOT_VULN + VULNERABLE + NEEDS_REVIEW）
+            skipped: 跳过检查数（SKIPPED）
+            pending: 待测检查数（PENDING）
+            total: 总检查数
+            real_rate: 真实完成率 = real_done / total
+            skip_rate: 跳过率 = skipped / total
+        """
+        if not self.sitemap:
+            return {"real_done": 0, "skipped": 0, "pending": 0, "total": 0,
+                    "real_rate": 0.0, "skip_rate": 0.0}
+        try:
+            cov = self.sitemap.get_coverage()
+        except Exception:
+            return {"real_done": 0, "skipped": 0, "pending": 0, "total": 0,
+                    "real_rate": 0.0, "skip_rate": 0.0}
+
+        from core.sitemap.constants import CheckResult
+        real_done = 0
+        skipped = 0
+        pending = 0
+        total = 0
+        try:
+            for fp in self.sitemap.features.values():
+                if not fp.checklist:
+                    continue
+                for c in fp.checklist:
+                    total += 1
+                    if c.result == CheckResult.SKIPPED:
+                        skipped += 1
+                    elif c.result == CheckResult.PENDING:
+                        pending += 1
+                    else:
+                        real_done += 1
+        except Exception:
+            pass
+
+        real_rate = round(real_done / total * 100, 1) if total > 0 else 0.0
+        skip_rate = round(skipped / total * 100, 1) if total > 0 else 0.0
+        return {
+            "real_done": real_done,
+            "skipped": skipped,
+            "pending": pending,
+            "total": total,
+            "real_rate": real_rate,
+            "skip_rate": skip_rate,
+        }
+
+    def _detect_hollowing(self) -> dict | None:
+        """检测测试过程是否空心化。
+
+        空心化判定条件（同时满足）：
+        1. 真实完成率 < 10%
+        2. 跳过率 > 70%
+        3. 漏洞数 = 0
+
+        返回 None 表示未空心化；返回 dict 包含告警信息和根因诊断。
+        """
+        rc = self._compute_real_completion()
+        if rc["total"] == 0:
+            return None
+
+        try:
+            cov = self.sitemap.get_coverage()
+            vulns = int(cov.get("vulns", 0) or 0)
+        except Exception:
+            vulns = 0
+
+        # 空心化判定
+        if rc["real_rate"] < 10.0 and rc["skip_rate"] > 70.0 and vulns == 0:
+            # 根因诊断
+            causes = []
+            fs_stats = {}
+            try:
+                fs_stats = self.sitemap.get_coverage().get("fast_scanner_stats", {}) or {}
+            except Exception:
+                pass
+
+            if fs_stats.get("waf_blocked"):
+                causes.append("WAF 封禁导致后续测试全部跳过")
+            if fs_stats.get("timeout_blocked"):
+                causes.append("超时熔断导致测试中止")
+
+            # 检查 flows 是否为空
+            flows_empty = getattr(self, "_flows_no_new_api", False)
+            if flows_empty:
+                causes.append("流量捕获为空，补测链路断裂（flows_no_new_api）")
+
+            # 检查 catch-all 端点比例
+            ghost_count = getattr(self.sitemap, "_ghost_endpoint_count", 0)
+            total_apis = len(getattr(self.sitemap, "apis", {}))
+            if total_apis > 0 and ghost_count / total_apis > 0.5:
+                causes.append(f"虚假端点比例过高（{ghost_count}/{total_apis}）")
+
+            if not causes:
+                causes.append("检测项大面积跳过，疑似 FAST 模式全量跳过 LLM 检测")
+
+            return {
+                "is_hollowed": True,
+                "alert_level": "danger",
+                "real_done": rc["real_done"],
+                "skipped": rc["skipped"],
+                "total": rc["total"],
+                "real_rate": rc["real_rate"],
+                "skip_rate": rc["skip_rate"],
+                "vulns": vulns,
+                "causes": causes,
+                "message": (
+                    f"⚠️ 空心化告警：测试过程疑似空心化。"
+                    f"真实完成 {rc['real_done']}/{rc['total']} 项（{rc['real_rate']}%），"
+                    f"跳过 {rc['skipped']} 项（{rc['skip_rate']}%），"
+                    f"发现漏洞 {vulns} 个。"
+                    f"根因：{'；'.join(causes)}"
+                ),
+            }
+        return None
+
+    def _generate_hollowing_alert_markdown(self) -> str:
+        """生成空心化告警的 Markdown 文本，用于报告头部展示。
+
+        如果未检测到空心化，返回空字符串。
+        """
+        h = self._detect_hollowing()
+        if not h:
+            return ""
+
+        lines = [
+            f"> ## ⚠️ 空心化告警",
+            f"> ",
+            f"> **测试过程疑似空心化**——报告的完成率数字不能反映真实测试覆盖度。",
+            f"> ",
+            f"> | 指标 | 值 |",
+            f"> |------|-----|",
+            f"> | 真实完成 | {h['real_done']}/{h['total']} 项（{h['real_rate']}%）|",
+            f"> | 跳过 | {h['skipped']} 项（{h['skip_rate']}%）|",
+            f"> | 发现漏洞 | {h['vulns']} 个 |",
+            f"> ",
+            f"> **根因诊断**：",
+        ]
+        for cause in h["causes"]:
+            lines.append(f"> - {cause}")
+        lines.append("> ")
+        lines.append("> **建议**：检查 WAF 封禁状态、流量捕获模式、扫描模式配置，必要时人工补测。")
+        return "\n".join(lines)

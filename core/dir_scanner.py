@@ -295,6 +295,10 @@ class DirScanResult:
     waf_blocked: bool = False
     timeout_blocked: bool = False
     recursed_dirs: int = 0
+    # ★ OPT5: catch-all 路由检测 — 多个不同路径返回相同 body_hash
+    catch_all_detected: bool = False
+    catch_all_hash: str = ""
+    catch_all_rate: float = 0.0
     # ★ 诊断字段：连接失败 / 超时次数（供前端判断"为什么 0 请求"）
     connect_errors: int = 0
     timeout_errors: int = 0
@@ -314,6 +318,8 @@ class DirScanResult:
             "target": self.target,
             "host_unreachable": self.host_unreachable,
             "wildcard_detected": self.wildcard_detected,
+            "catch_all_detected": self.catch_all_detected,
+            "catch_all_rate": self.catch_all_rate,
             "total_requests": self.total_requests,
             "elapsed": round(self.elapsed, 2),
             "discovered_count": self.discovered_count,
@@ -476,6 +482,23 @@ class DirectoryScanner:
         result.connect_errors = self._connect_errors
         result.timeout_errors = self._timeout_errors
         result.total_requests = self._total_requests
+        # ★ OPT5: catch-all 路由检测 — 多个不同路径返回相同 body_hash > 60%
+        if len(result.entries) >= 5:
+            _hash_counts: dict[str, int] = {}
+            for _e in result.entries:
+                _hash_counts[_e.body_hash] = _hash_counts.get(_e.body_hash, 0) + 1
+            _max_count = max(_hash_counts.values()) if _hash_counts else 0
+            _max_hash = max(_hash_counts, key=_hash_counts.get) if _hash_counts else ""
+            _rate = _max_count / len(result.entries) if result.entries else 0.0
+            if _rate > 0.6:
+                result.catch_all_detected = True
+                result.catch_all_hash = _max_hash
+                result.catch_all_rate = round(_rate * 100, 1)
+                log.warning(
+                    "[DirScan] catch-all 路由检测: %d/%d (%.1f%%) 个路径返回相同 body_hash，"
+                    "可能为 SPA 前端路由或 catch-all 后端路由",
+                    _max_count, len(result.entries), _rate * 100,
+                )
         log.info(
             "[DirScan] 完成: target=%s 请求=%d 发现=%d 敏感=%d 递归目录=%d "
             "耗时=%.1fs host_unreachable=%s wildcard=%s waf=%s timeout=%s "

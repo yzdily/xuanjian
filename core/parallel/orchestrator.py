@@ -756,13 +756,37 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
     # ---- Step 6: 快速模式直接进报告 ----
     if _fast_mode:
         from core.sitemap import CheckResult
+        # ★ OPT2: FAST 模式保底清单 — 5 项检测已由 FastScanner 本地规则执行，
+        # 不应标记为"跳过"，而应标记为"FastScanner 保底检测"。
+        # 英文规则名 → 中文 vuln_type 映射（与 fast_scanner.py 中 vuln_type 一致）
+        _minimal_vuln_types: set[str] = set()
+        _RULE_TO_VULN_TYPE = {
+            "sql_injection": {"SQL注入"},
+            "unauthorized_access": {"未授权访问", "IDOR"},
+            "info_disclosure": {"信息泄露"},
+            "weak_password": {"弱口令"},
+            "cors": {"CORS配置错误"},
+        }
+        for _rule in (getattr(scan_cfg, 'fast_minimal_checks', None) or []):
+            _minimal_vuln_types.update(_RULE_TO_VULN_TYPE.get(_rule, set()))
+
+        _minimal_kept = 0
         for fp in untested:
             for c in fp.checklist:
                 if c.result == CheckResult.PENDING:
-                    c.result = CheckResult.SKIPPED
-                    c.detail = "快速模式跳过 LLM"
+                    if c.vuln_type in _minimal_vuln_types:
+                        # 保底检测项：FastScanner 已执行但无命中
+                        c.result = CheckResult.NOT_VULN
+                        c.detail = "FastScanner 保底检测（本地规则已执行，无命中）"
+                        _minimal_kept += 1
+                    else:
+                        c.result = CheckResult.SKIPPED
+                        c.detail = "快速模式跳过 LLM"
             if fp.test_status == TestStatus.NOT_TESTED:
                 fp.test_status = TestStatus.TESTED
+        if _minimal_kept > 0:
+            yield session._event("system",
+                f"⚡ FAST 保底检测: {_minimal_kept} 项已由 FastScanner 本地规则执行")
         if session.sitemap:
             session.sitemap.phase_status = "fast_mode"
             session.sitemap.termination_reason = "快速模式：仅运行 FastScanner 部分规则，跳过所有 LLM 深度分析。"

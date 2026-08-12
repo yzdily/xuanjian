@@ -130,13 +130,38 @@ _API_PATTERNS = [
     ),
 ]
 
-# 模板字符串中的 API 路径（如 `/api/user/${id}`）
-_TEMPLATE_API_PATTERN = re.compile(
-    r'''[`"'](/(?:api|v[1-3]|backend|admin|user|auth|data|service|graphql|rest)[^`"']*?)[`"']''',
+# ★ 2026-08-12: minified JS 字符串拼接 URL 模式
+# 在 minified/bundled JS 中，URL 常被拆分为字符串拼接：
+#   e+"/api/user/list"  →  变量 + 字符串
+#   "/api/user/"+t      →  字符串 + 变量
+#   `${baseURL}/api/user/${id}`  →  模板字符串拼接（已由 _TEMPLATE_API_PATTERN 覆盖）
+# 此模式只提取字符串字面量中的路径部分
+_CONCAT_URL_PATTERN = re.compile(
+    r'''[+]\s*[`"'](/[a-zA-Z][a-zA-Z0-9_/\-{}:]{2,80})[`"']'''
+    r'''|'''
+    r'''[`"'](/[a-zA-Z][a-zA-Z0-9_/\-{}:]{2,80})[`"']\s*[+]''',
     re.IGNORECASE
 )
 
-# 通用路径提取（宽松匹配，用于补全）
+# 模板字符串中的 API 路径（如 `/api/user/${id}`）
+# ★ 2026-08-12: 扩展前缀覆盖面 + 支持反引号模板字符串
+# 原来只覆盖 api/v1-3/backend/admin/user/auth/data/service/graphql/rest 10个前缀
+# 实际项目中 sys/system/operation/biz/manage/portal/common/app 等前缀极常见
+# 原来不支持反引号(`)，导致 ES6 模板字符串中的路径全部漏掉
+_TEMPLATE_API_PATTERN = re.compile(
+    r'''[`"'](/(?:api|apis|v[1-3]|backend|admin|user|auth|data|service|services|
+    graphql|rest|sys|system|operation|operations|biz|business|manage|manager|
+    portal|common|app|inner|open|servlet|gateway|proxy|invoke|call|
+    resource|file|upload|download|export|import|query|search|list|detail|
+    create|update|delete|save|submit|login|logout|register|captcha|
+    token|session|profile|account|password|menu|role|permission|dept|
+    org|organization|config|setting|log|audit|monitor|task|job|schedule|
+    message|notice|notification|dict|dictionary)[^`"']*?)[`"']''',
+    re.IGNORECASE | re.VERBOSE
+)
+
+# 通用路径提取（宽松匹配，用于兜底补全）
+# ★ 2026-08-12: 支持反引号模板字符串
 _PATH_PATTERNS = re.compile(
     r'''[`"'](/[a-zA-Z][a-zA-Z0-9_/\-{}:]+)[`"']''',
 )
@@ -373,6 +398,54 @@ def _extract_api_calls(
             method="UNKNOWN", path=path, source_file=js_url,
         ))
 
+    # ★ 2026-08-12: 字符串拼接 URL 提取 — minified JS 中 e+"/api/user" 形式
+    _CONCAT_MAX = 50
+    _concat_count = 0
+    for m in _CONCAT_URL_PATTERN.finditer(js_text):
+        if _concat_count >= _CONCAT_MAX:
+            break
+        # 两个捕获组：group(1) 是 +后面的路径，group(2) 是 +前面的路径
+        path = m.group(1) or m.group(2)
+        if not path:
+            continue
+        path = re.sub(r'\$\{[^}]+\}', '{id}', path)
+        if not _is_valid_api_path(path):
+            continue
+        dedup_key = f"UNKNOWN {path}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        result.api_calls.append(JSApiCall(
+            method="UNKNOWN", path=path, source_file=js_url,
+        ))
+        _concat_count += 1
+
+    # ★ 2026-08-12: 兜底通用路径提取 — 之前 _PATH_PATTERNS 定义了但从未调用
+    # 始终运行（不再仅限0结果时），但严格过滤+去重避免噪音
+    # 覆盖场景：自定义前缀(如/custom/user)、非标准命名等精确和模板匹配漏掉的路径
+    _GENERIC_MAX = 100
+    _generic_count = 0
+    for m in _PATH_PATTERNS.finditer(js_text):
+        if _generic_count >= _GENERIC_MAX:
+            break
+        path = m.group(1)
+        # 清理模板变量
+        path = re.sub(r'\$\{[^}]+\}', '{id}', path)
+        if not _is_valid_api_path(path):
+            continue
+        # 兜底模式额外过滤：路径至少 2 段（如 /api/user），排除单段路径(如 /test)
+        parts = [p for p in path.strip("/").split("/") if p]
+        if len(parts) < 2:
+            continue
+        dedup_key = f"UNKNOWN {path}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        result.api_calls.append(JSApiCall(
+            method="UNKNOWN", path=path, source_file=js_url,
+        ))
+        _generic_count += 1
+
 
 def _extract_routes(
     js_text: str, js_url: str,
@@ -461,8 +534,13 @@ def _extract_routes(
 
 # 路由表"头部"：routes:[ / routes=[ / Routes:[ / _routes=[ / children:[
 # 注意：children:[ 是嵌套子路由，也是路由表
+# ★ 2026-08-12: 扩展 React Router v6 / Angular / 通用菜单路由模式
 _ROUTE_TABLE_HEAD = re.compile(
-    r'\b(?:routes|Routes|_routes|routeList|routeConfig|children)\s*[:=]\s*\[',
+    r'\b(?:routes|Routes|_routes|routeList|routeConfig|routeTable|routerConfig|'
+    r'children|subRoutes|subMenus|menuItems|menuList|menuConfig|'
+    r'createBrowserRouter|createHashRouter|RouterConfig|routerConfig|'
+    r'forRoot|forChild|RouterModule)'
+    r'\s*[:=(\[]\s*\[',
 )
 
 # 宽松 path 字段：path:"/xxx" / "path":"/xxx" / p:"/xxx" / to:"/xxx"

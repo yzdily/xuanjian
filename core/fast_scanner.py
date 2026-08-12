@@ -105,6 +105,8 @@ class ScanTarget:
     body: str = ""
     params: dict = field(default_factory=dict)
     auth_headers: dict = field(default_factory=dict)  # 认证头（用于去认证对比）
+    # ★ OPT4: 优先级感知调度 — WAF 封禁后优先测试 critical/high 端点
+    priority: str = ""  # critical/high/medium/low（来自 FeaturePoint.priority）
 
 
 @dataclass
@@ -122,6 +124,7 @@ class ScanResult:
     # ★ 封禁/熔断标志：标记本次扫描是否因 WAF/超时而提前终止
     waf_blocked: bool = False
     timeout_blocked: bool = False
+    catchall_blocked: bool = False
 
     @property
     def vuln_count(self) -> int:
@@ -146,6 +149,7 @@ class ScanResult:
             # ★ 封禁/熔断标志：让报告能展示扫描是否因 WAF/超时而受限
             "waf_blocked": getattr(self, "waf_blocked", False),
             "timeout_blocked": getattr(self, "timeout_blocked", False),
+            "catchall_blocked": getattr(self, "catchall_blocked", False),
             "findings": [
                 {
                     "vuln_type": f.vuln_type,
@@ -757,6 +761,12 @@ class FastScanner:
         #   此标志确保每次 scan_targets 只打印一次"已封禁"日志。
         self._waf_skip_logged = False
         self._timeout_skip_logged = False
+        # ★ OPT4: 封禁恢复探测
+        self._waf_recovery_probe_at = 0.0  # 上次探测时间
+        self._waf_recovery_probe_interval = 120.0  # 每 120s 探测一次
+        self._waf_recovery_success_count = 0  # 连续成功次数
+        # ★ OPT4: 记录当前扫描目标 URL，供封禁恢复探测使用
+        self._target_url: str = ""
         # ★ 超时熔断：连续超时达到阈值后置 True，避免对不可达目标继续打无效请求
         self._consecutive_timeout_count = 0
         self._timeout_blocked = False
@@ -774,6 +784,27 @@ class FastScanner:
         # ★ 响应日志采样：同规则/状态/长度桶的重复响应只在里程碑输出，减少 500 噪声刷屏
         self._response_log_counts: dict[str, int] = {}
         self._response_log_suppressed = 0
+        # ★ 虚假端点熔断：连续 N 个端点返回相同响应时中止扫描
+        # catch-all 兜底路由会让所有推测端点返回相同的 200 OK / 相同 body，
+        # 继续扫描只是浪费请求并增加 WAF 封禁风险。
+        self._catchall_same_count = 0
+        self._catchall_same_threshold = 10  # 连续 10 个相同响应即熔断
+        self._catchall_blocked = False
+        self._catchall_last_signature: str = ""  # 记录上一次响应签名
+        # ★ OPT4: UA 轮换池 — 降低被 WAF 识别为扫描器的概率
+        self._ua_pool = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+        ]
+        self._ua_index = 0
         # ★ YAML 规则缓存：从 rules/*.yaml 加载的规则列表
         self._yaml_rules: list[dict] = []
         # ★ 生产修复：_check_ssrf 末尾的 SSRF OOB 增强分支会读取 self.config，
@@ -800,6 +831,28 @@ class FastScanner:
         key = f"{rule_tag}|{method}|{parent}|{status}|{length_bucket}"
         count = self._response_log_counts.get(key, 0) + 1
         self._response_log_counts[key] = count
+
+        # ★ 虚假端点熔断：追踪连续相同响应签名（仅 2xx/3xx）
+        # 签名 = status_code + body_length，简单但有效识别 catch-all 兜底
+        # 注意：必须放在 noisy_status 早退之前，确保错误响应也能重置计数
+        if 200 <= resp.status_code < 400:
+            signature = f"{resp.status_code}|{len(resp.content)}"
+            if signature == self._catchall_last_signature:
+                self._catchall_same_count += 1
+                if self._catchall_same_count >= self._catchall_same_threshold and not self._catchall_blocked:
+                    self._catchall_blocked = True
+                    log.warning(
+                        "[SCAN] 虚假端点熔断：连续 %d 个端点返回相同响应（%d, body=%d），"
+                        "判定为 catch-all 污染，中止后续扫描",
+                        self._catchall_same_count, resp.status_code, len(resp.content)
+                    )
+            else:
+                self._catchall_same_count = 1
+                self._catchall_last_signature = signature
+        else:
+            # 错误响应重置计数
+            self._catchall_same_count = 0
+            self._catchall_last_signature = ""
 
         noisy_status = status >= 500 or status in (403, 404, 418, 429)
         milestones = {1, 2, 3, 10, 30, 100, 300, 1000}
@@ -829,6 +882,14 @@ class FastScanner:
             if wait_for > 0:
                 await asyncio.sleep(wait_for)
             self._last_request_at = time.monotonic()
+
+    def _get_rotating_ua(self) -> str:
+        """获取轮换 User-Agent，每次调用返回下一个 UA。"""
+        if not self._ua_pool:
+            return "Mozilla/5.0"
+        ua = self._ua_pool[self._ua_index % len(self._ua_pool)]
+        self._ua_index += 1
+        return ua
 
     def _load_yaml_rules(self) -> None:
         """加载 YAML 规则文件到内存缓存。
@@ -926,8 +987,33 @@ class FastScanner:
           深度绕过（编码/分块/注释变体）由 WAFBypassFuzzer 负责，
           本引擎仅做快速规则检测 + 限速保护。
         """
-        # ★ WAF / 超时熔断早退：一旦全局封禁标志置位，后续所有请求直接返回 None
-        if self._waf_blocked or self._timeout_blocked:
+        # ★ WAF / 超时熔断早退
+        if self._timeout_blocked:
+            return None
+        if self._waf_blocked:
+            # ★ OPT4: 封禁恢复探测 — 每 120s 发送无害 GET，连续 2 次成功则解除封禁
+            import time as _t
+            now = _t.monotonic()
+            if now - self._waf_recovery_probe_at >= self._waf_recovery_probe_interval:
+                self._waf_recovery_probe_at = now
+                try:
+                    _probe_client = await self._get_client()
+                    probe_resp = await _probe_client.get(self._target_url, timeout=5.0)
+                    if probe_resp.status_code < 400:
+                        self._waf_recovery_success_count += 1
+                        if self._waf_recovery_success_count >= 2:
+                            log.info("[SCAN] WAF 封禁恢复：连续 %d 次探测成功，解除封禁", self._waf_recovery_success_count)
+                            self._waf_blocked = False
+                            self._blocked_count = 0
+                            self._waf_recovery_success_count = 0
+                    else:
+                        self._waf_recovery_success_count = 0
+                except Exception:
+                    self._waf_recovery_success_count = 0
+            return None
+
+        # ★ 虚假端点熔断早退：catch-all 污染后不再浪费请求
+        if self._catchall_blocked:
             return None
 
         # ★ 并发信号量：限制同时在途的 HTTP 请求数
@@ -936,7 +1022,7 @@ class FastScanner:
             self._semaphore = asyncio.Semaphore(self.max_workers)
         async with self._semaphore:
             # 二次检查：排队期间可能已被熔断
-            if self._waf_blocked or self._timeout_blocked:
+            if self._waf_blocked or self._timeout_blocked or self._catchall_blocked:
                 return None
 
             # ★ 2026-08-05：全局超时降速——跨目标累计超时过多时，每个请求额外 sleep
@@ -981,21 +1067,28 @@ class FastScanner:
                         #   UA + Sec-Fetch 头后可能恢复正常（反爬而非 WAF）
                         if self._blocked_count == 1:
                             _should_retry_with_browser_headers = True
-                        # ★ WAF 日志指数退避采样：仅在 3/10/30/100/300/1000 次时输出
-                        # 原逻辑每 3 次输出一条，拦截 576 次产生 192 条几乎相同的 WARNING
-                        _log_milestones = {3, 10, 30, 100, 300, 1000, 3000}
-                        if self._blocked_count in _log_milestones:
-                            delay = min(2.0, 0.5 * (self._blocked_count // 3))
-                            log.warning("[SCAN] WAF 拦截 %d 次，降速 %0.1fs",
-                                        self._blocked_count, delay)
-                            _need_sleep = delay
-                        # ★ WAF 全局封禁早退：拦截次数达到阈值，置全局标志中止所有后续请求
-                        if self._blocked_count >= self._waf_block_threshold and not self._waf_blocked:
+                        # ★ OPT4: WAF 分级响应
+                        if self._blocked_count >= 20 and not self._waf_blocked:
+                            # 20次拦截：全局封禁但保留被动分析
                             self._waf_blocked = True
                             log.warning(
-                                "[SCAN] WAF 封禁：连续被拦截 %d 次（阈值 %d），中止该目标所有后续 payload",
-                                self._blocked_count, self._waf_block_threshold
-                            )
+                                "[SCAN] WAF 封禁（Level 3）：连续被拦截 %d 次，中止该目标所有后续 payload",
+                                self._blocked_count)
+                        elif self._blocked_count >= 15:
+                            # 15次拦截：仅跳过当前规则的剩余 payload，不跳过整个目标
+                            _need_sleep = 2.0
+                            if self._blocked_count == 15:
+                                log.warning("[SCAN] WAF 降级（Level 2）：拦截 %d 次，降速 2.0s", self._blocked_count)
+                        elif self._blocked_count >= 10:
+                            # 10次拦截：暂停 + 切换探测策略
+                            _need_sleep = 1.5
+                            if self._blocked_count == 10:
+                                log.warning("[SCAN] WAF 降级（Level 1）：拦截 %d 次，降速 1.5s + UA 变换", self._blocked_count)
+                        elif self._blocked_count >= 5:
+                            # 5次拦截：降速 + UA 变换
+                            _need_sleep = 0.8
+                            if self._blocked_count == 5:
+                                log.warning("[SCAN] WAF 警告：拦截 %d 次，降速 0.8s", self._blocked_count)
 
                 # ★ sleep 移到锁外执行，避免持锁期间阻塞其他协程
                 if _need_sleep > 0:
@@ -1119,6 +1212,8 @@ class FastScanner:
         suppressed_before = self._response_log_suppressed
         self._total_requests = 0
         self._blocked_count = 0
+        # ★ OPT4: 记录当前目标 URL，供 WAF 封禁恢复探测使用
+        self._target_url = target.url
         # ★ 2026-08-08: 仅在未封禁时才重置，避免并发目标覆盖已触发的 WAF 状态。
         #   原逻辑每个目标无条件重置 _waf_blocked=False，导致：
         #   批次内目标 A 触发 WAF 置 True → 目标 B 又将其重置为 False → 目标 B 继续打无效请求。
@@ -1202,6 +1297,7 @@ class FastScanner:
             log_suppressed_count=max(0, self._response_log_suppressed - suppressed_before),
             waf_blocked=self._waf_blocked,
             timeout_blocked=self._timeout_blocked,
+            catchall_blocked=self._catchall_blocked,
         )
 
     async def scan_targets(
@@ -1211,6 +1307,10 @@ class FastScanner:
     ) -> list[ScanResult]:
         """批量扫描多个目标。"""
         results = []
+        # ★ OPT4: 优先级感知调度 — 按优先级排序，确保 critical/high 端点优先测试。
+        #   WAF 封禁后剩余目标会被跳过，排序确保被跳过的是 medium/low 而非 critical。
+        _priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "": 4}
+        targets = sorted(targets, key=lambda t: _priority_order.get(t.priority, 4))
         # 分批并发，避免连接爆炸
         batch_size = self.max_workers
         # ★ 重置跳过日志去重标志：每次 scan_targets 只打印一次"已封禁/已熔断"日志
@@ -1221,8 +1321,17 @@ class FastScanner:
             # 若不在此拦截，每个新批次的首个目标都会重新触发 WAF 封禁（日志中
             # "WAF 已封禁" 重复出现数十次），浪费请求且无法产出有效扫描结果。
             if self._waf_blocked:
-                log.info("[SCAN] WAF 全局封禁，跳过剩余 %d 个目标", len(targets) - i)
-                break
+                # ★ OPT4: WAF 封禁后仍尝试剩余 critical/high 目标
+                _remaining = targets[i:]
+                _critical_left = [t for t in _remaining if t.priority in ("critical", "high")]
+                if _critical_left:
+                    log.info("[SCAN] WAF 封禁，但仍有 %d 个 critical/high 目标待测，继续尝试",
+                             len(_critical_left))
+                    # 仅测试 critical/high，跳过 medium/low
+                    targets = targets[:i] + _critical_left
+                else:
+                    log.info("[SCAN] WAF 全局封禁，跳过剩余 %d 个目标（无 critical/high）", len(_remaining))
+                    break
             if self._timeout_blocked:
                 log.info("[SCAN] 全局超时熔断，跳过剩余 %d 个目标", len(targets) - i)
                 break
@@ -3527,6 +3636,7 @@ class FastScanner:
                     params=params,
                     body=body,
                     auth_headers=auth_headers,
+                    priority=getattr(getattr(fp, "priority", None), "value", "") or "",
                 ))
 
             # 如果功能点没有 related_apis，用 page_url 兜底

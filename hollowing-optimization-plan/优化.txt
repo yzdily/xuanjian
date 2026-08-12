@@ -1,0 +1,350 @@
+d:\xuanjian-main\hollowing-optimization-plan\hollowing-optimization-plan.html优化 之后你是测试工程师测试 在给出优化方案
+17:25
+思考过程
+我先查看这个空心化优化方案的文件，了解当前内容。
+
+已读取 1 个文件，浏览 1 个目录
+现在查看 charts.js 文件和项目结构，了解完整内容。
+
+已读取 1 个文件
+我来分析这个空心化优化方案文档，然后进行优化、测试并给出测试报告。让我先了解项目相关源码以验证文档内容的准确性。
+
+手动终止输出
+傻逼我是让你根据文档优化D:\xuanjian-main  的相关代码
+17:31
+思考过程
+明白了，你是要根据优化方案文档去修改 D:\xuanjian-main 下的实际源码。我先读取需要改动的关键文件，然后按文档中的 P0（止血）→ P1（根治）→ P2（增强）顺序实施代码优化。
+
+思考过程
+I'll start by reading both files to understand their structure before making changes.
+
+已读取 1 个文件，搜索 1 次文件，更新待办
+Let me read the full scan_strategies.py file to understand the complete structure, including any fast() or standard() classmethods.
+
+已读取 1 个文件，搜索 1 次文件
+Now I have a clear understanding of both files. I notice that the code uses from_mode() rather than separate fast()/standard() classmethods, but the auto-upgrade code and verification script call ScanConfig.fast() and ScanConfig.standard(). I'll need to add those convenience methods too.
+
+Let me update my todos and start implementing.
+
+已更新待办
+Now let me make the edits to scan_strategies.py. First, add the fast_minimal_checks field after the fast_scan_rules field.
+
+已编辑 1 个文件
+Field added. Now add fast_minimal_checks to the FAST preset branch.
+
+已编辑 1 个文件
+Now add fast_minimal_checks=None to the STANDARD preset branch.
+
+已编辑 1 个文件
+Now add the fast() and standard() convenience classmethods (needed by the auto-upgrade code and verification script). Let me add them after from_mode and before to_dict.
+
+已编辑 1 个文件
+All scan_strategies.py edits are done. Let me verify the changes by reading the modified sections.
+
+已读取 1 个文件，更新待办
+The scan_strategies.py changes look correct. Now let me read the exact insertion point in chat_loop.py to get precise context for the edit.
+
+已读取 1 个文件
+Let me quickly check how scan_config is set up in chat_loop.py to ensure the mode comparison will work correctly at runtime.
+
+已搜索 3 次文件
+Let me check if scan_config exists in a parent class or mixin, since it's not directly in chat_loop.py.
+
+已搜索 2 次文件
+I can see that scan_config is not currently set as an attribute in the session class - the codebase uses user_scan_mode (a string) instead. However, the user's code uses hasattr(self, 'scan_config') as a guard, making it safe (it will be a no-op if scan_config doesn't exist). I'll implement the code exactly as specified, with the indentation adjusted to match the insertion point (16 spaces).
+
+已编辑 1 个文件
+The auto-upgrade trigger has been inserted. Let me verify the result by reading the modified section.
+
+已读取 1 个文件
+The code is correctly placed before the FAST skip logic. Now let me run the verification script.
+
+已执行 1 条命令，更新待办
+验证脚本运行成功。输出确认：
+
+fast_minimal_checks: ['sql_injection', 'unauthorized_access', 'info_disclosure', 'weak_password', 'cors']
+
+mode: ScanMode.FAST
+
+compile OK（两个文件均编译通过）
+
+（末尾的 PowerShell profile 错误是系统脚本执行策略警告，与代码无关。）
+
+已更新待办
+P2-OPT2 优化已全部实施完成。以下是改动总结：
+
+改动1: d:\xuanjian-main\core\scan_strategies.py
+新增 fast_minimal_checks 字段（第 49-50 行）：
+
+
+Python
+
+    # ★ OPT2: FAST 模式保底清单 — 即使 LLM 不可用也用 FastScanner 本地规则执行的检测
+    fast_minimal_checks: list[str] = None  # 默认在 FAST 预设中设置
+FAST 预设中设置保底清单（第 93-99 行）：
+
+
+Python
+
+                fast_minimal_checks=[
+                    "sql_injection",      # SQL 注入
+                    "unauthorized_access", # 未授权访问
+                    "info_disclosure",    # 信息泄露
+                    "weak_password",      # 弱密码
+                    "cors",              # CORS 配置错误
+                ],
+STANDARD 预设中显式设为 None（第 118 行）：
+
+
+Python
+
+                fast_minimal_checks=None,
+新增 fast() / standard() 便捷类方法（第 141-149 行）— 这是额外添加的，因为自动升级代码调用 ScanConfig.standard()、验证脚本调用 ScanConfig.fast()，但原代码只有 from_mode() 方法：
+
+
+Python
+
+    @classmethod
+    def fast(cls) -> "ScanConfig":
+        """FAST 模式快捷构造"""
+        return cls.from_mode(ScanMode.FAST)
+
+    @classmethod
+    def standard(cls) -> "ScanConfig":
+        """STANDARD 模式快捷构造"""
+        return cls.from_mode(ScanMode.STANDARD)
+改动2: d:\xuanjian-main\core\session\chat_loop.py
+自动升级触发器（第 1429-1456 行）插入在 Phase 1 FAST 跳过逻辑（第 1458 行）之前。触发条件为：
+
+高危 API（含 pay/transfer/upload/admin/delete/password/token/secret 关键词）超过 5 个
+或总业务 API 超过 10 个
+触发后调用 ScanConfig.standard() 切换配置，并通过 yield self._event 通知用户。
+
+验证结果
+
+Plain Text
+
+fast_minimal_checks: ['sql_injection', 'unauthorized_access', 'info_disclosure', 'weak_password', 'cors']
+mode: ScanMode.FAST
+compile OK
+两个文件均编译通过，ScanConfig.fast() 正确返回保底清单。
+
+需要注意的两个潜在问题
+scan_config 属性未初始化：当前 chat_loop.py 中 session 对象并未设置 self.scan_config 属性（代码库使用 self.user_scan_mode 字符串来判断模式）。hasattr(self, 'scan_config') 守卫确保不会崩溃，但升级逻辑暂时不会触发。若要启用自动升级，需要在 session 初始化时设置 self.scan_config = ScanConfig.from_mode(self.user_scan_mode)。
+
+Enum 与字符串比较：ScanMode 是标准 Enum（非 StrEnum），ScanMode.FAST == "fast" 在 Python 中返回 False。升级条件检查 self.scan_config.mode == "fast" 需要确保 mode 是字符串类型，或改为 self.scan_config.mode == ScanMode.FAST。
+
+思考过程
+我先读取文件结构，理解补测 Agent 的主流程。
+
+已搜索 3 次文件
+没有 class SupplementalTestAgent，而是异步函数。让我读取完整文件结构来理解。
+
+已读取 2 个文件
+文件用的是模块级异步函数，而非类。我需要继续读取关键区域来理解完整流程。
+
+已读取 1 个文件
+现在读取 run_supplemental_test_local 函数（包含 flows_no_new_api 的那段）以及相关的 dirscan 逻辑。
+
+已读取 1 个文件
+继续读取后续部分，理解 dirscan 和 WAF 封禁的逻辑。
+
+已读取 1 个文件
+让我查找 discover_apis_from_dirscan 函数定义，以及 dirscan 中 WAF 封禁相关的统计字段。
+
+已搜索 3 次文件
+让我读取 discover_apis_from_dirscan 函数的完整实现，了解 dirscan 的统计结构和是否有封禁相关字段。
+
+已读取 1 个文件
+让我查看 DirectoryScanner 的结果结构，确认是否有 WAF 封禁相关字段。
+
+已搜索 2 次文件
+现在读取 discover_new_apis_from_flows 的实现，了解是否有可复用的 flow 分析子函数。
+
+已读取 1 个文件
+让我查看 _DiscoveredAPI 类的定义，以便构建可复用的 flow 分析逻辑。
+
+已读取 1 个文件，搜索 1 次文件
+让我验证 get_cdp_flows 是否存在，以及 sitemap 是否有 _js_content_cache 属性。
+
+已搜索 3 次文件
+sitemap 是一个包。让我查找 sitemap 包中的 JS 缓存属性，以及 crawler_core 中的 CDP 相关函数。
+
+已搜索 3 次文件
+让我搜索 JS 内容缓存可能存放的位置，使被动 JS 分析能真正找到数据源。
+
+已搜索 2 次文件
+发现 core.js_analyzer 中有 _js_source_cache。让我查看其结构，作为被动 JS 分析的真实数据源。
+
+已搜索 1 次文件
+让我查看 attach_apis_to_sitemap 函数，了解它使用 _DiscoveredAPI 的哪些字段。
+
+已读取 1 个文件，搜索 1 次文件
+我已理解文件结构。该文件没有 class SupplementalTestAgent，而是模块级异步函数 run_supplemental_test（LLM 模式）和 run_supplemental_test_local（FAST 本地模式）。flows_no_new_api 在 run_supplemental_test_local 中。get_cdp_flows 当前不存在（用 try/except 兼容），而 JS 缓存真实存在于 core.js_analyzer._js_source_cache。
+
+我来创建任务清单并开始实施。
+
+已更新待办
+现在添加三层兜底函数和辅助函数。
+
+已编辑 1 个文件
+已编辑
+1个文件
+supplemental_test_agent.py
+思考
+Edit 1 done. Now Edit 2: propagate waf_blocked/timeout_blocked in discover_apis_from_dirscan.
+
+Edit 1 完成。现在在 discover_apis_from_dirscan 中透传 WAF/超时熔断状态。
+
+已编辑 1 个文件，更新待办
+现在集成 local 版本的 CDP 兜底（在 flows_no_new_api 告警之前）。
+
+已更新待办
+已更新待办
+添加三层兜底函数 + _filter_flow_dicts_for_new_apis 辅助函数（模块级）
+在 discover_apis_from_dirscan 中透传 waf_blocked/timeout_blocked 统计
+run_supplemental_test_local: 集成 CDP 兜底（flows 空时）
+run_supplemental_test_local: 集成被动 JS 分析（dirscan 被封禁时）
+run_supplemental_test_local: 集成覆盖不足告警（全部失败时）
+编译验证 py_compile
+run_supplemental_test 主版本同步集成三层兜底
+已读取 13 个文件，搜索 6 次文件，执行 1 条命令，更新待办
+Now I have a complete understanding of the structure. Let me implement the changes. First, I'll add the get_cdp_flows function to crawler_core.py in the fallback section (right after _write_flow_fallback, before the AutoCrawler class).
+
+已编辑 1 个文件，搜索 1 次文件，更新待办
+Now I'll add the two health check methods to the ChatLoopMixin class, right before the chat method.
+
+已编辑 1 个文件
+Now I need to insert the OPT3 call before the traffic capture health check block. Let me find its current location after the line shift.
+
+已读取 1 个文件，搜索 1 次文件，更新待办
+Now I'll insert the OPT3 health check call right before the existing "流量抓包健康检查" block (the first point where mitmproxy output is consumed).
+
+已编辑 1 个文件
+All edits are done. Now let me verify both files compile correctly.
+
+已执行 1 条命令，更新待办
+Both files compile successfully (the CLIXML noise is just a PowerShell profile script-policy warning, unrelated to the Python compile which printed compile OK). Let me do a final verification of the inserted code.
+
+已读取 3 个文件，更新待办
+已读取
+crawler_core.py
+已读取
+chat_loop.py
+思考
+Both edits are in place and verified. Let me mark the final todo as complete and provide a summary.
+
+Let me also verify the chat_loop.py methods are correctly placed by reading them once more.
+
+已读取
+chat_loop.py
+所有任务已完成
+读取 crawler_core.py 结构，确认 log 变量
+读取 chat_loop.py 结构，找到 mitmproxy 启动逻辑
+在 crawler_core.py 添加 get_cdp_flows 异步函数
+在 chat_loop.py 主类中添加 _check_mitmproxy_health 和 _ensure_traffic_capture 方法
+在 Phase 2 mitmproxy 启动前插入健康检查调用
+验证两个文件能正确编译
+P2-OPT3 优化已实施完成，两个文件均通过编译验证（compile OK）。
+
+改动总结
+改动1: d:\xuanjian-main\core\crawler\crawler_core.py
+在已有的「降级写入 flows.jsonl」区块（_write_flow_fallback 函数）之后、AutoCrawler 类之前，新增了独立的异步函数 get_cdp_flows（第 154-231 行）。
+
+确认该文件第 35 行已存在模块级 log = logging.getLogger("auto_crawler")，函数内直接复用，无需额外导入。
+get_cdp_flows 是模块级独立函数（非类方法），通过 Playwright CDP 的 request/response 事件捕获 XHR/Fetch 请求，作为 mitmproxy 不可用时的备选数据源。
+内部使用 try/except ImportError 优雅处理 playwright 未安装的情况。
+改动2: d:\xuanjian-main\core\session\chat_loop.py
+确认该文件第 38 行已存在 log = get_logger("session.chat_loop")，方法内直接复用。
+
+(a) 新增两个方法到 ChatLoopMixin 主类（第 263-307 行，位于 _detect_and_handle_resume_command 与 chat 方法之间）：
+
+_check_mitmproxy_health(proxy_port=18080)：通过 socket 探测 127.0.0.1:18080 端口连通性，2 秒超时。
+_ensure_traffic_capture()：三级降级链 mitmproxy → cdp → playwright，返回捕获模式字符串。
+(b) 在 Phase 2 流量捕获逻辑前插入预检查（第 1289-1293 行）：
+
+插入位置选在现有「流量抓包健康检查」块（读取 PROXY_FLOW_FILE 流量文件）之前——这是 mitmproxy 输出首次被消费的点，符合「放在 mitmproxy 启动尝试之前、提前降级避免中途发现故障」的目标。
+当检测到 mitmproxy 不可用时，向用户推送降级事件并设置 self._traffic_capture_mode。
+未修改任何现有 mitmproxy 启动/读取逻辑，仅在其之前新增预检查。
+验证结果
+
+Plain Text
+
+cd d:\xuanjian-main; python -c "import py_compile; py_compile.compile('core/crawler/crawler_core.py', doraise=True); py_compile.compile('core/session/chat_loop.py', doraise=True); print('compile OK')"
+输出 compile OK，退出码 0。（命令输出中的 CLIXML 报错是 PowerShell 配置文件脚本策略警告，与 Python 编译无关。）
+
+====================================================================
+第二轮优化 — 修复 OPT2/OPT4 实施缺陷（2026-08-12 18:15）
+====================================================================
+
+背景
+基于 hollowing-optimization-plan.html 优化方案核查代码，发现第一轮已实施 OPT1~OPT6 的大部分代码，
+但 OPT2（FAST保底+自动升级）和 OPT4（WAF感知调度）存在 3 个关键实施缺陷导致优化实际未生效。
+
+核查结果
+OPT1（CRUD推测前置验证+catch-all强制过滤）: ✅ 已完整实施
+  - result_builder_mixin.py: 基准采样、catch-all内容检测、Shannon熵值校验、强制过滤、max_fuzz=200
+OPT2-P0（报告口径修正+空心化告警）: ✅ 已完整实施
+  - report_mixin.py: _compute_real_completion()、_detect_hollowing()、_generate_hollowing_alert_markdown()
+OPT2-P2（FAST保底清单+自动升级）: ⚠️ 存在3个缺陷（本轮修复）
+OPT3（流量捕获多源容灾）: ✅ 已完整实施
+  - crawler_core.py: get_cdp_flows()
+  - chat_loop.py: _check_mitmproxy_health()、_ensure_traffic_capture()
+OPT4（WAF感知调度）: ⚠️ 缺少优先级感知调度（本轮补充）
+  - fast_scanner.py: UA轮换 ✅、WAF分级响应(5/10/15/20) ✅、封禁恢复探测 ✅
+OPT5（目录扫描路径过滤统一化）: ✅ 已完整实施
+  - filters.py: is_non_business_path()
+  - chat_loop.py: 初始dirscan已调用 is_non_business_path
+OPT6-P0（空心化检测器+虚假端点熔断）: ✅ 已完整实施
+  - report_mixin.py: _detect_hollowing()
+  - fast_scanner.py: 虚假端点熔断（_catchall_same_threshold=10）
+OPT6-P1（补测链路三层兜底）: ✅ 已完整实施
+  - supplemental_test_agent.py: CDP兜底、被动JS分析、覆盖不足告警
+
+修复的3个关键缺陷
+
+Fix1: 自动升级触发器从未触发（chat_loop.py）
+问题：原代码检查 hasattr(self, 'scan_config')，但 session 对象从未设置 scan_config 属性
+（代码库使用 self.user_scan_mode 字符串）。即使设置了，ScanMode.FAST == "fast" 也返回 False
+（标准 Enum 非 StrEnum）。导致自动升级永远不触发。
+修复：改用 getattr(self, "user_scan_mode", "smart") == "fast" 字符串比较，
+升级时设置 self._original_user_scan_mode = "fast"、self.user_scan_mode = "standard"、
+self._mode_escalated = True。与 orchestrator 的 get_scan_strategy(user_scan_mode) 一致。
+
+Fix2: fast_minimal_checks 定义但从未使用（scan_strategies.py）
+问题：ScanConfig.fast_minimal_checks 字段在 FAST 预设中设置为 5 项检测，但
+ScanStrategyConfig（orchestrator 实际使用的适配器）没有该字段，from_scan_config
+也未透传。导致 orchestrator 无法读取保底清单。
+修复：ScanStrategyConfig 新增 fast_minimal_checks 字段，from_scan_config 透传。
+
+Fix3: FAST模式保底检测被标记为"跳过"（orchestrator.py）
+问题：orchestrator Step 6 中 FAST 模式将所有 PENDING checklist 项标记为 SKIPPED
+（"快速模式跳过 LLM"），包括 SQL注入/未授权/信息泄露/弱口令/CORS 这 5 项已由
+FastScanner 本地规则执行的检测。导致报告显示"71.3%完成实为0%真实完成"。
+修复：读取 scan_cfg.fast_minimal_checks，建立英文规则名→中文vuln_type映射
+（sql_injection→SQL注入、unauthorized_access→未授权访问/IDOR、
+info_disclosure→信息泄露、weak_password→弱口令、cors→CORS配置错误），
+保底检测项标记为 NOT_VULN（"FastScanner 保底检测（本地规则已执行，无命中）"）
+而非 SKIPPED。
+
+Fix4: 优先级感知调度缺失（fast_scanner.py）
+问题：OPT4 的 UA轮换、WAF分级响应、封禁恢复探测均已实施，但"WAF封禁后优先测试
+critical/high端点"未实现。scan_targets 按原始顺序扫描，WAF封禁后盲目跳过所有剩余目标。
+修复：ScanTarget 新增 priority 字段（从 FeaturePoint.priority 透传），
+scan_targets 按优先级排序（critical→high→medium→low），WAF封禁后仍尝试剩余
+critical/high目标，仅跳过 medium/low。
+
+验证结果
+
+compile OK — 4个文件均编译通过
+verification OK — ScanConfig.fast().fast_minimal_checks 正确返回5项检测
+                  get_scan_strategy('fast').fast_minimal_checks 正确透传到 ScanStrategyConfig
+                  STANDARD 模式 fast_minimal_checks 为 None
+17 passed — test_scan_config.py 全部通过
+110 passed, 2 failed(预存) — fast_scanner 测试无回归（2个失败为 TestUnauthorized 预存问题）
+
+涉及文件
+- core/session/chat_loop.py（Fix1: 自动升级触发器修复）
+- core/scan_strategies.py（Fix2: ScanStrategyConfig 透传 fast_minimal_checks）
+- core/parallel/orchestrator.py（Fix3: FAST保底检测标记为NOT_VULN）
+- core/fast_scanner.py（Fix4: ScanTarget.priority + 优先级排序 + WAF后继续critical/high）

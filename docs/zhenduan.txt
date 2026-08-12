@@ -1,0 +1,78 @@
+诊断结果1：多个任务 API 为 0 的原因
+根因 1：mitmproxy 没运行（最致命）
+代理端口 18080 已关闭，无 mitmdump 进程。直接后果链：
+
+
+Plain Text
+
+mitmproxy 未运行
+  → _check_proxy() 返回 False（crawler_core.py:660）
+  → 浏览器不走代理，直连目标
+  → 流量不经过 mitmproxy
+  → flows.jsonl 为空（0 字节，最后修改 15:29:38）
+  → 补测 Agent discover_new_apis_from_flows 扫描到 0 条流量
+  → 发现新 API: 0
+日志佐证：最近两个任务都是"从 mitmproxy 读取了 0 条完整流量记录"。
+
+根因 2：爬虫过早停止 / 目标无业务内容
+任务	目标	问题
+13:37 tiamaes.com	企业官网	收到停止信号，54 个菜单只点了 1 个就中断，业务 API: 0
+15:32 adfs.jumpcan.com:7443	ADFS 登录页	0 个菜单项、0 个按钮，纯登录页无业务内容
+根因 3：路径前缀 fuzz 全部失败
+adfs.jumpcan.com 任务中，CRUD 变体推测 fuzz 了 800 个候选 API，指纹对比验证通过 0 个——目标对未知路径统一返回 400 Bad Request（body=302），全部被基线指纹过滤。
+
+根因 4：dirsearch 未接入补测流程
+上一轮已确认：DirectoryScanner 只在 Phase 0 目标不可达时才跑；Phase 2.55 补测只看 flows.jsonl 被动流量，不主动爆破。两层都没覆盖。
+
+最近 5 个任务的 API 数量
+任务	APIs	Features
+5849c8	2	2
+f3e936	0	0
+7fd60b (adfs)	1	1
+ef723e	3	3
+517b8a	38	106
+只有 517b8a 有像样的数据，其余都是 0-3 个。
+
+方案
+短期（立即生效）
+重启 mitmproxy：确保 start.py 启动时代理进程正常拉起，端口 18080 可用后再启动爬虫任务。当前 flows.jsonl 是空的，所有补测必然为 0。
+中期（代码改进）
+dirsearch 接入补测流程：在 run_supplemental_test_local 的 L1 发现层之后，对目标额外跑一轮 DirectoryScanner，把命中路径作为新 API 挂载到 sitemap 再补测。
+目标可达时也跑 dirsearch：当前 _passive_recon 只在目标不可达时触发，应改为 Phase 0 常规侦察的一部分（目标可达时也执行轻量目录爆破）。
+mitmproxy 降级兜底：当 _check_proxy 返回 False 时，让爬虫的 Playwright 请求拦截机制（page.on("request"/"response")）也往 flows.jsonl 写入流量，不依赖 mitmproxy 独立运行。
+长期
+mitmproxy 健康检查 + 自动重启：在 orchestrator 中周期性检测代理端口，挂掉时自动重启。
+爬虫停止逻辑优化：排查 tiamaes.com 任务中"收到停止信号"的触发原因，避免 54 个菜单只点 1 个就中断。
+
+
+
+
+诊断结果2根因（两层 + 一个我之前判断失误）
+① 真正的病根：登录页那个"提交接口"从来没进测试队列
+
+爬虫能识别登录表单，记成 CrawledForm.action（如 /login、/api/auth/login）
+但匿名 fast 爬取不真提交表单（crawler_core.py:3465 检测到表单调 _fill_and_submit_form，匿名态下 submit_requests 为空）
+FastScanner 的测试目标源 api_endpoints 只从真实抓到的网络请求构建（crawler_core.py:1549/1571）
+结果：登录 POST 只被记为"发现一个表单"，从没变成绩可测 API → Phase 2 测不到它 → 整轮对登录页零产出
+② 你看到的 ✅ 是误导
+
+supplemental_test_agent.py:1030 的告警只在"一条流量都没抓到"时触发
+登录页代理抓到了登录页 GET + 静态资源（total_scanned > 0），过滤后 0 新 API → 警告条件不成立 → 显示 ✅ 0 个，看着正常、实为空心
+③ 我上一轮提的"爬取上限 30→100、超时 60→180"对登录页是错的
+
+登录页就一页，翻来覆去爬 180 秒还是那一页——这就是你说的"爬那么费劲"。提高页数只对多页真实站点有用。
+方案（建议顺序 A→B→C）
+A. 表单接口桥接（治①，核心）
+把"发现但未提交的表单 action（尤其登录）"注册为可测 API，让 FastScanner 在 Phase 2 直接测它（SQLi / 认证绕过）。
+
+落地形态：独立纯函数 register_form_apis()（可注入 sitemap、可单测），在 chat_loop.py 处理 crawl_result 后调用，并在 Phase 0 报告列出"已补登的未提交表单接口"
+效果：登录页也能被真测到，不再空心
+B. 修正 ✅ 误导（治②）
+supplemental_test_agent.py:1030 改为：代理抓到流量但过滤后 0 新 API 也打 ⚠️，提示"登录接口已由 Phase 2 覆盖 / 检查代理是否抓到登录 POST"。
+
+C. 收敛爬取（治③）
+回退 fast 爬取上限到适中值（crawl_max_pages≈50 / timeout≈120），或加"检测到登录页 surface 极小 → 提前收敛爬取轮数"。
+
+附：那两个 task（task_1786087963_7fd60b / task_1786089188_f3e936）的"不对"本质是同一件事——fast 模式对单登录页站点抓不到可测接口，且日志用 ✅ 把空心扫描伪装成正常。A 修完才有实质产出，B 让问题可见，C 去掉无效等待。
+
+要我按 A→B→C 落地时，说一声即可。（form_api_bridge.py 我留着当 A 的核心函数草稿，不接线、不影响现状。）

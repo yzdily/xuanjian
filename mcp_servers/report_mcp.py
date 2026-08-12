@@ -119,6 +119,104 @@ def _force_replace_placeholders(
     return text
 
 
+def _compute_real_completion_from_sitemap(task_id: str) -> dict | None:
+    """★ OPT2-P0: 从 sitemap JSON 计算真实完成率与空心化检测。
+
+    返回:
+        {
+            real_done, skipped, pending, total, real_rate, skip_rate,
+            hollowing: None | {reasons, real_rate, skip_rate, vuln_count}
+        }
+        若 sitemap 不存在返回 None。
+    """
+    try:
+        sitemap_path = Path(f"data/tasks/{task_id}-sitemap.json")
+        if not sitemap_path.exists():
+            return None
+        import json as _json
+        data = _json.loads(sitemap_path.read_text(encoding="utf-8"))
+        features = data.get("features", {})
+
+        real_done = 0
+        skipped = 0
+        pending = 0
+        total = 0
+        vuln_count = 0
+        for fp in features.values():
+            for check in (fp.get("checklist") or []):
+                total += 1
+                result = check.get("result", "")
+                if result == "skipped":
+                    skipped += 1
+                elif result == "pending":
+                    pending += 1
+                else:
+                    real_done += 1
+                    if result == "vulnerable":
+                        vuln_count += 1
+
+        real_rate = round(real_done / total * 100, 1) if total > 0 else 0.0
+        skip_rate = round(skipped / total * 100, 1) if total > 0 else 0.0
+
+        hollowing = None
+        if total > 0 and real_rate < 10.0 and skip_rate > 70.0 and vuln_count == 0:
+            reasons = []
+            if skip_rate > 80.0:
+                reasons.append(f"跳过率极高（{skip_rate}%）— 大量检测项被跳过而非真实执行")
+            elif skip_rate > 70.0:
+                reasons.append(f"跳过率偏高（{skip_rate}%）— 超过半数检测项被跳过")
+            if real_rate < 5.0:
+                reasons.append(f"真实完成率极低（{real_rate}%）— 几乎无检测项被真正执行")
+            if pending > total * 0.3:
+                reasons.append(f"大量检查项仍处于待测状态（{pending}/{total}）")
+            hollowing = {
+                "real_rate": real_rate,
+                "skip_rate": skip_rate,
+                "real_done": real_done,
+                "total": total,
+                "vuln_count": vuln_count,
+                "reasons": reasons,
+            }
+
+        return {
+            "real_done": real_done,
+            "skipped": skipped,
+            "pending": pending,
+            "total": total,
+            "real_rate": real_rate,
+            "skip_rate": skip_rate,
+            "vuln_count": vuln_count,
+            "hollowing": hollowing,
+        }
+    except Exception:
+        return None
+
+
+def _render_hollowing_alert(rc: dict) -> str:
+    """★ OPT2-P0: 渲染空心化告警 Markdown 片段。"""
+    h = rc.get("hollowing")
+    if not h:
+        return ""
+
+    lines = [
+        "\n---\n",
+        "> ## ⚠️ 测试过程疑似空心化告警\n",
+        f"> \n> 报告显示的完成率数字 **不能反映真实测试覆盖度**。\n",
+        f"> \n> | 指标 | 数值 | 说明 |\n",
+        f"> |---|---|---|\n",
+        f"> | 报告完成率 | 可能显示 > 70% | 包含大量跳过项，数字虚高 |\n",
+        f"> | **真实完成率** | **{h['real_rate']}%** | 仅计真实执行检测（{h['real_done']}/{h['total']} 项）|\n",
+        f"> | 跳过率 | {h['skip_rate']}% | 被跳过的检测项占比 |\n",
+        f"> | 发现漏洞数 | {h['vuln_count']} | 空心化扫描通常 0 漏洞 |\n",
+        f">\n> **根因诊断：**\n",
+    ]
+    for reason in h["reasons"]:
+        lines.append(f"> - {reason}\n")
+    lines.append(">\n> **建议：** 请检查目标是否为 SPA 单页应用（路由全前端处理，API 无法被爬虫发现），\n")
+    lines.append("> 或检查扫描模式是否过低（如 FAST 模式跳过了 LLM 分析）。建议切换到标准/深度模式重新扫描。\n")
+    return "".join(lines)
+
+
 def _count_vulns_by_severity(task_id: str, results_text: str) -> dict:
     """统计漏洞等级数量。
 
@@ -700,6 +798,21 @@ async def report_generate(task_id: str = "default", report_type: str = "src", **
         report = report.rstrip() + fallback_section
     else:
         report = report.replace("{{FALLBACK_SECTION}}", fallback_section)
+
+    # ★ OPT2-P0: 空心化告警 + 真实完成率注入
+    # 从 sitemap JSON 计算真实完成率，若检测到空心化则在报告头部插入红色告警
+    _rc = _compute_real_completion_from_sitemap(task_id)
+    if _rc and _rc["total"] > 0:
+        _hollowing_md = _render_hollowing_alert(_rc)
+        if _hollowing_md:
+            # 空心化告警插入到报告最前面（标题之后）
+            _title_end = report.find("\n", report.find("#"))
+            if _title_end > 0:
+                report = report[:_title_end + 1] + _hollowing_md + report[_title_end + 1:]
+            else:
+                report = _hollowing_md + report
+            log.warning("report_generate[%s]: 检测到空心化 — 真实完成率 %.1f%%, 跳过率 %.1f%%",
+                        task_id, _rc["real_rate"], _rc["skip_rate"])
 
     # ★ 写盘前做一次强制占位符替换（幂等），确保任何路径生成的报告都不会
     # 残留 {{CRITICAL_COUNT}} 等字面占位符。即使上方主替换逻辑因异常跳过

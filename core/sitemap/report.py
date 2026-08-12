@@ -147,6 +147,23 @@ class ReportMixin:
                 lines.append(f"- `{r['skill_name']}`（优先级 {r['priority']}）← 治理 `{r['vuln_type']}`")
             lines.append("")
 
+        # ★ 高跳过率诊断：跳过率 > 80% 时显示原因分析和建议
+        # 避免"98.6% 完成 0 漏洞"的空心假象误导用户
+        if skipped_rate > 80.0 and total_checks > 0:
+            lines.append(f"> 🔴 **高跳过率告警**：{skipped_rate:.1f}% 的测试项被跳过（{len(skipped)}/{total_checks}），真实完成率仅 {completion_rate:.1f}%。")
+            _term_reason = getattr(self, "termination_reason", "") or ""
+            _waf_blocked = getattr(self, "_waf_blocked", False) or getattr(self, "_waf_blocked_global", False)
+            _diag_causes: list[str] = []
+            if _waf_blocked:
+                _diag_causes.append("WAF 封禁导致高危规则（SQLi/XSS/命令注入/SSRF 等）被批量跳过")
+            if "fast" in (_term_reason or "").lower():
+                _diag_causes.append("FAST 模式跳过了 LLM 深度分析阶段（业务逻辑/越权/补测/危害验证）")
+            if not _diag_causes:
+                _diag_causes.append("目标不可达/超时/无有效凭据导致大部分规则无法执行")
+            lines.append(f"> **可能原因**：{'; '.join(_diag_causes)}")
+            lines.append(f"> **建议**：切换到 STANDARD/DEEP 模式重新扫描，或提供有效登录凭据以覆盖需认证的接口。")
+            lines.append("")
+
         if pending:
             lines.append(f"> ⚠️ 仍有 {len(pending)} 项未完成。报告可用于阶段性审阅，但不应声明为完整测试。")
             lines.append("")

@@ -140,7 +140,7 @@ class ExplorePhaseMixin:
             # ★ 复用 supplemental_test_agent 的非业务路径过滤，避免 DirScan 字典猜测路径
             # （/dashboard、/login 等）被添加为 sitemap page/API，导致 feature 爆炸
             try:
-                from core.supplemental_test_agent import _is_non_business_path
+                from core.sitemap.filters import is_non_business_path as _is_non_business_path
             except Exception:
                 _is_non_business_path = None
 

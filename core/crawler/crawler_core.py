@@ -151,6 +151,84 @@ async def _write_flow_fallback(resp, url: str, content_type: str, captured: list
         pass
 
 
+# ============================================================
+# CDP 流量捕获（mitmproxy 不可用时的独立备选数据源）
+# ============================================================
+
+async def get_cdp_flows(target_url: str, timeout: int = 30) -> list[dict]:
+    """通过 Playwright CDP 捕获 XHR/Fetch 请求作为 flows.jsonl 的备选数据源。
+
+    当 mitmproxy 不可用时，此函数通过 Chrome DevTools Protocol 的
+    Network.requestWillBeSent 和 Network.responseReceived 事件捕获流量。
+
+    Args:
+        target_url: 目标 URL
+        timeout: 捕获持续时间（秒）
+
+    Returns:
+        flows 列表，每个元素为 {"method": ..., "url": ..., "status": ..., "request_headers": ..., "response_headers": ..., "request_body": ..., "response_body": ...}
+    """
+    flows = []
+    try:
+        from playwright.async_api import async_playwright
+        import asyncio as _asyncio
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                ignore_https_errors=True,
+            )
+            page = await context.new_page()
+
+            # 收集 XHR/Fetch 请求
+            captured = []
+
+            async def on_request(request):
+                if request.resource_type in ("xhr", "fetch"):
+                    captured.append({
+                        "method": request.method,
+                        "url": request.url,
+                        "request_headers": dict(request.headers),
+                        "request_body": request.post_data or "",
+                        "timestamp": _asyncio.get_event_loop().time(),
+                    })
+
+            async def on_response(response):
+                # 匹配请求并补充响应信息
+                for item in captured:
+                    if item["url"] == response.url and "status" not in item:
+                        try:
+                            item["status"] = response.status
+                            item["response_headers"] = dict(response.headers)
+                            item["response_body"] = await response.text() if response.status < 400 else ""
+                        except Exception:
+                            pass
+
+            page.on("request", on_request)
+            page.on("response", on_response)
+
+            # 导航到目标页面并等待
+            try:
+                await page.goto(target_url, timeout=timeout * 1000, wait_until="networkidle")
+            except Exception:
+                pass
+
+            # 额外等待动态请求
+            await _asyncio.sleep(min(5, timeout))
+
+            await browser.close()
+
+            flows = captured
+            log.info("[CDP] 流量捕获: %d 条 XHR/Fetch 请求", len(flows))
+
+    except ImportError:
+        log.debug("[CDP] playwright 不可用，跳过 CDP 流量捕获")
+    except Exception as e:
+        log.debug("[CDP] 流量捕获失败: %s", e)
+
+    return flows
+
+
 class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuilderMixin):
     """系统性页面爬取器 — 三遍爬取法。"""
 

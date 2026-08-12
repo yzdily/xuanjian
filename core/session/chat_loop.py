@@ -260,6 +260,52 @@ class ChatLoopMixin:
         )
         return True, kick_msg
 
+    # ============================================================
+    # ★ P2-OPT3: 流量捕获多源容灾 — mitmproxy 健康检查与降级
+    # ============================================================
+
+    async def _check_mitmproxy_health(self, proxy_port: int = 18080) -> bool:
+        """检查 mitmproxy 是否可用。
+
+        通过 HTTP CONNECT 探测 mitmproxy 端口，失败时提前降级。
+        """
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            result = sock.connect_ex(("127.0.0.1", proxy_port))
+            sock.close()
+            if result == 0:
+                log.info("[Phase2] mitmproxy 健康检查通过（端口 %d 可连接）", proxy_port)
+                return True
+            else:
+                log.warning("[Phase2] mitmproxy 健康检查失败（端口 %d 不可连接），将降级到 CDP/Playwright 流量捕获", proxy_port)
+                return False
+        except Exception as e:
+            log.warning("[Phase2] mitmproxy 健康检查异常: %s，将降级到 CDP/Playwright 流量捕获", e)
+            return False
+
+    async def _ensure_traffic_capture(self) -> str:
+        """确保至少有一种流量捕获方式可用。
+
+        返回捕获模式: "mitmproxy" / "cdp" / "playwright" / "none"
+        """
+        # 1. 检查 mitmproxy
+        if await self._check_mitmproxy_health():
+            return "mitmproxy"
+
+        # 2. 尝试 CDP
+        try:
+            from core.crawler.crawler_core import get_cdp_flows
+            log.info("[Phase2] 降级到 CDP 流量捕获模式")
+            return "cdp"
+        except ImportError:
+            pass
+
+        # 3. 降级到 Playwright
+        log.warning("[Phase2] CDP 不可用，降级到 Playwright 基础流量捕获")
+        return "playwright"
+
     async def chat(self, user_message: str) -> AsyncGenerator[str, None]:
         # ★ 把当前 task_id 注入 LLM 监控上下文，所有后续 LLM 调用都自动归属此会话
         from core.llm import set_current_task
@@ -1077,6 +1123,25 @@ class ChatLoopMixin:
                         trigger_context=api.get("trigger_context", {}),
                     )
 
+                # ★ 表单接口桥接：把爬虫发现但未提交的表单 action 注册为可测 API
+                # 匿名/fast 爬取不会真正提交表单，因此登录等表单的提交接口
+                # 只被记为 CrawledForm，未进入 api_endpoints，导致 FastScanner 永远测不到它。
+                # 桥接后登录 POST 也能被 Phase 2 直接测到（SQLi / 认证绕过），不再空心。
+                try:
+                    from core.form_api_bridge import register_form_apis
+                    _form_added = register_form_apis(
+                        sitemap=self.sitemap,
+                        crawl_result=crawl_result,
+                        target_url=self.target_url or "",
+                    )
+                    if _form_added:
+                        yield self._event("system",
+                            f"📋 表单接口桥接: 补登 {len(_form_added)} 个未提交表单的提交接口（"
+                            f"{'; '.join(_form_added[:3])}"
+                            f"{'...' if len(_form_added) > 3 else ''}）")
+                except Exception as _form_err:
+                    log.warning("表单接口桥接失败: %s", _form_err)
+
                 realtime_channels = dedupe_realtime_channels(
                     getattr(self.sitemap, "realtime_channels", []) + (crawl_result.get("realtime_channels") or [])
                 )
@@ -1221,6 +1286,12 @@ class ChatLoopMixin:
                         stats += f"\n- {d['note']}"
                 yield self._event("system", stats)
 
+                # ★ OPT3: mitmproxy 健康检查 — 提前降级避免中途发现故障
+                _traffic_mode = await self._ensure_traffic_capture()
+                if _traffic_mode != "mitmproxy":
+                    yield self._event("system", f"📡 流量捕获模式: {_traffic_mode}（mitmproxy 不可用，已提前降级）")
+                    self._traffic_capture_mode = _traffic_mode
+
                 # 流量抓包健康检查
                 try:
                     flow_file = Path(os.getenv("PROXY_FLOW_FILE", "data/pentest_agent_flows.jsonl"))
@@ -1301,6 +1372,7 @@ class ChatLoopMixin:
                 # 此处用轻量目录爆破补充发现，命中路径回写 sitemap。
                 try:
                     from core.dir_scanner import DirectoryScanner
+                    from core.sitemap.filters import is_non_business_path
                     _dir_auth = getattr(self, "auth_headers", None) or {}
                     _dir_scanner = DirectoryScanner(
                         max_workers=15, timeout=6.0,
@@ -1312,6 +1384,8 @@ class ChatLoopMixin:
                     if _dir_result.discovered_count > 0:
                         _dir_added = 0
                         for _entry in _dir_result.entries:
+                            if is_non_business_path(_entry.path):
+                                continue
                             if self.sitemap:
                                 self.sitemap.add_page(_entry.url, title=_entry.title or _entry.path)
                                 if self._is_api_like_path(_entry.path, _entry.content_type):
@@ -1325,6 +1399,11 @@ class ChatLoopMixin:
                                 f"📂 主动目录爆破: 发现 {_dir_result.discovered_count} 个存活路径, "
                                 f"新增 {_dir_added} 个 API（请求 {_dir_result.total_requests} 次）")
                             self.sitemap.save()
+                    # ★ OPT5: catch-all 路由检测告警
+                    if getattr(_dir_result, "catch_all_detected", False):
+                        yield self._event("system",
+                            f"⚠️ 目录扫描检测到 catch-all 路由: {_dir_result.catch_all_rate}% 个路径返回相同内容，"
+                            f"目标可能是 SPA 单页应用或 catch-all 后端路由，dirscan 发现的端点可能无效")
                     # 敏感路径发现
                     if _dir_result.findings:
                         _sens = [
@@ -1403,6 +1482,39 @@ class ChatLoopMixin:
                 except Exception as e:
                     log.warning("Failed to start XSS scanner: %s", e)
                     yield self._event("system", f"⚠️ XSS 扫描启动失败: {str(e)[:120]}")
+
+                # ★ OPT2: 自动升级触发器 — 发现高危信号时从 FAST 升级到 STANDARD
+                # ★ 修复：原代码检查 self.scan_config（从未初始化），且 ScanMode 枚举与
+                #   字符串比较永远为 False。改用 user_scan_mode 字符串比较，与
+                #   orchestrator 的 get_scan_strategy(user_scan_mode) 保持一致。
+                _should_upgrade = False
+                _upgrade_reason = ""
+                _user_mode_fast = getattr(self, "user_scan_mode", "smart") == "fast"
+                if _user_mode_fast:
+                    # 检查 sitemap 中是否存在高危关键词
+                    _high_risk_keywords = ("pay", "transfer", "upload", "admin", "delete", "password", "token", "secret")
+                    _high_risk_count = 0
+                    if self.sitemap and hasattr(self.sitemap, 'apis'):
+                        for api_key, api_data in self.sitemap.apis.items():
+                            api_url = api_data.get("url", "").lower() if isinstance(api_data, dict) else str(api_data).lower()
+                            if any(kw in api_url for kw in _high_risk_keywords):
+                                _high_risk_count += 1
+                        # 高危 API > 5 个 或 总业务 API > 10 个 → 升级
+                        if _high_risk_count > 5:
+                            _should_upgrade = True
+                            _upgrade_reason = f"发现 {_high_risk_count} 个高危 API（支付/转账/上传等）"
+                        elif len(self.sitemap.apis) > 10:
+                            _should_upgrade = True
+                            _upgrade_reason = f"业务 API 数量较多（{len(self.sitemap.apis)} 个），FAST 模式覆盖不足"
+
+                    if _should_upgrade:
+                        log.info("[OPT2] 自动升级: FAST → STANDARD（原因: %s）", _upgrade_reason)
+                        # 切换到 STANDARD 模式（orchestrator 通过 get_scan_strategy 读取 user_scan_mode）
+                        if self._original_user_scan_mode is None:
+                            self._original_user_scan_mode = "fast"
+                        self.user_scan_mode = "standard"
+                        self._mode_escalated = True
+                        yield self._event("system", f"⚡ 扫描模式自动升级: FAST → STANDARD（{_upgrade_reason}）")
 
                 # ★ FAST 模式：跳过 Phase 1 LLM 分析，直接推进到 Phase 2 本地规则引擎测试
                 _user_mode = getattr(self, "user_scan_mode", "smart")

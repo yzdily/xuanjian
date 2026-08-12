@@ -46,6 +46,8 @@ class ScanConfig:
         "unauthorized", "weak_password", "cors",
         "path_traversal", "command_injection", "ssrf",
     ])
+    # ★ OPT2: FAST 模式保底清单 — 即使 LLM 不可用也用 FastScanner 本地规则执行的检测
+    fast_minimal_checks: list[str] = None  # 默认在 FAST 预设中设置
     # LLM 配置
     llm_workers: int = 5
     skip_business_understanding: bool = False
@@ -88,6 +90,13 @@ class ScanConfig:
                 max_concurrent_requests=20,
                 enable_skill_routing=True,
                 skill_routing_top_n=3,
+                fast_minimal_checks=[
+                    "sql_injection",      # SQL 注入
+                    "unauthorized_access", # 未授权访问
+                    "info_disclosure",    # 信息泄露
+                    "weak_password",      # 弱密码
+                    "cors",              # CORS 配置错误
+                ],
             )
         elif mode == ScanMode.STANDARD:
             return cls(
@@ -106,6 +115,7 @@ class ScanConfig:
                 llm_phase_timeout=1200,
                 total_timeout=3600,
                 max_concurrent_requests=15,
+                fast_minimal_checks=None,
             )
         elif mode == ScanMode.DEEP:
             return cls(
@@ -127,6 +137,16 @@ class ScanConfig:
             )
         else:  # SMART
             return cls(mode=mode)
+
+    @classmethod
+    def fast(cls) -> "ScanConfig":
+        """FAST 模式快捷构造"""
+        return cls.from_mode(ScanMode.FAST)
+
+    @classmethod
+    def standard(cls) -> "ScanConfig":
+        """STANDARD 模式快捷构造"""
+        return cls.from_mode(ScanMode.STANDARD)
 
     def to_dict(self) -> dict:
         return {
@@ -419,6 +439,8 @@ class ScanStrategyConfig:
     # ★ skill 引导
     enable_skill_routing: bool = True
     skill_routing_top_n: int = 3
+    # ★ OPT2: FAST 模式保底清单 — 5 项不可跳过的检测（FastScanner 本地规则已执行）
+    fast_minimal_checks: list[str] = None
 
     @classmethod
     def from_scan_config(cls, cfg: ScanConfig) -> "ScanStrategyConfig":
@@ -436,6 +458,7 @@ class ScanStrategyConfig:
             fast_scan_timeout=cfg.fast_scan_timeout,
             enable_skill_routing=cfg.enable_skill_routing,
             skill_routing_top_n=cfg.skill_routing_top_n,
+            fast_minimal_checks=cfg.fast_minimal_checks,
         )
 
 

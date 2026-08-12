@@ -164,6 +164,9 @@ def generate_fast_report_attribution(sitemap: Any) -> str:
     total_checks = 0
     vuln_checks = 0
     safe_checks = 0
+    # ★ OPT2-P0: 统计跳过/待测数，计算真实完成率
+    skipped_checks = 0
+    pending_checks = 0
 
     try:
         from core.sitemap import CheckResult
@@ -192,8 +195,17 @@ def generate_fast_report_attribution(sitemap: Any) -> str:
                     })
                 elif c.result == CheckResult.SAFE:
                     safe_checks += 1
+                elif c.result == CheckResult.SKIPPED:
+                    skipped_checks += 1
+                elif c.result == CheckResult.PENDING:
+                    pending_checks += 1
     except Exception as e:
         log.warning("generate_fast_report_attribution 收集漏洞失败: %s", e)
+
+    # ★ OPT2-P0: 计算真实完成率
+    real_done = vuln_checks + safe_checks
+    real_rate = round(real_done / total_checks * 100, 1) if total_checks > 0 else 0.0
+    skip_rate = round(skipped_checks / total_checks * 100, 1) if total_checks > 0 else 0.0
 
     # 构建 Markdown 报告
     lines = []
@@ -204,7 +216,19 @@ def generate_fast_report_attribution(sitemap: Any) -> str:
     lines.append(f"**测试功能点**: {tested_features}/{total_features}")
     lines.append(f"**检查项总数**: {total_checks}")
     lines.append(f"**发现漏洞**: {vuln_checks} 个")
-    lines.append(f"**安全项**: {safe_checks} 个\n")
+    lines.append(f"**安全项**: {safe_checks} 个")
+    # ★ OPT2-P0: 显示真实完成率而非含跳过的完成率
+    lines.append(f"**真实完成率**: {real_rate}%（{real_done}/{total_checks} 项真实执行）")
+    if skip_rate > 0:
+        lines.append(f"**跳过率**: {skip_rate}%（{skipped_checks} 项跳过 LLM 分析）")
+    lines.append("")
+
+    # ★ OPT2-P0: 空心化告警
+    if total_checks > 0 and real_rate < 10.0 and skip_rate > 70.0 and vuln_checks == 0:
+        lines.append("> ## ⚠️ 测试过程疑似空心化告警\n")
+        lines.append(f"> 真实完成率仅 **{real_rate}%**，跳过率 **{skip_rate}%**，漏洞数 **0**。\n")
+        lines.append("> 报告完成率数字不能反映真实测试覆盖度。\n")
+        lines.append("> 建议：检查目标是否为 SPA 单页应用，或切换到标准/深度模式重新扫描。\n")
 
     if not vulns_by_type:
         lines.append("\n### ✅ 未发现漏洞\n")
