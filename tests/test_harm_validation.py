@@ -14,7 +14,6 @@
 import asyncio
 import json
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -29,7 +28,6 @@ def test_prompt_exists():
     assert "accepted" in text and "rejected" in text and "borderline" in text
     assert "形式漏洞" in text or "防御纵深" in text or "拒收" in text
     assert "harm_story" in text
-    print("[✓] 提示词文件齐全且关键词存在")
 
 
 def test_collect_vulnerabilities():
@@ -82,7 +80,6 @@ def test_collect_vulnerabilities():
     xss_vuln = next((v for v in vulns if v["source"] == "xss_module"), None)
     assert xss_vuln is not None
     assert xss_vuln["browser_triggered"] is True
-    print(f"[✓] 漏洞收集: {len(vulns)} 个 (含 checklist + XSS)")
 
 
 def test_build_context():
@@ -132,7 +129,6 @@ def test_build_context():
     assert "IDOR" in ctx
     assert "GET /order/9999" in ctx
     assert "<svg/onload=alert(1)>" in ctx
-    print(f"[✓] context 拼装: {len(ctx)} chars,含业务理解 + 漏洞详情")
 
 
 def test_parse_response():
@@ -175,7 +171,6 @@ def test_parse_response():
     assert verdicts[0]["broken_promises"] == ["P-001"]
     assert verdicts[1]["verdict"] == "rejected"
     assert "形式合规" in summary
-    print(f"[✓] JSON 数组解析 + 审核员总评提取正常")
 
 
 def test_parse_response_fallback():
@@ -187,7 +182,6 @@ def test_parse_response_fallback():
     # 空文本
     v2, s2 = _parse_response("")
     assert v2 is None
-    print("[✓] JSON 解析降级正常")
 
 
 def test_validate_harm_no_vulns():
@@ -200,7 +194,6 @@ def test_validate_harm_no_vulns():
     llm = MagicMock()
     result = asyncio.run(validate_harm(sm, llm))
     assert result["status"] == "no_vulns"
-    print("[✓] 无漏洞时 status=no_vulns")
 
 
 def test_validate_harm_llm_fallback():
@@ -225,7 +218,6 @@ def test_validate_harm_llm_fallback():
     result = asyncio.run(validate_harm(sm, llm, timeout=10.0))
     assert result["status"] == "error"
     assert "JSON" in result["error"] or "解析" in result["error"]
-    print("[✓] LLM 返回非 JSON 时降级")
 
 
 def test_render_full_report():
@@ -299,7 +291,6 @@ def test_render_full_report():
     assert "腾讯SRC" in md
     assert "Cookie 缺 HttpOnly 但全站无 XSS" in md  # 拒收理由
     assert "形式合规问题" in md  # 总评
-    print(f"[✓] 报告渲染: {len(md)} chars,5 个子章节齐全")
 
 
 def test_render_no_vulns():
@@ -307,7 +298,6 @@ def test_render_no_vulns():
     from core.harm_validation import render_to_markdown
     md = render_to_markdown({"status": "no_vulns"})
     assert md == ""
-    print("[✓] 无漏洞时不渲染章节")
 
 
 def test_render_error():
@@ -315,28 +305,3 @@ def test_render_error():
     md = render_to_markdown({"status": "timeout", "error": "LLM 超时"})
     assert "5. 漏洞危害验证" in md
     assert "未完成" in md or "超时" in md
-    print("[✓] 失败时仍渲染章节(标注 unavailable)")
-
-
-def main():
-    print("=" * 60)
-    print("漏洞危害验证模块端到端测试")
-    print("=" * 60)
-    started = time.time()
-    test_prompt_exists()
-    test_collect_vulnerabilities()
-    test_build_context()
-    test_parse_response()
-    test_parse_response_fallback()
-    test_validate_harm_no_vulns()
-    test_validate_harm_llm_fallback()
-    test_render_full_report()
-    test_render_no_vulns()
-    test_render_error()
-    print("=" * 60)
-    print(f"全部测试通过 ✅  (耗时 {time.time() - started:.2f}s)")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

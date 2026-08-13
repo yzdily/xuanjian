@@ -9,6 +9,8 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest
+
 from core.intent import (
     _validate_intent_kind, has_http_request_packet, _looks_like_curl,
     parse_http_request_packet, parse_curl_command, _merge_packet_into_intent,
@@ -92,49 +94,52 @@ def _has_packet(msg: str) -> dict | None:
     return None
 
 
-def main():
-    print("=" * 80)
-    print("意图识别改造后验证")
-    print("=" * 80)
-    
-    passed = 0
-    failed = 0
-    
-    for name, msg, llm_kind, expected in TEST_CASES:
-        packet = _has_packet(msg)
-        result = {"intent_kind": llm_kind}
-        _validate_intent_kind(result, packet)
-        actual = result["intent_kind"]
-        
-        ok = actual == expected
-        mark = "✅" if ok else "❌"
-        if ok:
-            passed += 1
-        else:
-            failed += 1
-        
-        print(f"{mark} {name:40} LLM={llm_kind:10} → {actual:10} (期望={expected})")
-    
-    print(f"\n{'='*80}")
-    print(f"结果：{passed} 通过，{failed} 失败")
-    
-    # 额外验证：HTTP包解析和cURL解析仍然正常
-    print(f"\n--- 额外验证 ---")
-    pkt = parse_http_request_packet("POST /api/test HTTP/1.1\nHost: x.com\nCookie: a=1\nAuthorization: Bearer t\n\n{}")
-    assert pkt and pkt["method"] == "POST" and pkt["host"] == "x.com"
-    print("✅ HTTP包解析正常")
-    
-    curl_pkt = parse_curl_command("curl -X POST 'https://x.com/api' -H 'Auth: Bearer x' -d 'a=1'")
-    assert curl_pkt and curl_pkt["method"] == "POST"
-    print("✅ cURL解析正常")
-    
-    # 验证 _merge_packet_into_intent 正常
-    intent = {"target_url": "", "has_target": False, "session_cookies": "", "auth_header": "", "extra_headers": {}, "extra_scope": []}
+@pytest.mark.parametrize(
+    "name,user_message,llm_intent_kind,expected_final_kind",
+    TEST_CASES,
+    ids=[tc[0] for tc in TEST_CASES],
+)
+def test_intent_validation(name, user_message, llm_intent_kind, expected_final_kind):
+    """验证意图识别改造后的行为。"""
+    packet = _has_packet(user_message)
+    result = {"intent_kind": llm_intent_kind}
+    _validate_intent_kind(result, packet)
+    actual = result["intent_kind"]
+    assert actual == expected_final_kind, f"{name}: expected {expected_final_kind}, got {actual}"
+
+
+def test_http_packet_parsing():
+    """验证 HTTP 包解析正常。"""
+    pkt = parse_http_request_packet(
+        "POST /api/test HTTP/1.1\nHost: x.com\nCookie: a=1\nAuthorization: Bearer t\n\n{}"
+    )
+    assert pkt is not None
+    assert pkt["method"] == "POST"
+    assert pkt["host"] == "x.com"
+
+
+def test_curl_parsing():
+    """验证 cURL 解析正常。"""
+    curl_pkt = parse_curl_command(
+        "curl -X POST 'https://x.com/api' -H 'Auth: Bearer x' -d 'a=1'"
+    )
+    assert curl_pkt is not None
+    assert curl_pkt["method"] == "POST"
+
+
+def test_merge_packet_into_intent():
+    """验证 _merge_packet_into_intent 正常。"""
+    pkt = parse_http_request_packet(
+        "POST /api/test HTTP/1.1\nHost: x.com\nCookie: a=1\nAuthorization: Bearer t\n\n{}"
+    )
+    intent = {
+        "target_url": "",
+        "has_target": False,
+        "session_cookies": "",
+        "auth_header": "",
+        "extra_headers": {},
+        "extra_scope": [],
+    }
     _merge_packet_into_intent(intent, pkt)
     assert intent["session_cookies"] == "a=1"
     assert intent["auth_header"] == "Bearer t"
-    print("✅ _merge_packet_into_intent 正常")
-
-
-if __name__ == "__main__":
-    main()

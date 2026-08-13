@@ -7,7 +7,6 @@
 
 import json
 import os
-import tempfile
 import pytest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,19 +18,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestMemoryModule:
     """测试 memory 模块的核心功能。"""
 
-    def setup_method(self):
-        """每个测试前重置缓存和使用临时文件。"""
+    @pytest.fixture(autouse=True)
+    def _isolate_memory(self, tmp_path, monkeypatch):
+        """每个测试使用独立的临时文件和清空缓存。"""
         import core.memory as mem
-        self._orig_file = mem._LESSONS_FILE
-        self._tmpdir = tempfile.mkdtemp()
-        mem._LESSONS_FILE = Path(self._tmpdir) / "test_lessons.jsonl"
-        mem._CACHE = None
-
-    def teardown_method(self):
-        """恢复原始文件路径。"""
-        import core.memory as mem
-        mem._LESSONS_FILE = self._orig_file
-        mem._CACHE = None
+        monkeypatch.setattr(mem, "_LESSONS_FILE", tmp_path / "test_lessons.jsonl")
+        monkeypatch.setattr(mem, "_CACHE", None)
+        yield
+        monkeypatch.setattr(mem, "_CACHE", None)
 
     def test_record_basic(self):
         from core.memory import record, _load

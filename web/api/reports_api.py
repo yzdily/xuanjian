@@ -22,8 +22,21 @@ log = get_logger("web.reports_api")
 
 router = APIRouter()
 
-REPORTS_DIR = Path(os.getenv("REPORT_PATH", "data/reports"))
-TASKS_DIR = Path("data/tasks")
+# ★ 安全加固：使用基于项目根目录的绝对路径
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+REPORTS_DIR = Path(os.getenv("REPORT_PATH", str(_PROJECT_ROOT / "data" / "reports")))
+TASKS_DIR = _PROJECT_ROOT / "data" / "tasks"
+
+
+# ★ 安全加固：task_id 正则校验，防止路径穿越和通配符注入
+_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
+
+def _validate_task_id(task_id: str) -> bool:
+    """校验 task_id 是否安全（仅允许字母、数字、下划线、连字符）。"""
+    if not task_id or not isinstance(task_id, str):
+        return False
+    return bool(_TASK_ID_PATTERN.match(task_id))
 
 
 REALTIME_PATTERN = re.compile(r"^(.+)-realtime-report\.md$")
@@ -365,6 +378,12 @@ async def get_report(task_id: str, format: str = "md"):
 @router.delete("/api/reports/{task_id}")
 async def delete_report(task_id: str):
     """删除任务相关的所有报告文件。"""
+    # ★ 安全加固：校验 task_id 防止路径穿越和通配符注入
+    if not _validate_task_id(task_id):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "task_id 含非法字符"},
+        )
     deleted = 0
     for f in REPORTS_DIR.glob(f"{task_id}*"):
         f.unlink(missing_ok=True)
@@ -399,6 +418,9 @@ async def delete_report_post(request: Request):
         task_id = body.get("task_id", "")
         if not task_id:
             return {"ok": False, "error": "缺少 task_id"}
+        # ★ 安全加固：校验 task_id
+        if not _validate_task_id(task_id):
+            return {"ok": False, "error": "task_id 含非法字符"}
         # 调用旧版删除逻辑
         result = await delete_report(task_id)
         return {"ok": True, **result}
@@ -424,6 +446,10 @@ async def batch_delete_reports(request: Request):
             if not isinstance(tid, str) or not tid.strip():
                 continue
             tid = tid.strip()
+            # ★ 安全加固：校验每个 task_id
+            if not _validate_task_id(tid):
+                results.append({"task_id": tid, "deleted": 0, "ok": False, "error": "task_id 含非法字符"})
+                continue
             count = 0
             try:
                 for f in REPORTS_DIR.glob(f"{tid}*"):

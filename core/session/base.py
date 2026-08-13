@@ -176,8 +176,8 @@ class AgentSessionBase:
                     asyncio.ensure_future(self._strategy.on_task_done(self))
                 else:
                     loop.run_until_complete(self._strategy.on_task_done(self))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("策略清理失败 (非致命): %s", e)
         if self.sitemap:
             self.sitemap.save()
         self.task_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:6]}"
@@ -253,8 +253,8 @@ class AgentSessionBase:
             history_path.parent.mkdir(parents=True, exist_ok=True)
             with open(history_path, "a", encoding="utf-8") as f:
                 f.write(payload + "\n")
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("持久化对话历史失败 (task=%s): %s", self.task_id, e)
         return f"data: {payload}\n\n"
 
     @staticmethod

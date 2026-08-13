@@ -29,6 +29,13 @@ from core.fast_scanner import (
 )
 
 
+@pytest.fixture
+def scanner():
+    """提供正确初始化的 FastScanner 实例。"""
+    from core.fast_scanner import FastScanner
+    return FastScanner()
+
+
 # ============================================================
 # P0: 业务层拒绝检测
 # ============================================================
@@ -173,39 +180,31 @@ class TestFindingsDedup:
             evidence_quality=evidence_quality,
         )
 
-    def test_dedup_same_url_type_method(self):
+    def test_dedup_same_url_type_method(self, scanner):
         """同一 URL + 类型 + 方法的发现应去重"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f1 = self._make_finding(url="http://example.com/api?id=1", severity="critical")
         f2 = self._make_finding(url="http://example.com/api?id=2", severity="high")
         result = scanner._filter_false_positives([f1, f2])
         assert len(result) == 1
         assert result[0].severity == "critical"  # 保留 severity 更高的
 
-    def test_dedup_keeps_higher_severity(self):
+    def test_dedup_keeps_higher_severity(self, scanner):
         """去重时保留 severity 更高的发现"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f1 = self._make_finding(url="http://example.com/api", severity="medium")
         f2 = self._make_finding(url="http://example.com/api", severity="high")
         result = scanner._filter_false_positives([f1, f2])
         assert len(result) == 1
         assert result[0].severity == "high"
 
-    def test_no_dedup_different_type(self):
+    def test_no_dedup_different_type(self, scanner):
         """不同漏洞类型不去重"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f1 = self._make_finding(vuln_type="SQL注入", url="http://example.com/api")
         f2 = self._make_finding(vuln_type="未授权访问", url="http://example.com/api")
         result = scanner._filter_false_positives([f1, f2])
         assert len(result) == 2
 
-    def test_no_dedup_different_method(self):
+    def test_no_dedup_different_method(self, scanner):
         """不同 HTTP 方法不去重"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f1 = self._make_finding(url="http://example.com/api", method="GET")
         f2 = self._make_finding(url="http://example.com/api", method="POST")
         result = scanner._filter_false_positives([f1, f2])
@@ -574,10 +573,8 @@ class TestTraceIdAssignment:
             evidence_quality="body_confirmed",
         )
 
-    def test_assign_trace_id(self):
+    def test_assign_trace_id(self, scanner):
         """每条发现应获得唯一的 trace_id"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f1 = self._make_finding(vuln_type="SQL注入")
         f2 = self._make_finding(vuln_type="XSS")
         scanner._assign_trace_ids([f1, f2])
@@ -585,10 +582,8 @@ class TestTraceIdAssignment:
         assert f2.trace_id.startswith("XJ-XSS-")
         assert f1.trace_id != f2.trace_id
 
-    def test_trace_id_rule_tag_mapping(self):
+    def test_trace_id_rule_tag_mapping(self, scanner):
         """漏洞类型应正确映射到规则标签"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         test_cases = [
             ("SQL注入", "SQLi"),
             ("未授权访问", "Unauth"),
@@ -603,10 +598,8 @@ class TestTraceIdAssignment:
             assert f.rule_tag == expected_tag, f"Failed: {vt} → expected {expected_tag}, got {f.rule_tag}"
             assert f.trace_id.startswith(f"XJ-{expected_tag}-")
 
-    def test_trace_id_not_overwritten(self):
+    def test_trace_id_not_overwritten(self, scanner):
         """已有 trace_id 的发现不应被覆盖"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         f = self._make_finding()
         f.trace_id = "XJ-CUSTOM-ABC123"
         scanner._assign_trace_ids([f])
@@ -633,10 +626,8 @@ class TestTraceIdAssignment:
 class TestAuthMatrix:
     """测试 _check_auth_matrix 的公开接口降级逻辑"""
 
-    def test_auth_matrix_in_rules_list(self):
+    def test_auth_matrix_in_rules_list(self, scanner):
         """auth_matrix 应在默认规则列表中"""
-        from core.fast_scanner import FastScanner
-        scanner = FastScanner.__new__(FastScanner)
         # 验证 _check_auth_matrix 方法存在
         assert hasattr(scanner, "_check_auth_matrix")
         assert hasattr(scanner, "_probe_idor")

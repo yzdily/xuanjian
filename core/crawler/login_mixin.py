@@ -656,19 +656,36 @@ class LoginMixin:
 
     @staticmethod
     async def _check_proxy(proxy_url: str, target_url: str = "") -> bool:
-        """检查代理是否可用 — 直接通过代理访问目标站点（不依赖外网）。"""
+        """检查代理是否可用 — 直接通过代理访问目标站点（不依赖外网）。
+
+        ★ 降级日志：当代理不可用时记录具体失败原因，方便排查。
+        """
         import httpx
+        import logging as _logging
+        _log = _logging.getLogger("auto_crawler")
+
         # 优先用目标站点测试，fallback 到代理自身
         test_urls = []
         if target_url:
             test_urls.append(target_url)
         test_urls.append(f"{proxy_url}/")  # mitmproxy 本身也能响应
-        
+
+        _last_err = ""
         for url in test_urls:
             try:
                 async with httpx.AsyncClient(proxy=proxy_url, timeout=5, verify=False) as c:
                     resp = await c.get(url)
                     return True
-            except Exception:
+            except httpx.ConnectError as e:
+                _last_err = f"连接失败 ({url}): {e}"
+            except httpx.TimeoutException as e:
+                _last_err = f"超时 ({url}, 5s): {e}"
+            except Exception as e:
+                _last_err = f"{type(e).__name__} ({url}): {e}"
                 continue
+
+        # ★ 代理不可用时输出 WARNING 级别日志，包含失败原因和降级提示
+        _log.warning("mitmproxy 代理不可用，爬虫将切换直连模式（无流量抓包）: %s", _last_err)
+        _log.warning("  代理地址: %s", proxy_url)
+        _log.warning("  降级影响: flows.jsonl 由 Playwright 拦截写入，可能缺失部分 XHR/WebSocket 流量")
         return False

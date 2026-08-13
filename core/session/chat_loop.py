@@ -1374,9 +1374,18 @@ class ChatLoopMixin:
                     from core.dir_scanner import DirectoryScanner
                     from core.sitemap.filters import is_non_business_path
                     _dir_auth = getattr(self, "auth_headers", None) or {}
+                    # ★ 技术栈感知：从 sitemap 读取技术栈，推断 SPA 标志
+                    _dir_tech = getattr(self.sitemap, "tech_stack", "") or ""
+                    _dir_is_spa = any(
+                        kw in _dir_tech.lower()
+                        for kw in ("react", "vue", "angular", "spa", "single page",
+                                   "next.js", "nuxt", "svelte")
+                    )
                     _dir_scanner = DirectoryScanner(
                         max_workers=15, timeout=6.0,
                         recursive=False,  # 轻量模式：不递归，只扫顶层
+                        tech_stack=_dir_tech,
+                        is_spa=_dir_is_spa,
                     )
                     _dir_result = await _dir_scanner.scan(
                         url, auth_headers=_dir_auth,
@@ -1401,9 +1410,11 @@ class ChatLoopMixin:
                             self.sitemap.save()
                     # ★ OPT5: catch-all 路由检测告警
                     if getattr(_dir_result, "catch_all_detected", False):
+                        _early_abort = getattr(_dir_result, "early_abort_count", 0)
+                        _abort_msg = f"，早期中止 {_early_abort} 条非 API 路径" if _early_abort else ""
                         yield self._event("system",
                             f"⚠️ 目录扫描检测到 catch-all 路由: {_dir_result.catch_all_rate}% 个路径返回相同内容，"
-                            f"目标可能是 SPA 单页应用或 catch-all 后端路由，dirscan 发现的端点可能无效")
+                            f"目标可能是 SPA 单页应用或 catch-all 后端路由，dirscan 发现的端点可能无效{_abort_msg}")
                     # 敏感路径发现
                     if _dir_result.findings:
                         _sens = [

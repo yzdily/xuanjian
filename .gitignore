@@ -22,9 +22,9 @@ _refs/
 *.backup
 .pytest_cache/
 *.png
-# README 截图例外（必须入库才能在 GitHub 显示）
-!首页.png
-!系统.png
+# README 截图例外（image/ 目录下功能截图必须入库才能在 GitHub 显示）
+!image/
+!image/*.png
 .backup_skills_*/
 .backups/
 *.backup
@@ -53,3 +53,7 @@ targets.csv
 test1.txt
 # 优化方案（本地文档，不入仓库）
 hollowing-optimization-plan/
+# 本地分析报告（不入仓库）
+coverage-report/
+fast-scanner-rule-review/
+spa-crawler-improvement/

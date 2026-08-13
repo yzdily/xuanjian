@@ -253,6 +253,242 @@ CRITICAL_PATHS: list[str] = [
 # 默认 UA（dirsearch 风格，避免被基础 WAF 按 UA 拦截）
 DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; DirScanner/1.0; +pentest-recon)"
 
+# ============================================================
+# ★ 技术栈感知字典分类
+# 将 DEFAULT_WORDLIST 按技术栈相关性分组，扫描时根据目标技术栈
+# 动态选择字典，避免对 Java 站点扫 PHP 路径（backup.zip 等），
+# 也避免对 SPA 站点扫静态资源路径（/static, /assets 等）。
+# ============================================================
+
+# 通用路径 — 任何技术栈都值得探测（API 文档 / 配置 / 调试 / 元信息）
+UNIVERSAL_PATHS: list[str] = [
+    # API / 接口文档
+    "api", "api/v1", "api/v2", "api/v3",
+    "swagger", "swagger-ui", "swagger-ui.html", "swagger-ui/index.html",
+    "swagger.json", "swagger.yaml", "v2/api-docs", "v3/api-docs",
+    "openapi.json", "openapi.yaml", "api-docs", "api/help", "api/docs",
+    "graphql", "graphiql",
+    # 通用配置 / 敏感文件
+    ".env", ".env.local", ".env.production", ".env.bak",
+    ".git/config", ".git/HEAD", ".git/index",
+    ".gitignore", ".gitattributes", ".dockerenv",
+    "docker-compose.yml", "docker-compose.yaml", "Dockerfile",
+    "config.json", "config.yaml", "config.yml", "config.bak",
+    "robots.txt", "sitemap.xml", "humans.txt", "security.txt",
+    ".well-known/security.txt", ".well-known/openid-configuration",
+    ".well-known/apple-app-site-association",
+    "crossdomain.xml", "clientaccesspolicy.xml",
+    # 通用调试 / 健康检查
+    "debug", "debug/pprof", "debug/vars",
+    "metrics", "health", "healthz", "readyz", "status", "ping", "info",
+    "pprof", "pprof/goroutine", "prometheus",
+    # 通用管理 / 认证
+    "admin", "login", "console", "dashboard", "backend",
+    "logout", "auth", "register",
+    # 通用备份
+    "backup", "backup.sql",
+    # 通用文档
+    "docs", "documentation", "doc", "help", "readme", "readme.md",
+    # 通用上传
+    "upload", "uploads", "files",
+]
+
+# Java / Spring 专属路径
+JAVA_PATHS: list[str] = [
+    # Spring Boot Actuator 全端点
+    "actuator", "actuator/health", "actuator/env", "actuator/info",
+    "actuator/heapdump", "actuator/mappings", "actuator/beans",
+    "actuator/configprops", "actuator/trace", "actuator/httptrace",
+    "actuator/loggers", "actuator/threaddump", "actuator/metrics",
+    "actuator/auditevents", "actuator/scheduledtasks",
+    "actuator/refresh", "actuator/restart", "actuator/shutdown",
+    "actuator/sessions", "actuator/prometheus", "actuator/logfile",
+    "actuator/conditions", "actuator/caches", "actuator/startup",
+    "actuator/flyway", "actuator/liquibase", "actuator/integrationgraph",
+    "actuator/jolokia", "actuator/jolokia/list",
+    # Actuator 1.x context-path 变体
+    "manage", "manage/health", "manage/env", "manage/heapdump",
+    "manage/refresh", "manage/jolokia",
+    "management", "management/health", "management/env",
+    # Spring Cloud
+    "actuator/gateway/routes", "actuator/gateway/refresh",
+    "actuator/gateway/globalfilters", "actuator/gateway/routefilters",
+    "gateway/actuator", "gateway/actuator/gateway/routes",
+    "functionRouter",
+    "application/default", "application/default/master",
+    "application-dev.yml", "application-prod.yml",
+    "application-dev.properties", "application-prod.properties",
+    "eureka", "eureka/apps", "eureka/lastn", "eureka/v2/apps",
+    "hystrix", "hystrix.stream", "hystrix/monitor",
+    "instances", "instances/applications", "applications",
+    # Jolokia
+    "jolokia", "jolokia/list", "jolokia/version", "jolokia/read",
+    "jolokia/exec", "jolokia/search",
+    # Spring 路径穿越绕过
+    ";/actuator/env", "..;/actuator/env", ";/actuator",
+    # Java 配置 / 中间件
+    "application.yml", "application.yaml", "application.properties",
+    "bootstrap.yml", "bootstrap.properties",
+    "WEB-INF/web.xml", "WEB-INF/classes/application.yml",
+    "META-INF/MANIFEST.MF", "META-INF/spring.factories",
+    "manager", "manager/html", "manager/status", "host-manager",
+    "jmx-console", "jmx-console/", "jenkins", "struts",
+    "weblogic", "ibm/console", "solr", "solr/admin",
+]
+
+# PHP 专属路径
+PHP_PATHS: list[str] = [
+    "admin.php", "admin.html", "admin/login", "admin/index",
+    "pma", "phpmyadmin", "adminer", "adminer.php", "dbadmin",
+    "login.php", "login.html",
+    "wp-admin", "wp-login.php", "wp-config.php", "wp-config.php.bak",
+    "xmlrpc.php", "install.php", "info.php", "phpinfo.php", "test.php",
+    "wp-content", "wp-content/uploads", "wp-content/debug.log",
+    "phpunit", "phpunit.xml", "composer.json", "composer.json.bak",
+    "composer.lock", "vendor", "vendor/composer",
+    "backup.zip", "backup.tar.gz", "backup.rar",
+    "www.zip", "web.zip", "site.zip", "wwwroot.zip", "1.zip",
+    "db.sql", "database.sql", "dump.sql", "data.sql",
+    "db.bak", "backup.zip.bak",
+    "server-status", "server-info", "status.php", "status.json",
+    "config.php", ".htaccess", ".htpasswd",
+]
+
+# .NET 专属路径
+DOTNET_PATHS: list[str] = [
+    "elmah.axd", "trace.axd", "aspnet_client",
+    "web.config", "web.config.bak",
+]
+
+# Node.js 专属路径
+NODE_PATHS: list[str] = [
+    "package.json", "package-lock.json", "yarn.lock",
+    ".eslintrc", "Makefile",
+    "debug/vars",  # expvar
+]
+
+# Python 专属路径
+PYTHON_PATHS: list[str] = [
+    "admin",  # Django admin
+    "manage.py",
+]
+
+# 静态资源路径 — SPA 站点跳过这些（会被 catch-all 路由返回 index.html）
+STATIC_RESOURCE_PATHS: set[str] = {
+    "static", "assets", "public", "images", "img", "media",
+    "attachment", "css", "js", "lib", "libs", "dist", "build",
+    "src", "bin", "scripts", "tools", "util", "utils",
+    "tmp", "temp", "log", "logs", "cache", "data", "db", "sql",
+    "test", "tests", "config", "conf", "etc", "var", "run",
+    "common", "system", "home", "main", "app", "application",
+    "index", "download", "downloads", "file",
+}
+
+# API 优先关键词 — 含这些关键词的路径优先探测
+API_PRIORITY_KEYWORDS: tuple[str, ...] = (
+    "api", "swagger", "openapi", "graphql", "graphiql",
+    "actuator", "api-docs", "v1/", "v2/", "v3/", "rest",
+    "manage", "management", "jolokia", "eureka", "hystrix",
+    "instances", "functionrouter", "gateway",
+    "health", "healthz", "metrics", "status", "ping", "info",
+    "debug", "pprof", "prometheus", ".env", ".git",
+    "application.yml", "application.properties", "application.yaml",
+    "bootstrap.yml", "bootstrap.properties",
+    "config.json", "config.yaml", "config.yml",
+    "web.config", "WEB-INF", "META-INF",
+    "robots.txt", "sitemap.xml", "security.txt",
+    ".well-known", "swagger.json", "openapi.json",
+)
+
+# SPA 空壳页面特征正则 — 基线响应匹配则判定为 SPA
+_SPA_SHELL_PATTERN = re.compile(
+    r'<div\s+id\s*=\s*["\'](?:root|app|app-root)["\']'
+    r'|<!doctype html>[\s\S]{0,500}<script[^>]*src\s*=\s*["\'][^"\']*\.js["\']'
+    r'|<title>\s*</title>\s*</head>',  # 空标题 + 闭 head → 典型 SPA 壳
+    re.IGNORECASE,
+)
+
+# 技术栈关键词 → 对应路径集映射
+_TECH_PATH_MAP: list[tuple[tuple[str, ...], list[str]]] = [
+    (("java", "spring", "jvm", "tomcat", "jboss", "weblogic", "kotlin", "groovy"), JAVA_PATHS),
+    (("php", "wordpress", "wp", "laravel", "thinkphp", "yii", "composer"), PHP_PATHS),
+    ((".net", "asp", "dotnet", "c#", "iis", "azure"), DOTNET_PATHS),
+    (("node", "express", "koa", "nest", "npm", "yarn"), NODE_PATHS),
+    (("python", "django", "flask", "fastapi", "tornado"), PYTHON_PATHS),
+]
+
+
+def build_tech_aware_wordlist(
+    tech_stack: str = "",
+    is_spa: bool = False,
+    extra_paths: list[str] | None = None,
+) -> list[str]:
+    """根据技术栈和 SPA 标志构建定向字典。
+
+    策略:
+    1. 始终包含 UNIVERSAL_PATHS（API 文档/配置/调试/元信息）
+    2. 根据 tech_stack 字符串匹配，追加对应技术栈专属路径
+    3. SPA 站点排除 STATIC_RESOURCE_PATHS（会被 catch-all 返回 index.html）
+    4. 无法识别技术栈时回退到 DEFAULT_WORDLIST 全量（保持兼容）
+    5. extra_paths 始终追加
+
+    Args:
+        tech_stack: 技术栈描述字符串，如 "Java/Spring, REST API"
+        is_spa: 是否为 SPA 单页应用
+        extra_paths: 额外追加的路径
+
+    Returns:
+        去重保序的路径列表，API 优先路径排在前面
+    """
+    if not tech_stack and not is_spa:
+        # 无技术栈信息 → 回退到全量默认字典
+        wl = list(DEFAULT_WORDLIST)
+    else:
+        wl = list(UNIVERSAL_PATHS)
+        ts_lower = (tech_stack or "").lower()
+        matched_tech = False
+        for keywords, paths in _TECH_PATH_MAP:
+            if any(kw in ts_lower for kw in keywords):
+                wl.extend(paths)
+                matched_tech = True
+        # 未匹配到任何已知技术栈 → 追加所有技术栈路径（保守策略）
+        if not matched_tech and tech_stack:
+            wl.extend(JAVA_PATHS)
+            wl.extend(PHP_PATHS)
+            wl.extend(DOTNET_PATHS)
+            wl.extend(NODE_PATHS)
+            wl.extend(PYTHON_PATHS)
+
+    if extra_paths:
+        wl.extend(extra_paths)
+
+    # 去重保序
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for w in wl:
+        w = w.strip().lstrip("/")
+        if w and w not in seen:
+            seen.add(w)
+            deduped.append(w)
+
+    # SPA 站点排除静态资源路径
+    if is_spa:
+        deduped = [
+            w for w in deduped
+            if w.lower() not in STATIC_RESOURCE_PATHS
+        ]
+
+    # API 优先路径排前
+    api_paths = [w for w in deduped if _is_api_priority(w)]
+    other_paths = [w for w in deduped if not _is_api_priority(w)]
+    return api_paths + other_paths
+
+
+def _is_api_priority(word: str) -> bool:
+    """判断路径是否为 API 优先（应先于静态/通用路径探测）。"""
+    w_lower = word.lower()
+    return any(kw in w_lower for kw in API_PRIORITY_KEYWORDS)
+
 
 # ============================================================
 # 数据模型
@@ -270,6 +506,7 @@ class DirEntry:
     is_directory: bool      # 推测是否为目录
     title: str              # 从 HTML <title> 提取的标题（无则空）
     body_hash: str          # 响应体哈希（用于通配符对比）
+    body_text: str = ""     # 响应体文本截断（用于相似度对比，可选）
 
 
 @dataclass
@@ -299,6 +536,15 @@ class DirScanResult:
     catch_all_detected: bool = False
     catch_all_hash: str = ""
     catch_all_rate: float = 0.0
+    # ★ catch-all 响应体（用于相似度对比，过滤近似重复）
+    catch_all_body: str = ""
+    # ★ 早期 catch-all 中止：首批 API 路径扫描后检测到 catch-all，
+    #   跳过后续非 API 路径，减少噪音
+    early_abort_count: int = 0
+    # ★ 技术栈感知诊断
+    tech_stack_detected: str = ""
+    is_spa_detected: bool = False
+    wordlist_size: int = 0
     # ★ 诊断字段：连接失败 / 超时次数（供前端判断"为什么 0 请求"）
     connect_errors: int = 0
     timeout_errors: int = 0
@@ -320,6 +566,10 @@ class DirScanResult:
             "wildcard_detected": self.wildcard_detected,
             "catch_all_detected": self.catch_all_detected,
             "catch_all_rate": self.catch_all_rate,
+            "early_abort_count": self.early_abort_count,
+            "tech_stack_detected": self.tech_stack_detected,
+            "is_spa_detected": self.is_spa_detected,
+            "wordlist_size": self.wordlist_size,
             "total_requests": self.total_requests,
             "elapsed": round(self.elapsed, 2),
             "discovered_count": self.discovered_count,
@@ -377,6 +627,9 @@ class DirectoryScanner:
         # 熔断阈值
         waf_block_threshold: int = 25,
         timeout_block_threshold: int = 15,
+        # ★ 技术栈感知参数
+        tech_stack: str = "",
+        is_spa: bool = False,
     ):
         self.max_workers = max(1, max_workers)
         self.timeout = timeout
@@ -386,10 +639,30 @@ class DirectoryScanner:
         self.max_depth = max(1, max_depth)
         self.max_recursed_dirs = max_recursed_dirs
         self.include_status = include_status or DEFAULT_INCLUDE_STATUS
-        # 合并字典：去重保序
-        wl = list(wordlist) if wordlist else list(DEFAULT_WORDLIST)
-        if extra_paths:
-            wl.extend(extra_paths)
+
+        # ★ 技术栈感知字典构建
+        # 优先级：显式 wordlist > tech_stack/is_spa 感知构建 > DEFAULT_WORDLIST
+        self.tech_stack = tech_stack or ""
+        self.is_spa = is_spa
+        if wordlist:
+            # 调用方显式传入字典 → 直接使用（保持兼容）
+            wl = list(wordlist)
+            if extra_paths:
+                wl.extend(extra_paths)
+        elif tech_stack or is_spa:
+            # 有技术栈信息 → 构建定向字典
+            wl = build_tech_aware_wordlist(
+                tech_stack=tech_stack,
+                is_spa=is_spa,
+                extra_paths=extra_paths,
+            )
+        else:
+            # 无技术栈信息 → 回退到全量默认字典
+            wl = list(DEFAULT_WORDLIST)
+            if extra_paths:
+                wl.extend(extra_paths)
+
+        # 去重保序
         seen: set[str] = set()
         self.wordlist: list[str] = []
         for w in wl:
@@ -416,6 +689,12 @@ class DirectoryScanner:
         # 通配符基线签名集合：{(status, length)}
         self._wildcard_sigs: set[tuple[int, int]] = set()
         self._wildcard_hashes: set[str] = set()
+        # ★ 通配符基线响应体快照（用于 Jaccard 相似度过滤动态内容 catch-all）
+        self._wildcard_body_texts: list[str] = []
+        # ★ catch-all 早期检测状态
+        self._catch_all_detected_early: bool = False
+        self._catch_all_body_snapshot: str = ""  # catch-all 响应体快照（用于相似度对比）
+        self._similarity_filtered: int = 0  # 被相似度过滤的条目数
 
     # ---------- 公共入口 ----------
 
@@ -482,11 +761,31 @@ class DirectoryScanner:
         result.connect_errors = self._connect_errors
         result.timeout_errors = self._timeout_errors
         result.total_requests = self._total_requests
+        # ★ 技术栈感知诊断
+        result.tech_stack_detected = self.tech_stack
+        result.is_spa_detected = self.is_spa
+        result.wordlist_size = len(self.wordlist)
         # ★ OPT5: catch-all 路由检测 — 多个不同路径返回相同 body_hash > 60%
-        if len(result.entries) >= 5:
+        # 如果早期检测已触发，直接复用结果
+        if self._catch_all_detected_early:
+            result.catch_all_detected = True
+            # 重新计算最终比率（早期检测后可能又有新 entries）
+            if len(result.entries) >= 5:
+                _hash_counts: dict[str, int] = {}
+                for _e in result.entries:
+                    _hash_counts[_e.body_hash] = _hash_counts.get(_e.body_hash, 0) + 1
+                _max_count = max(_hash_counts.values()) if _hash_counts else 0
+                _max_hash = max(_hash_counts, key=_hash_counts.get) if _hash_counts else ""
+                _rate = _max_count / len(result.entries) if result.entries else 0.0
+                result.catch_all_hash = _max_hash
+                result.catch_all_rate = round(_rate * 100, 1)
+                result.catch_all_body = self._catch_all_body_snapshot[:2000]
+        elif len(result.entries) >= 5:
             _hash_counts: dict[str, int] = {}
+            _hash_to_entry: dict[str, DirEntry] = {}
             for _e in result.entries:
                 _hash_counts[_e.body_hash] = _hash_counts.get(_e.body_hash, 0) + 1
+                _hash_to_entry[_e.body_hash] = _e
             _max_count = max(_hash_counts.values()) if _hash_counts else 0
             _max_hash = max(_hash_counts, key=_hash_counts.get) if _hash_counts else ""
             _rate = _max_count / len(result.entries) if result.entries else 0.0
@@ -494,6 +793,8 @@ class DirectoryScanner:
                 result.catch_all_detected = True
                 result.catch_all_hash = _max_hash
                 result.catch_all_rate = round(_rate * 100, 1)
+                _snap = _hash_to_entry.get(_max_hash)
+                result.catch_all_body = (_snap.body_text if _snap else "")[:2000]
                 log.warning(
                     "[DirScan] catch-all 路由检测: %d/%d (%.1f%%) 个路径返回相同 body_hash，"
                     "可能为 SPA 前端路由或 catch-all 后端路由",
@@ -502,13 +803,19 @@ class DirectoryScanner:
         log.info(
             "[DirScan] 完成: target=%s 请求=%d 发现=%d 敏感=%d 递归目录=%d "
             "耗时=%.1fs host_unreachable=%s wildcard=%s waf=%s timeout=%s "
-            "connect_err=%d timeout_err=%d fallback=%s",
+            "connect_err=%d timeout_err=%d fallback=%s "
+            "tech_stack=%s is_spa=%s wordlist=%d early_abort=%d sim_filtered=%d",
             base_url, self._total_requests, result.discovered_count,
             result.sensitive_count, result.recursed_dirs, result.elapsed,
             result.host_unreachable, result.wildcard_detected,
             result.waf_blocked, result.timeout_blocked,
             result.connect_errors, result.timeout_errors,
             result.critical_path_fallback,
+            result.tech_stack_detected or "-",
+            result.is_spa_detected,
+            result.wordlist_size,
+            result.early_abort_count,
+            self._similarity_filtered,
         )
         return result
 
@@ -586,7 +893,23 @@ class DirectoryScanner:
             if entry.status != 404:
                 self._wildcard_sigs.add((entry.status, entry.length))
                 self._wildcard_hashes.add(entry.body_hash)
+                # ★ 存储基线响应体用于 Jaccard 相似度过滤（动态内容 catch-all）
+                if entry.body_text:
+                    self._wildcard_body_texts.append(entry.body_text)
                 result.wildcard_detected = True
+                # ★ SPA 空壳检测：基线响应体匹配 SPA 特征 → 动态启用 SPA 模式
+                if not self.is_spa and entry.body_text:
+                    if _SPA_SHELL_PATTERN.search(entry.body_text):
+                        self.is_spa = True
+                        log.info(
+                            "[DirScan] 基线响应匹配 SPA 空壳特征，"
+                            "动态启用 SPA 模式（排除静态资源路径）"
+                        )
+                        if on_progress:
+                            on_progress(
+                                "目录扫描: 检测到 SPA 空壳页面特征，"
+                                "将排除静态资源路径以减少噪音"
+                            )
 
         if result.wildcard_detected and on_progress:
             on_progress(
@@ -629,7 +952,14 @@ class DirectoryScanner:
         result: DirScanResult, on_progress,
         sub_prefix: str = "",
     ) -> None:
-        """对单层目录执行字典爆破。
+        """对单层目录执行字典爆破（API 优先 + 早期 catch-all 中止）。
+
+        策略:
+        1. 将字典候选分为 API 优先组和其他组
+        2. 先扫描 API 优先组（swagger/actuator/api 等）
+        3. 每批扫描后检查 catch-all：若 >50% 路径返回相同 body，
+           标记早期 catch-all，跳过后续非 API 路径
+        4. 非 API 路径仅在未检测到 catch-all 时扫描
 
         Args:
             base_url: 站点根 URL（含尾斜杠）。
@@ -638,30 +968,62 @@ class DirectoryScanner:
         if self._waf_blocked or self._timeout_blocked:
             return
 
-        # 构造待探测路径列表（应用扩展追加）
+        # 构造待探测路径列表（含扩展追加 + 优先级排序）
         candidates = self._build_candidates()
         total = len(candidates)
         if on_progress and level == 1:
             on_progress(f"目录扫描: 开始爆破 {total} 条路径（{self.max_workers} 并发）")
 
-        # 并发探测
-        tasks = [
-            self._probe_entry(base_url, sub_prefix, word, headers, result)
-            for word in candidates
-        ]
-        # 分批 gather 避免一次性创建超大协程列表（字典较小，直接 gather 也可）
-        for chunk in self._chunked(tasks, self.max_workers * 4):
-            await asyncio.gather(*chunk, return_exceptions=True)
+        # ★ 分组：API 优先路径 vs 其他路径
+        api_candidates = [c for c in candidates if _is_api_priority(c)]
+        other_candidates = [c for c in candidates if not _is_api_priority(c)]
+
+        # ★ 阶段 1: 先扫描 API 优先路径
+        if api_candidates:
+            tasks = [
+                self._probe_entry(base_url, sub_prefix, word, headers, result)
+                for word in api_candidates
+            ]
+            for chunk in self._chunked(tasks, self.max_workers * 4):
+                await asyncio.gather(*chunk, return_exceptions=True)
+                # ★ 早期 catch-all 检测：每批后检查
+                if level == 1 and self._check_catch_all_early(result, on_progress):
+                    # catch-all 确认 → 跳过所有非 API 路径
+                    result.early_abort_count = len(other_candidates)
+                    other_candidates = []
+                    break
+
+        # ★ 阶段 2: 扫描非 API 路径（仅在未触发早期 catch-all 时）
+        if other_candidates and not self._catch_all_detected_early:
+            tasks = [
+                self._probe_entry(base_url, sub_prefix, word, headers, result)
+                for word in other_candidates
+            ]
+            for chunk in self._chunked(tasks, self.max_workers * 4):
+                await asyncio.gather(*chunk, return_exceptions=True)
+                # 持续检查 catch-all
+                if level == 1 and self._check_catch_all_early(result, on_progress):
+                    # 计算剩余未扫描路径数
+                    remaining = sum(1 for t in tasks if not t.done())
+                    result.early_abort_count += remaining
+                    break
 
     def _build_candidates(self) -> list[str]:
-        """生成字典候选（含扩展追加）。"""
+        """生成字典候选（含扩展追加 + API 优先排序 + SPA 静态过滤）。"""
         out: list[str] = []
         for w in self.wordlist:
+            # ★ SPA 模式动态过滤：基线阶段检测到 SPA 时排除静态资源路径
+            if self.is_spa and w.lower() in STATIC_RESOURCE_PATHS:
+                continue
             out.append(w)
             for ext in self.extensions:
                 if not w.lower().endswith(ext):
                     out.append(f"{w}{ext}")
-        return out
+        # ★ 确保 API 优先路径排在前面（build_tech_aware_wordlist 已排序，
+        # 但扩展追加可能打乱顺序，此处再排一次）
+        api_paths = [c for c in out if _is_api_priority(c)]
+        other_paths = [c for c in out if not _is_api_priority(c)]
+        return api_paths + other_paths
 
     async def _probe_entry(
         self, base_url: str, sub_prefix: str, word: str,
@@ -680,6 +1042,11 @@ class DirectoryScanner:
         # 软 404 / 通配符过滤
         if self._is_wildcard(entry):
             return
+        # ★ 相似度过滤：catch-all 已检测时，跳过与 catch-all 响应体近似的条目
+        if self._catch_all_detected_early and self._catch_all_body_snapshot:
+            if self._bodies_similar(entry.body_text, self._catch_all_body_snapshot):
+                self._similarity_filtered += 1
+                return
         result.entries.append(entry)
         # 敏感路径分类
         for keyword, vtype, severity in SENSITIVE_PATTERNS:
@@ -755,6 +1122,7 @@ class DirectoryScanner:
                 url=url, status=status, length=length,
                 content_type=content_type, redirect=redirect,
                 is_directory=is_dir, title=title, body_hash=body_hash,
+                body_text=body_text,
             )
 
     # ---------- 内部：递归 ----------
@@ -821,16 +1189,110 @@ class DirectoryScanner:
         匹配条件（任一即判为假阳性）：
         - body_hash 命中基线（响应体完全相同 → 经典软 404，最可靠）
         - (status, 精确 length) 命中基线（dirsearch 风格状态码+长度匹配）
+        - ★ Jaccard 相似度命中基线（动态内容 catch-all：body_hash 不同但内容高度相似）
 
         无基线时返回 False（正常 404 已由状态码白名单排除）。
-        注意：对"回显请求路径"的动态软 404（body 随路径变化）存在漏判，
-        这是 dirsearch 同款已知局限，需 --bf 级暴力才完全覆盖。
         """
-        if not self._wildcard_sigs and not self._wildcard_hashes:
+        if not self._wildcard_sigs and not self._wildcard_hashes and not self._wildcard_body_texts:
             return False
         if (entry.status, entry.length) in self._wildcard_sigs:
             return True
         if entry.body_hash in self._wildcard_hashes:
+            return True
+        # ★ Jaccard 相似度过滤：对动态内容 catch-all（body_hash 不同但内容近似）
+        if self._wildcard_body_texts and entry.body_text:
+            for baseline_body in self._wildcard_body_texts:
+                if self._bodies_similar(entry.body_text, baseline_body):
+                    return True
+        return False
+
+    # ★ 响应相似度工具（移植自 fast_scanner._normalize_body / _bodies_similar）
+
+    @staticmethod
+    def _normalize_body(body: str) -> str:
+        """归一化响应体：剥离动态内容，防止相似度误判。"""
+        if not body:
+            return ""
+        s = body
+        s = re.sub(r'\b\d{10,13}\b', '', s)                    # Unix 时间戳
+        s = re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?', '', s)  # ISO 时间
+        s = re.sub(r'(csrf|nonce|_token|token|xsrf)["\']?\s*[:=]\s*["\']?'
+                   r'[a-zA-Z0-9_\-]{16,}', '', s, flags=re.IGNORECASE)  # CSRF/token
+        s = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '', s)  # JWT
+        s = re.sub(r'\b[0-9a-f]{32,64}\b', '', s, flags=re.IGNORECASE)  # MD5/SHA hash
+        s = re.sub(r'\s+', ' ', s).strip()                      # 空白归一化
+        return s
+
+    def _bodies_similar(self, text1: str, text2: str, threshold: float = 0.85) -> bool:
+        """归一化后比较两段文本相似度（长度比 + Jaccard token 相似度）。
+
+        用于检测 catch-all 路由返回的近似但不完全相同的响应体
+        （如 SPA index.html 中嵌入了请求路径的 hash 值）。
+        """
+        n1 = self._normalize_body(text1)
+        n2 = self._normalize_body(text2)
+        if not n1 and not n2:
+            return True
+        if not n1 or not n2:
+            return False
+        # 长度比
+        len_ratio = min(len(n1), len(n2)) / max(len(n1), len(n2))
+        if len_ratio < 0.8:
+            return False
+        # Jaccard token 相似度（按空格切词）
+        tokens1 = set(n1.split())
+        tokens2 = set(n2.split())
+        union = tokens1 | tokens2
+        if not union:
+            return True
+        jaccard = len(tokens1 & tokens2) / len(union)
+        return jaccard >= threshold
+
+    def _check_catch_all_early(
+        self, result: DirScanResult, on_progress,
+    ) -> bool:
+        """早期 catch-all 路由检测（每批扫描后调用）。
+
+        判定条件：≥5 个路径被发现时，>50% 返回相同 body_hash
+        （比最终检测的 60% 阈值更敏感，用于早期中止）。
+
+        检测到 catch-all 时：
+        1. 记录 catch-all 响应体快照（用于后续相似度过滤）
+        2. 标记 _catch_all_detected_early = True
+        3. 返回 True 触发调用方跳过非 API 路径
+
+        Returns:
+            True 表示 catch-all 已检测到，应中止非 API 路径扫描。
+        """
+        if self._catch_all_detected_early:
+            return True  # 已检测到，持续返回 True
+        if len(result.entries) < 5:
+            return False
+        _hash_counts: dict[str, int] = {}
+        _hash_to_entry: dict[str, DirEntry] = {}
+        for _e in result.entries:
+            _hash_counts[_e.body_hash] = _hash_counts.get(_e.body_hash, 0) + 1
+            _hash_to_entry[_e.body_hash] = _e  # 保留最后一个（用于取 body_text）
+        _max_count = max(_hash_counts.values()) if _hash_counts else 0
+        _max_hash = max(_hash_counts, key=_hash_counts.get) if _hash_counts else ""
+        _rate = _max_count / len(result.entries) if result.entries else 0.0
+        if _rate > 0.5:  # 早期阈值 50%（比最终 60% 更敏感）
+            self._catch_all_detected_early = True
+            _snapshot_entry = _hash_to_entry.get(_max_hash)
+            self._catch_all_body_snapshot = (
+                _snapshot_entry.body_text if _snapshot_entry else ""
+            )
+            if on_progress:
+                on_progress(
+                    f"目录扫描: 早期 catch-all 检测 — {_max_count}/{len(result.entries)} "
+                    f"({round(_rate * 100, 1)}%) 个路径返回相同内容，"
+                    f"跳过后续非 API 路径以减少噪音"
+                )
+            log.info(
+                "[DirScan] 早期 catch-all 检测: %d/%d (%.1f%%) — "
+                "跳过非 API 路径，继续 API 优先路径扫描",
+                _max_count, len(result.entries), _rate * 100,
+            )
             return True
         return False
 
@@ -861,6 +1323,8 @@ async def scan_directories(
     recursive: bool = True,
     extensions: list[str] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    tech_stack: str = "",
+    is_spa: bool = False,
 ) -> DirScanResult:
     """一键目录爆破入口。
 
@@ -873,5 +1337,7 @@ async def scan_directories(
         max_workers=max_workers,
         recursive=recursive,
         extensions=extensions,
+        tech_stack=tech_stack,
+        is_spa=is_spa,
     )
     return await scanner.scan(base_url, auth_headers=auth_headers, on_progress=on_progress)

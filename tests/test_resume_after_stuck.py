@@ -12,12 +12,14 @@
 4. 在 analyze/test/explore 阶段被识别并返回 kick_msg
 5. 普通对话（非继续指令）不被误识别
 """
-import asyncio
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.session.utils_mixin import UtilsMixin
+from core.session.chat_loop import ChatLoopMixin
 
 
 class FakeSession:
@@ -30,10 +32,9 @@ class FakeSession:
             self._nudge_count[phase] = nudge_count
 
     # 直接用 UtilsMixin 上真接出来的方法（保持和生产代码一致）
-    from core.session.utils_mixin import UtilsMixin
     reset_nudge_counter = UtilsMixin.reset_nudge_counter
     _detect_and_handle_resume_command = (
-        sys.modules["core.session.chat_loop"].ChatLoopMixin._detect_and_handle_resume_command
+        ChatLoopMixin._detect_and_handle_resume_command
     )
 
 
@@ -42,7 +43,6 @@ def test_reset_nudge_counter_current_phase():
     assert s._nudge_count["test"] == 3
     s.reset_nudge_counter()
     assert s._nudge_count["test"] == 0
-    print("✓ reset_nudge_counter(): 当前 phase 计数被清零")
 
 
 def test_reset_nudge_counter_specific_phase():
@@ -51,7 +51,6 @@ def test_reset_nudge_counter_specific_phase():
     s.reset_nudge_counter("analyze")
     assert s._nudge_count["analyze"] == 0
     assert s._nudge_count["test"] == 3
-    print("✓ reset_nudge_counter('analyze'): 只清零指定 phase")
 
 
 def test_reset_nudge_counter_tolerate_none_dict():
@@ -59,7 +58,6 @@ def test_reset_nudge_counter_tolerate_none_dict():
     s._nudge_count = None
     s.reset_nudge_counter()
     assert s._nudge_count == {"test": 0}
-    print("✓ reset_nudge_counter(): 容忍 None / 异常 dict")
 
 
 def test_resume_keyword_exact_match_in_stuck_phase():
@@ -69,7 +67,6 @@ def test_resume_keyword_exact_match_in_stuck_phase():
     assert handled is True
     assert "唤醒" in kick or "重置" in kick
     assert s._nudge_count["test"] == 0
-    print("✓ exact '继续' in Phase 2 → handled=True + counter reset")
 
 
 def test_resume_keyword_variants_in_stuck_phase():
@@ -78,7 +75,6 @@ def test_resume_keyword_variants_in_stuck_phase():
         s = FakeSession(phase="test", nudge_count=3)
         handled, _ = s._detect_and_handle_resume_command(msg, "test")
         assert handled is True, f"未识别: {msg!r}"
-    print("✓ 子串 + 大小写变体都被识别")
 
 
 def test_resume_not_recognized_in_idle_phase():
@@ -87,7 +83,6 @@ def test_resume_not_recognized_in_idle_phase():
     handled, kick = s._detect_and_handle_resume_command("继续", "idle")
     assert handled is False
     assert kick == ""
-    print("✓ idle 阶段不识别 — 让出给 idle 分支处理")
 
 
 def test_resume_not_recognized_in_report_phase():
@@ -95,7 +90,6 @@ def test_resume_not_recognized_in_report_phase():
     s = FakeSession(phase="report", nudge_count=0)
     handled, kick = s._detect_and_handle_resume_command("继续", "report")
     assert handled is False
-    print("✓ report 阶段不识别 — 让出给追问分支处理")
 
 
 def test_resume_not_recognized_for_non_resume_messages():
@@ -108,7 +102,6 @@ def test_resume_not_recognized_for_non_resume_messages():
             continue
         handled, _ = s._detect_and_handle_resume_command(msg, "test")
         assert handled is False, f"误识别: {msg!r}"
-    print("✓ 普通对话不会触发恢复逻辑")
 
 
 def test_kick_msg_includes_phase_and_old_count():
@@ -117,13 +110,10 @@ def test_kick_msg_includes_phase_and_old_count():
     handled, kick = s._detect_and_handle_resume_command("继续", "test")
     assert "test" in kick
     assert "3→0" in kick
-    print("✓ kick_msg 包含 phase + 计数变化")
 
 
 def test_chat_loop_integration_resume_unblocks_stuck():
     """端到端：模拟 stuck → 用户"继续" → nudge 计数被重置 → LLM 又能拿到 nudge。"""
-    from core.session.utils_mixin import UtilsMixin
-
     s = FakeSession(phase="test", nudge_count=3)
 
     # 1) 模拟主循环 _maybe_nudge_phase_forward 的判断：counter=3 → 已满，放弃
@@ -139,18 +129,3 @@ def test_chat_loop_integration_resume_unblocks_stuck():
     #    又能给 LLM 3 次 nudge 机会，而不是立即再 stuck
     new_count = getattr(s, attr, {}).get(s.phase, 0)
     assert new_count == 0, f"stuck 状态下'继续'应清零计数，实际={new_count}"
-    print("✓ 集成：stuck → '继续' → 计数清零 → LLM 重新获得 nudge 窗口")
-
-
-if __name__ == "__main__":
-    test_reset_nudge_counter_current_phase()
-    test_reset_nudge_counter_specific_phase()
-    test_reset_nudge_counter_tolerate_none_dict()
-    test_resume_keyword_exact_match_in_stuck_phase()
-    test_resume_keyword_variants_in_stuck_phase()
-    test_resume_not_recognized_in_idle_phase()
-    test_resume_not_recognized_in_report_phase()
-    test_resume_not_recognized_for_non_resume_messages()
-    test_kick_msg_includes_phase_and_old_count()
-    test_chat_loop_integration_resume_unblocks_stuck()
-    print("\n所有回归测试通过 ✓")

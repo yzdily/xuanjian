@@ -26,12 +26,15 @@ async def dashboard_stats():
     # 从 SQLite 获取基础统计
     stats = _get_store_stats()
 
-    # 从 data/tasks 计算覆盖率
+    # ★ 性能优化：将三次独立文件遍历合并为一次
+    # 原代码分别遍历 data/tasks 下 sitemap JSON 三次（任务统计/漏洞类型分布/严重级别分布）
     tasks_dir = Path("data/tasks")
     task_count = 0
     feature_count = 0
     vuln_count = 0
     scan_times = []
+    vuln_type_dist: dict[str, int] = {}
+    severity_dist = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 
     if tasks_dir.exists():
         for f in tasks_dir.glob("*-sitemap.json"):
@@ -40,11 +43,20 @@ async def dashboard_stats():
                 data = json.loads(f.read_text(encoding="utf-8"))
                 features = data.get("features", {})
                 feature_count += len(features)
+                scan_times.append(f.stat().st_mtime)
                 for fp in features.values():
                     for c in fp.get("checklist", []):
                         if c.get("result") == "vulnerable":
                             vuln_count += 1
-                scan_times.append(f.stat().st_mtime)
+                            # 漏洞类型分布
+                            vt = c.get("vuln_type", "未知")
+                            vuln_type_dist[vt] = vuln_type_dist.get(vt, 0) + 1
+                            # 严重级别分布
+                            sev = (c.get("severity") or "info").lower()
+                            if sev in severity_dist:
+                                severity_dist[sev] += 1
+                            else:
+                                severity_dist["info"] += 1
             except Exception:
                 pass
 
@@ -57,37 +69,6 @@ async def dashboard_stats():
         end = now - i * day_secs
         count = sum(1 for t in scan_times if start <= t < end)
         daily_scans.append(count)
-
-    # 漏洞类型分布
-    vuln_type_dist = {}
-    if tasks_dir.exists():
-        for f in tasks_dir.glob("*-sitemap.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                for fp in data.get("features", {}).values():
-                    for c in fp.get("checklist", []):
-                        if c.get("result") == "vulnerable":
-                            vt = c.get("vuln_type", "未知")
-                            vuln_type_dist[vt] = vuln_type_dist.get(vt, 0) + 1
-            except Exception:
-                pass
-
-    # 漏洞严重级别分布
-    severity_dist = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-    if tasks_dir.exists():
-        for f in tasks_dir.glob("*-sitemap.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                for fp in data.get("features", {}).values():
-                    for c in fp.get("checklist", []):
-                        if c.get("result") == "vulnerable":
-                            sev = (c.get("severity") or "info").lower()
-                            if sev in severity_dist:
-                                severity_dist[sev] += 1
-                            else:
-                                severity_dist["info"] += 1
-            except Exception:
-                pass
 
     return {
         "total_scans": stats.get("total_scans", 0) or task_count,

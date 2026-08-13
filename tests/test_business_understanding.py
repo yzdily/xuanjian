@@ -14,7 +14,6 @@
 import asyncio
 import json
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
@@ -33,7 +32,6 @@ def test_prompts_exist():
     rec_text = REC_PROMPT.read_text(encoding="utf-8")
     assert "渗透总监" in rec_text or "对账" in rec_text
     assert "new_tasks" in rec_text
-    print("[✓] 提示词文件齐全且关键字符存在")
 
 
 def test_context_build():
@@ -74,7 +72,6 @@ def test_context_build():
     assert "POST" in ctx
     assert "/api/order" in ctx
     assert "amount" in ctx  # 字段名清单
-    print(f"[✓] context 拼装: {len(ctx)} chars")
 
 
 def test_json_parsing():
@@ -95,7 +92,6 @@ def test_json_parsing():
     # 4. 空字符串
     u4, s4 = _parse_response("")
     assert u4 is None
-    print("[✓] JSON 解析支持多种格式")
 
 
 def test_render_to_markdown():
@@ -145,7 +141,6 @@ def test_render_to_markdown():
     assert "P-001" in md
     assert "IDOR" in md
     assert "金额篡改" in md
-    print(f"[✓] Markdown 渲染: {len(md)} chars")
 
     # 失败 result
     err_md = render_to_markdown({"status": "error", "error": "LLM 超时"})
@@ -153,11 +148,10 @@ def test_render_to_markdown():
     # None
     none_md = render_to_markdown(None)
     assert "未完成" in none_md
-    print("[✓] Markdown 渲染降级正常")
 
 
 def test_analyze_business_fallback():
-    """LLM 返回非 JSON 时,正确降级为 degraded（规则推导兜底）或 error。
+    """LLM 返回非 JSON 时,正确降级为 degraded（规则推导兜底）。
 
     ★ #8 修复后：JSON 解析失败不再直接返回 error，而是先尝试规则推导：
     - 规则推导成功 → status='degraded'，下游 Phase 可继续
@@ -166,8 +160,11 @@ def test_analyze_business_fallback():
     from core.business_understanding import analyze_business
     sm = MagicMock()
     sm.target = "http://x"
-    sm.pages = {}
-    sm.apis = {}
+    sm.pages = {"http://x/login": {"title": "登录"}, "http://x/cart": {"title": "购物车"}}
+    sm.apis = {
+        "POST http://x/api/login": {"method": "POST", "url": "http://x/api/login"},
+        "GET http://x/api/users": {"method": "GET", "url": "http://x/api/users"},
+    }
     sm.api_samples = {}
     sm.business_type = None
     sm.tech_stack = None
@@ -177,15 +174,10 @@ def test_analyze_business_fallback():
     llm.chat = MagicMock(return_value=MagicMock(content="无法解析的文本"))
 
     result = asyncio.run(analyze_business(sm, llm, timeout=10.0))
-    # 接受 degraded 或 error 两种状态（取决于规则推导是否能从空 sitemap 生成兜底数据）
-    assert result["status"] in ("degraded", "error"), f"unexpected status: {result['status']}"
-    if result["status"] == "error":
-        assert "JSON" in result["error"] or "解析" in result["error"]
-    else:
-        # degraded 状态下应该有 understanding 和 summary
-        assert result.get("understanding") is not None
-        assert "error" in result  # 错误说明仍保留
-    print(f"[✓] LLM 返回非 JSON 时正确降级 (status={result['status']})")
+    # 提供了足够多的 sitemap 信息后，规则推导应成功 → degraded
+    assert result["status"] == "degraded", f"expected degraded, got {result['status']}"
+    assert result.get("understanding") is not None
+    assert "error" in result
 
 
 def test_analyze_business_timeout():
@@ -201,14 +193,15 @@ def test_analyze_business_timeout():
     sm.js_routes = []
 
     llm = MagicMock()
-    def _slow_chat(*args, **kwargs):
-        time.sleep(3)
+    # 模拟 chat 调用挂起直到超时（用同步阻塞，因 analyze_business 用 to_thread 调用）
+    import time as _time
+    def _hang(*args, **kwargs):
+        _time.sleep(2)
         return MagicMock(content='{"domain":{"label":"x"}}')
-    llm.chat = _slow_chat
+    llm.chat = _hang
 
-    result = asyncio.run(analyze_business(sm, llm, timeout=1.0))
+    result = asyncio.run(analyze_business(sm, llm, timeout=0.1))
     assert result["status"] == "timeout"
-    print("[✓] LLM 超时正确降级为 timeout")
 
 
 def test_reconcile_context_build():
@@ -240,7 +233,6 @@ def test_reconcile_context_build():
     assert "IDOR" in ctx
     assert "订单" in ctx  # module 分组按 fp.module = 订单/创建
     assert "金额篡改" in ctx
-    print("[✓] 对账 context 拼装包含关键信息")
 
 
 def test_reconcile_loop_max_2_rounds():
@@ -302,7 +294,6 @@ def test_reconcile_loop_max_2_rounds():
     # final new_tasks 合并了 2 轮的(各 1 个 = 2 个)
     new_tasks = result["reconcile_data"].get("new_tasks", [])
     assert len(new_tasks) == 2
-    print(f"[✓] reconcile_loop 2 轮硬上限生效, {len(new_tasks)} 个累计任务")
 
 
 def test_reconcile_loop_covered_well_stops_early():
@@ -328,27 +319,3 @@ def test_reconcile_loop_covered_well_stops_early():
     result = asyncio.run(reconcile_loop(sm, bu, llm, max_rounds=2, timeout_per_round=10.0))
     assert result["rounds"] == 1, "covered_well 应提前停止"
     assert call_count["n"] == 1
-    print("[✓] verdict=covered_well 时提前停止")
-
-
-def main():
-    print("=" * 60)
-    print("业务理解 + 对账模块端到端测试")
-    print("=" * 60)
-    started = time.time()
-    test_prompts_exist()
-    test_context_build()
-    test_json_parsing()
-    test_render_to_markdown()
-    test_analyze_business_fallback()
-    test_analyze_business_timeout()
-    test_reconcile_context_build()
-    test_reconcile_loop_max_2_rounds()
-    test_reconcile_loop_covered_well_stops_early()
-    print("=" * 60)
-    print(f"全部测试通过 ✅  (耗时 {time.time() - started:.2f}s)")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

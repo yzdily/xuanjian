@@ -215,12 +215,37 @@ class TestToolExecutor:
         assert "功能点已添加" in result  # 登录关键词 → 不延迟
 
     def test_note_tool_injects_task_id(self):
+        """验证 note_add 调用时 task_id 被自动注入到 args（而非仅检查属性存在）。"""
+        import asyncio
         from core.tool_executor import ToolExecutor
+
         executor = ToolExecutor(task_id="my_task_123")
-        args = {"type": "info", "content": "test"}
-        # 只验证 task_id 注入逻辑（不实际调用 MCP）
-        args.setdefault("task_id", executor.task_id)
-        assert args["task_id"] == "my_task_123"
+        args = {"type": "result", "content": "test note"}
+
+        # mcp 未安装时 execute 最终会失败，但 task_id 注入在 ToolRouter 调用前完成
+        try:
+            asyncio.run(executor.execute("note_add", args))
+        except Exception:
+            pass  # ModuleNotFoundError 是预期行为
+
+        # task_id 应被自动注入到 args（setdefault 语义）
+        assert args.get("task_id") == "my_task_123"
+
+    def test_note_read_injects_default_type(self):
+        """验证 note_read 调用时不仅注入 task_id，还注入默认 type=all。"""
+        import asyncio
+        from core.tool_executor import ToolExecutor
+
+        executor = ToolExecutor(task_id="task_456")
+        args = {}
+
+        try:
+            asyncio.run(executor.execute("note_read", args))
+        except Exception:
+            pass  # ModuleNotFoundError 是预期行为
+
+        assert args.get("task_id") == "task_456"
+        assert args.get("type") == "all"
 
 
 # ============================================================

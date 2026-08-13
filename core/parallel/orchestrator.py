@@ -65,13 +65,14 @@ def _try_restart_mitmproxy(port: int | None = None) -> bool:
     1. 检查端口是否已在监听（可能已自恢复）
     2. 查找 mitmdump 可执行文件
     3. 启动新进程，带 addon 脚本
-    4. 轮询等待端口就绪（最多 10 秒）
+    4. 轮询等待端口就绪（最多 15 秒）
 
     Returns:
         True 如果重启成功且端口就绪，False 如果失败。
     """
     import socket
     import subprocess
+    import threading
     import sys
     from pathlib import Path as _Path
 
@@ -93,9 +94,17 @@ def _try_restart_mitmproxy(port: int | None = None) -> bool:
         bundle_dir = _Path(getattr(sys, '_MEIPASS', project_dir))
         addon_path = bundle_dir / "mcp_servers" / "mitm_addon.py"
 
+    # ★ addon 脚本不存在时仍可启动代理（只是没有流量记录功能）
+    if not addon_path.exists():
+        log.warning("mitmproxy addon 脚本不存在 (%s)，代理仍可启动但流量记录不可用", addon_path)
+        addon_arg = None
+    else:
+        addon_arg = str(addon_path)
+
     mitmdump_path = None
     candidates = [
         _Path(sys.executable).parent / "mitmdump",
+        _Path(sys.executable).parent / "Scripts" / "mitmdump.exe",  # Windows venv
         _Path(sys.executable).parent.parent.parent.parent / "bin" / "mitmdump",
     ]
     try:
@@ -103,35 +112,44 @@ def _try_restart_mitmproxy(port: int | None = None) -> bool:
         scripts_dir = sysconfig.get_path("scripts")
         if scripts_dir:
             candidates.append(_Path(scripts_dir) / "mitmdump")
+            if os.name == "nt":
+                candidates.append(_Path(scripts_dir) / "mitmdump.exe")
     except Exception:
         pass
+
+    # ★ conda 环境
+    conda_prefix = os.getenv("CONDA_PREFIX")
+    if conda_prefix:
+        if os.name == "nt":
+            candidates.append(_Path(conda_prefix) / "Scripts" / "mitmdump.exe")
+        else:
+            candidates.append(_Path(conda_prefix) / "bin" / "mitmdump")
 
     for cand in candidates:
         if cand and cand.exists():
             mitmdump_path = cand
             break
 
+    # 构建命令
+    base_cmd = ["-p", str(_port), "--set", "stream_large_bodies=10m",
+                "--set", "connection_strategy=lazy", "--quiet"]
+    if addon_arg:
+        base_cmd = ["-s", addon_arg] + base_cmd
+
     if mitmdump_path:
-        mitm_cmd = [
-            str(mitmdump_path),
-            "-s", str(addon_path),
-            "-p", str(_port),
-            "--set", "stream_large_bodies=10m",
-            "--set", "connection_strategy=lazy",
-            "--quiet",
-        ]
+        mitm_cmd = [str(mitmdump_path)] + base_cmd
     elif shutil.which("mitmdump"):
-        mitm_cmd = [
-            "mitmdump",
-            "-s", str(addon_path),
-            "-p", str(_port),
-            "--set", "stream_large_bodies=10m",
-            "--set", "connection_strategy=lazy",
-            "--quiet",
-        ]
+        mitm_cmd = ["mitmdump"] + base_cmd
     else:
-        log.error("mitmproxy 重启失败: 未找到 mitmdump 可执行文件")
-        return False
+        # ★ 兜底：用 python 调用 mitmdump 入口
+        try:
+            import mitmproxy as _mitm_check
+        except ImportError:
+            log.error("mitmproxy 重启失败: 未找到 mitmdump 可执行文件，且 mitmproxy 包未安装")
+            return False
+        mitm_cmd = [sys.executable, "-c",
+                     "from mitmproxy.tools.main import mitmdump; mitmdump()"] + base_cmd
+        log.info("mitmproxy 重启: 使用 python -c fallback（mitmdump 可执行文件未找到）")
 
     # 3. 启动新进程
     try:
@@ -143,20 +161,46 @@ def _try_restart_mitmproxy(port: int | None = None) -> bool:
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         proc = subprocess.Popen(mitm_cmd, **kwargs)
         log.info("mitmproxy 重启进程已启动 (PID: %d)", proc.pid)
+    except FileNotFoundError as e:
+        log.error("mitmproxy 重启失败: mitmdump 可执行文件未找到 — %s", e)
+        return False
+    except PermissionError as e:
+        log.error("mitmproxy 重启失败: 权限不足 — %s", e)
+        return False
     except Exception as e:
         log.error("mitmproxy 重启失败: %s", e)
         return False
 
-    # 4. 轮询等待端口就绪
-    for attempt in range(10):
+    # ★ 启动 stderr 消费线程（防管道缓冲区满导致进程阻塞）
+    _stderr_lines: list[str] = []
+
+    def _drain_stderr(p: subprocess.Popen):
+        try:
+            for line in iter(p.stderr.readline, b""):
+                text = line.decode("utf-8", errors="replace").rstrip()
+                if text and len(_stderr_lines) < 50:
+                    _stderr_lines.append(text)
+        except Exception:
+            pass
+
+    _drain_t = threading.Thread(target=_drain_stderr, args=(proc,), daemon=True)
+    _drain_t.start()
+
+    # 4. 轮询等待端口就绪（最多 15 秒，原 10 秒不够）
+    for attempt in range(15):
         if proc.poll() is not None:
             # 进程已退出
-            stderr_out = ""
-            try:
-                stderr_out = proc.stderr.read().decode("utf-8", errors="replace")[:300]
-            except Exception:
-                pass
-            log.error("mitmproxy 重启进程已退出 (code=%s): %s", proc.returncode, stderr_out)
+            stderr_out = "\n".join(_stderr_lines[:10]) if _stderr_lines else ""
+            log.error("mitmproxy 重启进程已退出 (code=%s): %s", proc.returncode, stderr_out[:500])
+            # ★ 诊断
+            if stderr_out:
+                _sl = stderr_out.lower()
+                if "address already in use" in _sl:
+                    log.error("  诊断: 端口 %d 被占用，可能有残留 mitmdump 进程", _port)
+                elif "no module named" in _sl or "importerror" in _sl:
+                    log.error("  诊断: mitmproxy 依赖缺失，请 pip install --force-reinstall mitmproxy")
+                elif "permission denied" in _sl:
+                    log.error("  诊断: 权限不足，请以管理员身份运行或更换端口")
             return False
         import time as _time
         _time.sleep(1)
@@ -164,7 +208,9 @@ def _try_restart_mitmproxy(port: int | None = None) -> bool:
             log.info("mitmproxy 重启成功 (PID: %d, 端口: %d)", proc.pid, _port)
             return True
 
-    log.warning("mitmproxy 重启后 10s 内端口未就绪，可能需要手动检查")
+    # ★ 端口未就绪但进程还活着：输出 stderr 辅助诊断
+    stderr_snippet = "\n".join(_stderr_lines[:5]) if _stderr_lines else "(无 stderr 输出)"
+    log.warning("mitmproxy 重启后 15s 内端口未就绪 (PID=%d)，stderr: %s", proc.pid, stderr_snippet[:300])
     return False
 
 
@@ -559,15 +605,20 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
             # ★ 缓存重启失败状态：Phase 2.55 不再重复尝试（同一次扫描内重启原因相同）
             session._mitmproxy_restart_failed = True
             # ★ 降级透明化：在 sitemap 上持久化标记，供报告渲染醒目横幅
+            _degraded_reason = (
+                f"Phase 2: mitmproxy 代理不可用且重启失败（端口 {_p2_proxy_port}），"
+                "流量记录依赖 Playwright 降级写入，flows.jsonl 可能不完整。"
+            )
             try:
                 session.sitemap.traffic_degraded = True
-                _degraded_reason = getattr(session.sitemap, "traffic_degraded_reason", "") or ""
-                session.sitemap.traffic_degraded_reason = (
-                    f"Phase 2: mitmproxy 代理不可用且重启失败（端口 {_p2_proxy_port}），"
-                    "流量记录依赖 Playwright 降级写入，flows.jsonl 可能不完整。"
-                )
+                session.sitemap.traffic_degraded_reason = _degraded_reason
             except Exception:
                 pass
+            # ★ 详细降级日志：记录失败原因供后续排查
+            log.error("mitmproxy 降级原因: 端口 %d 不可用且自动重启失败", _p2_proxy_port)
+            log.error("  影响范围: 流量抓包不可用，flows.jsonl 由 Playwright 降级写入（可能缺失 WebSocket/部分 XHR）")
+            log.error("  补偿机制: CDP 流量捕获 (get_cdp_flows) 可作为备选数据源")
+            log.error("  排查建议: 1) 检查 mitmdump 是否安装  2) 检查端口 %d 是否被占用  3) 查看上方重启日志", _p2_proxy_port)
             yield session._event("system",
                 f"⚠️ Phase 2: mitmproxy 代理不可用且重启失败，"
                 f"流量记录将依赖 Playwright 降级写入")

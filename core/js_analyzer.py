@@ -74,6 +74,11 @@ class JSAnalysisResult:
     # ★ 所有外链 JS 文件 URL（含 hash 文件名，如 chunk-2cd2c088.a68ccc9c.js）
     # 用于 Source Map 动态推导探测：对每个 JS URL 追加 .map 检测
     js_file_urls: list[str] = field(default_factory=list)
+    # ★ WebSocket / SSE 端点（new WebSocket() / new EventSource()）
+    websocket_endpoints: list[str] = field(default_factory=list)
+    sse_endpoints: list[str] = field(default_factory=list)
+    # ★ 提取到的 baseURL（用于拼接相对路径 API）
+    base_urls: list[str] = field(default_factory=list)
 
 
 # ============================================================
@@ -164,6 +169,36 @@ _TEMPLATE_API_PATTERN = re.compile(
 # ★ 2026-08-12: 支持反引号模板字符串
 _PATH_PATTERNS = re.compile(
     r'''[`"'](/[a-zA-Z][a-zA-Z0-9_/\-{}:]+)[`"']''',
+)
+
+# ★ axios.create({baseURL: "/api/v1"}) — 提取 baseURL 用于拼接相对路径 API
+# 覆盖场景：
+#   axios.create({baseURL: "/api/v1"})
+#   axios.create({baseURL: "https://api.example.com/v2"})
+#   const service = axios.create({baseURL: window.CONFIG.apiBase})
+_AXIOS_BASEURL_PATTERN = re.compile(
+    r'''(?:axios\s*\.\s*create|createAxios|axios\.create)\s*\(\s*\{[^}]{0,300}?baseURL\s*:\s*[`"']([^`"']{2,200})[`"']''',
+    re.IGNORECASE | re.DOTALL,
+)
+# 通用 baseURL 赋值（非 axios.create 场景）
+#   const BASE_URL = "/api/v1"
+#   window.API_BASE = "/api"
+#   config.apiBase = "/service"
+_BASEURL_ASSIGN_PATTERN = re.compile(
+    r'''(?:const|let|var|window\.|this\.|config\.|app\.)(?:\w+\.){0,3}(?:BASE_URL|baseURL|apiBase|API_BASE|apiUrl|API_URL|baseUrl)\s*=\s*[`"']([^`"']{2,200})[`"']''',
+    re.IGNORECASE,
+)
+
+# ★ WebSocket / SSE 端点提取
+# new WebSocket("ws://xxx") / new WebSocket("wss://xxx")
+_WEBSOCKET_PATTERN = re.compile(
+    r'''new\s+WebSocket\s*\(\s*[`"']([^`"']+)[`"']''',
+    re.IGNORECASE,
+)
+# new EventSource("/api/sse") / new EventSource("https://xxx/sse")
+_SSE_PATTERN = re.compile(
+    r'''new\s+EventSource\s*\(\s*[`"']([^`"']+)[`"']''',
+    re.IGNORECASE,
 )
 
 # 前端路由模式 — 已废弃（被 _extract_routes 内的双轨提取 + 白名单替代，2026-05-22）
@@ -307,6 +342,12 @@ def analyze_js(
 
             # ---- 5. Source Map（简单匹配，安全） ----
             _extract_source_maps(js_text, js_url, base_url, result)
+
+            # ---- 6. WebSocket / SSE 端点 ----
+            _extract_realtime_endpoints(js_text, js_url, result)
+
+            # ---- 7. baseURL 提取（axios.create / 变量赋值） ----
+            _extract_base_urls(js_text, js_url, result)
         except Exception as e:
             log.warning("JS 分析单文件出错 (%s): %s", js_url[-80:], e)
             continue
@@ -317,9 +358,14 @@ def analyze_js(
                      elapsed, len(js_text) // 1024,
                      js_url[-60:], " [大文件简化]" if is_large else "")
 
-    log.info("JS 分析完成: %d 文件, %d 个 API, %d 个路由, %d 个鉴权模式, %d 个敏感信息, %d 个 source map",
+    # ★ baseURL 后处理：将相对路径 API 拼接完整 URL
+    _apply_base_urls(result, base_url)
+
+    log.info("JS 分析完成: %d 文件, %d 个 API, %d 个路由, %d 个鉴权模式, %d 个敏感信息, "
+             "%d 个 source map, %d 个 WebSocket, %d 个 SSE, %d 个 baseURL",
              result.js_files_analyzed, len(result.api_calls), len(result.routes),
-             len(result.auth_patterns), len(result.sensitive_info), len(result.source_maps))
+             len(result.auth_patterns), len(result.sensitive_info), len(result.source_maps),
+             len(result.websocket_endpoints), len(result.sse_endpoints), len(result.base_urls))
 
     return result
 
@@ -797,6 +843,130 @@ def _extract_source_maps(
             map_url = urljoin(js_url or base_url, map_ref)
         if map_url and map_url not in result.source_maps:
             result.source_maps.append(map_url)
+
+
+def _extract_realtime_endpoints(
+    js_text: str, js_url: str,
+    result: JSAnalysisResult,
+):
+    """提取 WebSocket / SSE 端点。
+
+    检测模式：
+    - new WebSocket("ws://xxx") / new WebSocket("wss://xxx")
+    - new EventSource("/api/sse") / new EventSource("https://xxx/sse")
+    - 也检测 minified 变量形式：new WebSocket(t) 跳过（无法解析变量值）
+    """
+    # WebSocket
+    for m in _WEBSOCKET_PATTERN.finditer(js_text):
+        ws_url = m.group(1).strip()
+        if not ws_url or len(ws_url) < 5:
+            continue
+        # 过滤变量引用（minified JS 中可能是变量名）
+        if ws_url.startswith("ws://") or ws_url.startswith("wss://"):
+            full_url = ws_url
+        elif ws_url.startswith("/"):
+            # 相对路径 → 需要后续 baseURL 拼接
+            full_url = ws_url
+        elif ws_url.startswith("http"):
+            # http(s):// → 转换为 ws(s)://
+            full_url = ws_url.replace("https://", "wss://").replace("http://", "ws://")
+        else:
+            continue
+        if full_url not in result.websocket_endpoints:
+            result.websocket_endpoints.append(full_url)
+            log.debug("WebSocket 端点: %s (from %s)", full_url, js_url[-60:])
+
+    # SSE (EventSource)
+    for m in _SSE_PATTERN.finditer(js_text):
+        sse_url = m.group(1).strip()
+        if not sse_url or len(sse_url) < 3:
+            continue
+        if sse_url.startswith("http") or sse_url.startswith("/"):
+            if sse_url not in result.sse_endpoints:
+                result.sse_endpoints.append(sse_url)
+                log.debug("SSE 端点: %s (from %s)", sse_url, js_url[-60:])
+
+
+def _extract_base_urls(
+    js_text: str, js_url: str,
+    result: JSAnalysisResult,
+):
+    """提取 axios.create({baseURL}) 和通用 baseURL 赋值。
+
+    提取到的 baseURL 会存储在 result.base_urls 中，
+    在 _apply_base_urls() 中用于拼接相对路径 API。
+    """
+    # axios.create({baseURL: "..."})
+    for m in _AXIOS_BASEURL_PATTERN.finditer(js_text):
+        bu = m.group(1).strip()
+        if bu and len(bu) >= 2 and bu not in result.base_urls:
+            result.base_urls.append(bu)
+            log.debug("axios baseURL: %s (from %s)", bu, js_url[-60:])
+
+    # 通用 baseURL 赋值
+    for m in _BASEURL_ASSIGN_PATTERN.finditer(js_text):
+        bu = m.group(1).strip()
+        if bu and len(bu) >= 2 and bu not in result.base_urls:
+            # 过滤明显的非 URL 值（如 "production"、"development" 等）
+            if bu.startswith("/") or bu.startswith("http"):
+                result.base_urls.append(bu)
+                log.debug("baseURL 赋值: %s (from %s)", bu, js_url[-60:])
+
+
+def _apply_base_urls(result: JSAnalysisResult, base_url: str):
+    """将 baseURL 应用到相对路径 API 调用，生成完整 URL 的衍生 API。
+
+    例如：
+      baseURL = "/api/v1"
+      API call: GET /user/list
+      → 衍生: GET /api/v1/user/list
+
+    这解决了 axios.create({baseURL}) 后 instance.get("/user") 的路径拼接问题，
+    这是纯正则无法处理的场景。
+    """
+    if not result.base_urls:
+        return
+
+    seen_paths = {call.path for call in result.api_calls}
+    new_calls: list[JSApiCall] = []
+
+    for bu in result.base_urls:
+        # 规范化 baseURL
+        bu = bu.rstrip("/")
+        if not bu:
+            continue
+
+        for call in result.api_calls:
+            path = call.path
+            # 只处理相对路径（以 / 开头但不是完整 URL）
+            if not path or not path.startswith("/"):
+                continue
+            # 如果 path 已经以 baseURL 开头，跳过
+            if path.startswith(bu + "/") or path == bu:
+                continue
+            # 如果 path 是完整 URL，跳过
+            if path.startswith("http"):
+                continue
+
+            # 拼接
+            new_path = f"{bu}{path}"
+            if new_path in seen_paths:
+                continue
+            seen_paths.add(new_path)
+
+            new_call = JSApiCall(
+                method=call.method,
+                path=new_path,
+                source_file=call.source_file,
+                context=f"[baseURL拼接] {call.context}",
+                params=call.params,
+            )
+            new_calls.append(new_call)
+
+    if new_calls:
+        result.api_calls.extend(new_calls)
+        log.info("baseURL 拼接: 从 %d 个 baseURL 衍生出 %d 个新 API 路径",
+                 len(result.base_urls), len(new_calls))
 
 
 def _is_valid_api_path(path: str) -> bool:
@@ -1453,6 +1623,14 @@ def js_result_to_crawl_data(result: JSAnalysisResult, base_url: str = "") -> dic
             "value": info.value[:50] + "..." if len(info.value) > 50 else info.value,
             "context": info.context[:100],
         })
+
+    # ★ WebSocket / SSE 端点
+    data["js_websocket_endpoints"] = list(result.websocket_endpoints)
+    data["js_sse_endpoints"] = list(result.sse_endpoints)
+    data["js_base_urls"] = list(result.base_urls)
+    data["js_stats"]["websocket_endpoints"] = len(result.websocket_endpoints)
+    data["js_stats"]["sse_endpoints"] = len(result.sse_endpoints)
+    data["js_stats"]["base_urls"] = len(result.base_urls)
 
     return data
 

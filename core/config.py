@@ -575,6 +575,10 @@ _DEFAULT_VULN_TO_SKILL: dict[str, str] = dict(VULN_TO_SKILL)
 _DEFAULT_FEATURE_VULN_MAPPING: list = [(list(kw), list(vt)) for kw, vt in FEATURE_VULN_MAPPING]
 _DEFAULT_VULN_SYNONYMS: dict[str, str] = dict(VULN_SYNONYMS)
 
+# ★ 竞态保护：全局映射表更新锁，防止多线程下 clear+update 竞态
+from threading import Lock as _Lock
+_mapping_lock = _Lock()
+
 
 def _backup_defaults() -> None:
     """兼容性 noop（默认值已在模块导入时备份，此函数仅为保留旧 API 调用）。"""
@@ -587,17 +591,17 @@ def apply_skill_registry(registry) -> dict:
     返回统计 {"vuln_to_skill": n, "feature_triggers": n, "synonyms": n}，供日志使用。
     """
     _backup_defaults()
+    with _mapping_lock:
+        # 1) VULN_TO_SKILL（原地）
+        VULN_TO_SKILL.clear()
+        VULN_TO_SKILL.update(registry.vuln_to_skill)
 
-    # 1) VULN_TO_SKILL（原地）
-    VULN_TO_SKILL.clear()
-    VULN_TO_SKILL.update(registry.vuln_to_skill)
+        # 2) FEATURE_VULN_MAPPING（原地，list 不能 clear+update，用 slice 赋值）
+        FEATURE_VULN_MAPPING[:] = registry.feature_triggers
 
-    # 2) FEATURE_VULN_MAPPING（原地，list 不能 clear+update，用 slice 赋值）
-    FEATURE_VULN_MAPPING[:] = registry.feature_triggers
-
-    # 3) VULN_SYNONYMS（原地）
-    VULN_SYNONYMS.clear()
-    VULN_SYNONYMS.update(registry.vuln_synonyms)
+        # 3) VULN_SYNONYMS（原地）
+        VULN_SYNONYMS.clear()
+        VULN_SYNONYMS.update(registry.vuln_synonyms)
 
     return {
         "vuln_to_skill": len(VULN_TO_SKILL),
@@ -609,11 +613,12 @@ def apply_skill_registry(registry) -> dict:
 def reset_to_defaults() -> None:
     """把三个映射恢复到 .py 中的默认值（不含任何 SKILL frontmatter 合并）。"""
     _backup_defaults()
-    if _DEFAULT_VULN_TO_SKILL is not None:
-        VULN_TO_SKILL.clear()
-        VULN_TO_SKILL.update(_DEFAULT_VULN_TO_SKILL)
-    if _DEFAULT_FEATURE_VULN_MAPPING is not None:
-        FEATURE_VULN_MAPPING[:] = _DEFAULT_FEATURE_VULN_MAPPING
-    if _DEFAULT_VULN_SYNONYMS is not None:
-        VULN_SYNONYMS.clear()
-        VULN_SYNONYMS.update(_DEFAULT_VULN_SYNONYMS)
+    with _mapping_lock:
+        if _DEFAULT_VULN_TO_SKILL is not None:
+            VULN_TO_SKILL.clear()
+            VULN_TO_SKILL.update(_DEFAULT_VULN_TO_SKILL)
+        if _DEFAULT_FEATURE_VULN_MAPPING is not None:
+            FEATURE_VULN_MAPPING[:] = _DEFAULT_FEATURE_VULN_MAPPING
+        if _DEFAULT_VULN_SYNONYMS is not None:
+            VULN_SYNONYMS.clear()
+            VULN_SYNONYMS.update(_DEFAULT_VULN_SYNONYMS)

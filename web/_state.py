@@ -18,7 +18,9 @@ Web 层共享状态中心。
 from __future__ import annotations
 
 import json
+import os
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from core.llm import LLMPool
@@ -31,8 +33,10 @@ log = get_logger("web.state")
 _pool = LLMPool()
 
 
-# ---- 多会话表 ----
-_sessions: dict[str, AgentSession] = {}
+# ---- 多会话表（LRU 淘汰） ----
+# ★ 安全加固：使用 OrderedDict 实现会话 LRU 淘汰，防止内存泄漏
+_MAX_SESSIONS = int(os.getenv("XUANJIAN_MAX_SESSIONS", "20"))
+_sessions: OrderedDict[str, AgentSession] = OrderedDict()
 
 # 可变标量打包到 dict 里，确保跨模块引用一致
 STATE: dict = {
@@ -80,16 +84,36 @@ def get_session() -> AgentSession:
     """获取当前会话，没有则自动创建。"""
     cur = STATE["current_session_id"]
     if cur and cur in _sessions:
+        # ★ LRU: 移到末尾（最近使用）
+        _sessions.move_to_end(cur)
         return _sessions[cur]
     # ★ 选择可用的 LLM：优先 primary，如果 primary 不可用（如模型名错误报404）则降级到第一个可用的
     llm_client = _select_available_llm()
     session = AgentSession(llm=llm_client)
     _sessions[session.task_id] = session
     STATE["current_session_id"] = session.task_id
+    # ★ LRU 淘汰：超过最大会话数时清理最久未访问的
+    _evict_old_sessions()
     from core.log import bind_context
     bind_context(session_id=session.task_id, phase=session.phase)
-    log.info("新建会话: %s", session.task_id)
+    log.info("新建会话: %s (当前活跃会话数: %d)", session.task_id, len(_sessions))
     return session
+
+
+def _evict_old_sessions() -> None:
+    """★ LRU 淘汰：超过最大会话数时清理最久未访问的会话。"""
+    while len(_sessions) > _MAX_SESSIONS:
+        old_task_id, old_session = _sessions.popitem(last=False)  # 弹出最旧的
+        try:
+            # 持久化 sitemap 到磁盘后释放内存
+            if old_session.sitemap:
+                old_session.sitemap.save()
+            # 取消后台任务
+            if hasattr(old_session, '_bg_task') and old_session._bg_task:
+                old_session._bg_task.cancel()
+        except Exception as e:
+            log.warning("清理旧会话 %s 时出错: %s", old_task_id, e)
+        log.info("LRU 淘汰会话: %s (当前活跃会话数: %d)", old_task_id, len(_sessions))
 
 
 def _select_available_llm():

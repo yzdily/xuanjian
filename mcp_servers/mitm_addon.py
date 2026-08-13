@@ -18,12 +18,17 @@ import re
 import gzip
 import zlib
 import logging
+import tempfile
+from pathlib import Path
 
 from mitmproxy import tls
 from core.config import MAX_RESPONSE_BODY_SIZE
 
 
-FLOW_FILE = os.getenv("PROXY_FLOW_FILE", "/tmp/pentest_agent_flows.jsonl")
+# ★ 跨平台默认路径：使用 tempfile.gettempdir() 替代硬编码 /tmp
+# 在 Windows 上 /tmp 会被解析为当前驱动器的 \tmp 目录，可能导致权限或路径问题
+_DEFAULT_FLOW_FILE = str(Path(tempfile.gettempdir()) / "pentest_agent_flows.jsonl")
+FLOW_FILE = os.getenv("PROXY_FLOW_FILE", _DEFAULT_FLOW_FILE)
 
 # ============================================================
 # TLS 透传配置

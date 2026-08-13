@@ -517,11 +517,20 @@ async def discover_apis_from_dirscan(
     target_host = urlparse(target_url).netloc.lower()
 
     try:
+        # ★ 技术栈感知：从 sitemap 读取技术栈，推断 SPA 标志
+        _dir_tech = getattr(sitemap, "tech_stack", "") or ""
+        _dir_is_spa = any(
+            kw in _dir_tech.lower()
+            for kw in ("react", "vue", "angular", "spa", "single page",
+                       "next.js", "nuxt", "svelte")
+        )
         scanner = DirectoryScanner(
             max_workers=20,
             timeout=8.0,
             recursive=True,
             max_depth=2,
+            tech_stack=_dir_tech,
+            is_spa=_dir_is_spa,
         )
         dir_result = await scanner.scan(
             target_url,

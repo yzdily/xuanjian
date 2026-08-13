@@ -35,7 +35,9 @@ log = get_logger("auth")
 # 路径与常量
 # ============================================================
 
-_USERS_FILE = Path("data/users.json")
+# ★ 安全加固：使用基于项目根目录的绝对路径，避免工作目录依赖
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_USERS_FILE = _PROJECT_ROOT / "data" / "users.json"
 _LOCK = Lock()
 _CACHE: dict[str, dict] | None = None  # username -> user dict
 
@@ -43,7 +45,7 @@ _CACHE: dict[str, dict] | None = None  # username -> user dict
 TOKEN_TTL = 24 * 60 * 60
 
 # ★ Token 签名密钥：优先从环境变量读取，否则启动时生成随机密钥并持久化
-_SECRET_FILE = Path("data/.auth_secret")
+_SECRET_FILE = _PROJECT_ROOT / "data" / ".auth_secret"
 _SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "")
 
 
@@ -259,8 +261,12 @@ def register(username: str, password: str) -> dict:
         return {"ok": False, "error": "用户名和密码不能为空"}
     if len(username) < 2:
         return {"ok": False, "error": "用户名至少 2 个字符"}
-    if len(password) < 3:
-        return {"ok": False, "error": "密码至少 3 个字符"}
+    # ★ 安全加固：密码最低长度从 3 提升到 8
+    if len(password) < 8:
+        return {"ok": False, "error": "密码至少 8 个字符"}
+    # ★ 安全加固：支持通过环境变量关闭开放注册
+    if os.getenv("XUANJIAN_DISABLE_REGISTER", "0") == "1":
+        return {"ok": False, "error": "系统已关闭注册功能，请联系管理员创建账号"}
     with _LOCK:
         users = _load()
         if username in users:
@@ -360,7 +366,7 @@ def _resolve_default_password() -> str:
     if _DEFAULT_PASSWORD:
         return _DEFAULT_PASSWORD
     # 2) 持久化文件
-    pw_file = Path("data/.default_password")
+    pw_file = _PROJECT_ROOT / "data" / ".default_password"
     if pw_file.exists():
         try:
             pw = pw_file.read_text(encoding="utf-8").strip()

@@ -346,12 +346,30 @@ def is_port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _is_mitmproxy_port(port: int) -> bool:
+    """检测端口上监听的是否是 mitmproxy 代理（通过发送 HTTP CONNECT 探测）。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect(("127.0.0.1", port))
+            # mitmproxy 对普通 HTTP GET 会返回代理错误页（而非 connection refused）
+            s.send(b"GET http://mitmproxy-check/ HTTP/1.1\r\nHost: mitmproxy-check\r\n\r\n")
+            data = s.recv(256)
+            return b"mitmproxy" in data or b"Proxy" in data or b"502" in data or b"503" in data
+    except Exception:
+        return False
+
+
 def check_ports():
     global errors
     print()
     title("[4/5] 检查端口...")
     for port, name in [(WEB_PORT, "Web UI"), (PROXY_PORT, "mitmproxy")]:
         if is_port_in_use(port):
+            # ★ 代理端口被占用时检测是否已有 mitmproxy 在运行，是则复用
+            if port == PROXY_PORT and _is_mitmproxy_port(port):
+                ok(f"端口 {port} ({name}) 已有 mitmproxy 运行中，将复用现有实例")
+                continue
             fail(f"端口 {port} ({name}) 被占用")
             if IS_WINDOWS:
                 print(f"    查看占用: {CYAN}netstat -ano | findstr :{port}{NC}")
@@ -381,6 +399,25 @@ def check_skills():
 # ============================================================
 
 mitm_process = None
+_mitm_stderr_lines: list[str] = []  # 收集 stderr 输出供降级日志使用
+
+
+def _drain_mitm_stderr(proc: subprocess.Popen):
+    """后台线程持续读取 mitmproxy stderr，防止管道缓冲区满导致进程阻塞。
+
+    同时把前 20 行存入 _mitm_stderr_lines 供启动失败时诊断。
+    """
+    global _mitm_stderr_lines
+    collected = []
+    try:
+        for line in iter(proc.stderr.readline, b""):
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if text:
+                collected.append(text)
+                if len(collected) <= 50:
+                    _mitm_stderr_lines.append(text)
+    except Exception:
+        pass
 
 
 def cleanup(signum=None, frame=None):
@@ -394,6 +431,29 @@ def cleanup(signum=None, frame=None):
             mitm_process.kill()
     print(f"{GREEN}已退出{NC}")
     sys.exit(0)
+
+
+def _print_mitmproxy_diagnosis(exit_code: int | None, stderr_text: str):
+    """根据退出码和 stderr 输出给出具体诊断提示。"""
+    stderr_lower = stderr_text.lower() if stderr_text else ""
+
+    if "address already in use" in stderr_lower or "errno 98" in stderr_lower:
+        warn("  诊断: 端口被占用 — 请检查是否有残留的 mitmdump 进程")
+        warn(f"    查找: {CYAN}{'tasklist | findstr mitmdump' if IS_WINDOWS else 'pgrep -af mitmdump'}{NC}")
+    elif "no module named" in stderr_lower or "importerror" in stderr_lower:
+        warn("  诊断: mitmproxy 依赖缺失 — 请重新安装")
+        warn(f"    安装: {CYAN}{sys.executable} -m pip install --force-reinstall mitmproxy{NC}")
+    elif "permission denied" in stderr_lower or "errno 13" in stderr_lower:
+        warn("  诊断: 权限不足 — 请以管理员身份运行或更换端口")
+        warn(f"    更换端口: {CYAN}set PROXY_PORT=18081{NC}")
+    elif "cert" in stderr_lower or "ca" in stderr_lower:
+        warn("  诊断: CA 证书问题 — 首次使用需安装 mitmproxy 证书")
+        warn(f"    安装证书: {CYAN}mitmdump --certs{NC} 然后手动信任 ~/.mitmproxy/mitmproxy-ca-cert.pem")
+    elif exit_code == 1 and not stderr_text:
+        warn("  诊断: mitmproxy 静默退出（可能是 addon 脚本加载失败）")
+        warn(f"    手动调试: {CYAN}mitmdump -s mcp_servers/mitm_addon.py -p {PROXY_PORT}{NC}")
+    elif exit_code is not None and exit_code < 0:
+        warn(f"  诊断: mitmproxy 被信号 {-exit_code} 终止 — 可能被系统或杀毒软件拦截")
 
 
 def start_mitmproxy():
@@ -414,6 +474,7 @@ def start_mitmproxy():
         mitmdump_path = None
         candidates = [
             Path(sys.executable).parent / "mitmdump",  # 普通 Python: bin/python + bin/mitmdump
+            Path(sys.executable).parent / "Scripts" / "mitmdump.exe",  # Windows venv
             # macOS Python.framework: ../../../bin/mitmdump
             Path(sys.executable).parent.parent.parent.parent / "bin" / "mitmdump",
             # 通用 sysconfig
@@ -423,18 +484,31 @@ def start_mitmproxy():
             scripts_dir = sysconfig.get_path("scripts")
             if scripts_dir:
                 candidates.append(Path(scripts_dir) / "mitmdump")
+                # Windows 上 sysconfig 返回的 scripts_dir 下是 mitmdump.exe
+                if IS_WINDOWS:
+                    candidates.append(Path(scripts_dir) / "mitmdump.exe")
         except Exception:
             pass
+
+        # ★ conda 环境：conda 的 Scripts 目录
+        conda_prefix = os.getenv("CONDA_PREFIX")
+        if conda_prefix:
+            candidates.append(Path(conda_prefix) / "Scripts" / "mitmdump.exe" if IS_WINDOWS else Path(conda_prefix) / "bin" / "mitmdump")
+
+        # ★ 用户级 pip 安装：~/.local/bin
+        candidates.append(Path.home() / ".local" / "bin" / "mitmdump")
 
         for cand in candidates:
             if cand and cand.exists():
                 mitmdump_path = cand
                 break
 
+        addon_path = PROJECT_DIR / "mcp_servers" / "mitm_addon.py"
+
         if mitmdump_path:
             mitm_cmd = [
                 str(mitmdump_path),
-                "-s", str(PROJECT_DIR / "mcp_servers" / "mitm_addon.py"),
+                "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
@@ -443,7 +517,7 @@ def start_mitmproxy():
         elif shutil.which("mitmdump"):
             mitm_cmd = [
                 "mitmdump",
-                "-s", str(PROJECT_DIR / "mcp_servers" / "mitm_addon.py"),
+                "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
@@ -451,64 +525,88 @@ def start_mitmproxy():
             ]
         else:
             # 最后兜底：用 python 调用 mitmdump 入口函数
+            # 先验证 mitmproxy 包是否已安装
+            try:
+                importlib.import_module("mitmproxy")
+            except ImportError:
+                warn("mitmproxy 未安装，将以直连模式运行（无流量抓包）")
+                warn(f"  安装命令: {CYAN}{sys.executable} -m pip install mitmproxy{NC}")
+                return
             mitm_cmd = [
                 sys.executable, "-c",
                 "from mitmproxy.tools.main import mitmdump; mitmdump()",
-                "-s", str(PROJECT_DIR / "mcp_servers" / "mitm_addon.py"),
+                "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
                 "--quiet",
             ]
 
-        # ★ stderr 暂存到 PIPE（启动失败时可读取错误），stdout 丢弃
+        # ★ 检查 addon 脚本是否存在
+        if not addon_path.exists():
+            warn(f"mitmproxy addon 脚本不存在: {addon_path}")
+            warn("流量记录功能将不可用，但代理本身仍可运行")
+
+        # ★ stderr 暂存到 PIPE + 后台线程持续读取（防管道缓冲区满导致进程阻塞）
         kwargs = {"env": env, "stderr": subprocess.PIPE, "stdout": subprocess.DEVNULL}
         if IS_WINDOWS:
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
         mitm_process = subprocess.Popen(mitm_cmd, **kwargs)
 
-        # ★ 用健康检查轮询替代固定 sleep，最多等 15 秒
-        import urllib.request
+        # ★ 启动 stderr 消费线程，防止管道满阻塞 mitmproxy 进程
+        _drain_thread = threading.Thread(
+            target=_drain_mitm_stderr, args=(mitm_process,), daemon=True
+        )
+        _drain_thread.start()
+
+        # ★ 健康检查轮询：最多等 30 秒（30 次，每次 sleep 1s）
+        # 仅检测端口监听 + 进程存活，不依赖外部网络（如 httpbin.org），避免因外网波动误判；
+        # 代理实际转发能力将在浏览器/爬虫使用时验证，
+        # 若代理不可用，由 core/crawler/crawler_core.py 的降级逻辑处理（自动切换直连模式）。
         proxy_ok = False
-        for attempt in range(15):
+        for attempt in range(30):
             # 进程已退出
             if mitm_process.poll() is not None:
                 break
             time.sleep(1)
-            # 检测端口是否开始监听
-            if not is_port_in_use(PROXY_PORT):
-                continue
-            # 端口已监听，验证代理实际可用
-            try:
-                proxy_handler = urllib.request.ProxyHandler({
-                    "http": f"http://127.0.0.1:{PROXY_PORT}"
-                })
-                opener = urllib.request.build_opener(proxy_handler)
-                opener.open("http://httpbin.org/get", timeout=5)
+            # 检测端口是否开始监听（TCP 连接成功即代表 mitmproxy 已就绪接受请求）
+            if is_port_in_use(PROXY_PORT):
                 proxy_ok = True
                 break
-            except Exception:
-                # 端口已开但代理还没就绪，继续等
-                continue
 
         if proxy_ok:
             ok(f"mitmproxy 已启动并验证可用 (PID: {mitm_process.pid}, 端口: {PROXY_PORT})")
         elif mitm_process.poll() is None:
             warn(f"mitmproxy 进程在运行 (PID: {mitm_process.pid})，但代理端口 {PROXY_PORT} 未就绪")
             warn("浏览器可能无法走代理，流量抓包功能可能不可用")
+            warn("后续将由 core/crawler/crawler_core.py 的降级逻辑处理（自动切换直连模式）")
+            # ★ 输出 stderr 前 5 行帮助诊断
+            if _mitm_stderr_lines:
+                warn(f"mitmproxy stderr (前 5 行):")
+                for line in _mitm_stderr_lines[:5]:
+                    print(f"    {line}")
         else:
             # 读取 stderr 看失败原因
-            stderr_out = ""
-            try:
-                stderr_out = mitm_process.stderr.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                pass
-            warn(f"mitmproxy 启动失败，将以直连模式运行（无流量抓包）")
+            stderr_out = "\n".join(_mitm_stderr_lines[:10]) if _mitm_stderr_lines else ""
+            warn(f"mitmproxy 启动失败（退出码 {mitm_process.returncode}），将以直连模式运行（无流量抓包）")
             if stderr_out:
-                warn(f"mitmproxy 错误: {stderr_out}")
+                warn(f"mitmproxy 错误日志:")
+                for line in stderr_out.split("\n"):
+                    print(f"    {line}")
+            # ★ 诊断提示
+            _print_mitmproxy_diagnosis(mitm_process.returncode, stderr_out)
+    except FileNotFoundError as e:
+        warn(f"mitmproxy 启动失败: mitmdump 可执行文件未找到 — {e}")
+        warn("将以直连模式运行（无流量抓包）")
+        warn(f"  安装命令: {CYAN}{sys.executable} -m pip install mitmproxy{NC}")
+    except PermissionError as e:
+        warn(f"mitmproxy 启动失败: 权限不足 — {e}")
+        if IS_WINDOWS:
+            warn("  请尝试以管理员身份运行，或更换端口号 (set PROXY_PORT=18081)")
+        warn("将以直连模式运行（无流量抓包）")
     except Exception as e:
-        warn(f"mitmproxy 启动失败: {e}")
+        warn(f"mitmproxy 启动失败: {type(e).__name__}: {e}")
         warn("将以直连模式运行（无流量抓包）")
 
 
@@ -527,6 +625,8 @@ def start_mitmproxy_production():
     if not addon_path.exists():
         addon_path = bundle_dir / "mcp_servers" / "mitm_addon.py"
 
+    _mitm_exc: list[str] = []
+
     def _run_mitm():
         try:
             from mitmproxy.tools.main import mitmdump
@@ -537,15 +637,19 @@ def start_mitmproxy_production():
                 "--set", "connection_strategy=lazy",
                 "--quiet",
             ])
+        except ImportError as exc:
+            _mitm_exc.append(f"mitmproxy 包未安装: {exc}")
+            print(f"  {YELLOW}[!]{NC} mitmproxy 包未安装: {exc}")
         except Exception as exc:
+            _mitm_exc.append(f"mitmproxy 运行异常: {exc}")
             print(f"  {YELLOW}[!]{NC} mitmproxy 运行异常: {exc}")
 
     t = threading.Thread(target=_run_mitm, daemon=True)
     t.start()
 
-    # ★ 健康检查轮询替代固定 sleep，最多等 15 秒
+    # ★ 健康检查轮询替代固定 sleep，最多等 20 秒（原 15 秒在慢速机器上不够）
     proxy_ready = False
-    for _ in range(15):
+    for _ in range(20):
         time.sleep(1)
         if is_port_in_use(PROXY_PORT):
             proxy_ready = True
@@ -554,7 +658,10 @@ def start_mitmproxy_production():
     if proxy_ready:
         ok(f"mitmproxy 已启动 (端口: {PROXY_PORT})")
     else:
-        warn("mitmproxy 可能未正常启动（15秒内端口未就绪），将以直连模式运行")
+        warn("mitmproxy 可能未正常启动（20秒内端口未就绪），将以直连模式运行")
+        if _mitm_exc:
+            warn(f"mitmproxy 异常原因: {_mitm_exc[0]}")
+        warn("流量记录将依赖 Playwright 降级写入（flows.jsonl 可能不完整）")
 
 
 def start_web():

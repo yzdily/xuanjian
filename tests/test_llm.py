@@ -20,6 +20,15 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+@pytest.fixture(autouse=True)
+def _clear_response_cache():
+    """每个测试前清空全局 LLM 响应缓存，避免测试间状态泄漏。"""
+    from core.llm import _response_cache
+    _response_cache.clear()
+    yield
+    _response_cache.clear()
+
+
 class TestMessage:
     def test_basic_message(self):
         from core.llm import Message
@@ -249,33 +258,28 @@ class TestLLMMonitor:
 
 
 class TestLoadLLMConfigs:
-    def test_load_from_env(self):
+    def test_load_from_env(self, tmp_path, monkeypatch):
         """从环境变量加载配置。"""
         from core.llm import load_llm_configs, LLMConfig
-        tmpdir = tempfile.mkdtemp()
-        runtime_path = Path(tmpdir) / "llm_configs.json"
+
+        # 隔离：重定向 runtime json 到不存在的临时路径，强制走 .env 分支
+        monkeypatch.chdir(tmp_path)
 
         env_vars = {
             "LLM_1_PROVIDER": "openai",
             "LLM_1_BASE_URL": "https://api.test.com/v1",
-            "LLM_1_API_KEY": "sk-test",
+            "LLM_1_API_KEY": "sk-test-key-abcdef",
             "LLM_1_MODEL": "test-model",
+            "LLM_1_NAME": "llm_1",
         }
         with patch.dict(os.environ, env_vars, clear=False):
-            with patch("core.llm.Path") as mock_path:
-                # 模拟 runtime json 不存在
-                mock_runtime = MagicMock()
-                mock_runtime.exists.return_value = False
-                # 这个测试比较复杂，简化为验证 LLMConfig 结构
-                cfg = LLMConfig(
-                    provider="openai",
-                    base_url="https://api.test.com/v1",
-                    api_key="sk-test",
-                    model="test-model",
-                    name="llm_1",
-                )
-                assert cfg.provider == "openai"
-                assert cfg.model == "test-model"
+            configs = load_llm_configs()
+            # 找到 LLM_1_NAME 对应的配置（避免被其他系统配置干扰）
+            cfg = next((c for c in configs if c.name == "llm_1"), None)
+            assert cfg is not None, f"未找到 llm_1 配置，实际配置: {[c.name for c in configs]}"
+            assert cfg.provider == "openai"
+            assert cfg.model == "test-model"
+            assert cfg.api_key == "sk-test-key-abcdef"
 
 
 class TestLLMResponseCache:
@@ -324,8 +328,9 @@ class TestLLMResponseCache:
         resp = Message(role="assistant", content="world")
         cache.put(msgs, "m", None, 0.2, 4096, resp)
 
-        time.sleep(0.15)
-        result = cache.get(msgs, "m", None, 0.2, 4096)
+        # 模拟时间流逝，不实际 sleep
+        with patch("core.llm.time.time", return_value=time.time() + 1):
+            result = cache.get(msgs, "m", None, 0.2, 4096)
         assert result is None  # TTL 过期
 
     def test_cache_lru_eviction(self):
@@ -524,7 +529,6 @@ class TestLLMClientChatWithCache:
     def test_cache_hit_skips_api(self):
         """缓存命中时不调用真实 API。"""
         from core.llm import LLMClient, LLMConfig, Message, _response_cache
-        _response_cache.clear()
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")
@@ -541,8 +545,7 @@ class TestLLMClientChatWithCache:
 
     def test_cache_disabled_calls_api(self):
         """use_cache=False 时跳过缓存，调用 mock API。"""
-        from core.llm import LLMClient, LLMConfig, Message, _response_cache
-        _response_cache.clear()
+        from core.llm import LLMClient, LLMConfig, Message
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")
@@ -764,8 +767,7 @@ class TestChatPrecheck:
 
     def test_precheck_raises_on_oversized_input(self):
         """输入 token 超限时抛出 ContextLimitError。"""
-        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError, _response_cache
-        _response_cache.clear()
+        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")
@@ -784,8 +786,7 @@ class TestChatPrecheck:
 
     def test_precheck_passes_small_input(self):
         """输入 token 未超限时正常调用 API。"""
-        from core.llm import LLMClient, LLMConfig, Message, _response_cache
-        _response_cache.clear()
+        from core.llm import LLMClient, LLMConfig, Message
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")
@@ -800,7 +801,6 @@ class TestChatPrecheck:
     def test_precheck_skipped_on_cache_hit(self):
         """缓存命中时跳过预检（不调 API，无需检查超限）。"""
         from core.llm import LLMClient, LLMConfig, Message, _response_cache
-        _response_cache.clear()
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")
@@ -818,8 +818,7 @@ class TestChatPrecheck:
 
     def test_context_limit_error_not_retryable(self):
         """ContextLimitError 不应触发重试（不可重试错误）。"""
-        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError, _response_cache
-        _response_cache.clear()
+        from core.llm import LLMClient, LLMConfig, Message, ContextLimitError
 
         cfg = LLMConfig(provider="openai", base_url="https://api.test.com/v1",
                         api_key="sk-test", model="test-model", name="test")

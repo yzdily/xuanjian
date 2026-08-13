@@ -32,10 +32,10 @@ class TestLogger:
 
 
 class TestContext:
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _clear_ctx(self):
         clear_context()
-
-    def teardown_method(self):
+        yield
         clear_context()
 
     def test_bind_and_get(self):
@@ -62,8 +62,10 @@ class TestContext:
 
 
 class TestMetrics:
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _metrics(self):
         self.m = Metrics()
+        yield
 
     def test_inc(self):
         self.m.inc("pages_crawled")
@@ -77,10 +79,13 @@ class TestMetrics:
         snap = self.m.snapshot()
         assert snap["gauge.active_workers"] == 3
 
-    def test_mark_start_and_elapsed(self):
+    def test_mark_start_and_elapsed(self, monkeypatch):
+        """用可控时钟验证 mark_start / elapsed_sec，避免真实 sleep 导致的时序抖动。"""
+        fake_clock = [100.0]
+        monkeypatch.setattr("core.log.time.time", lambda: fake_clock[0])
         self.m.mark_start()
-        time.sleep(0.05)
-        assert self.m.elapsed_sec >= 0.04
+        fake_clock[0] = 100.5  # 前进 0.5 秒
+        assert self.m.elapsed_sec == pytest.approx(0.5, abs=1e-6)
 
     def test_elapsed_before_start(self):
         assert self.m.elapsed_sec == 0.0
@@ -106,7 +111,10 @@ class TestMetrics:
 class TestGlobalMetrics:
     """测试全局 metrics 单例。"""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _reset_metrics(self):
+        metrics.reset()
+        yield
         metrics.reset()
 
     def test_global_inc(self):

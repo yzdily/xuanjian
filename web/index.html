@@ -1341,6 +1341,7 @@
             <button class="btn btn-success" onclick="scanAllTargets()">🚀 批量扫描</button>
             <button class="btn btn-danger" onclick="clearAllTargets()">🗑️ 清空目标</button>
             <button class="btn btn-primary" onclick="openAddTargetModal()">➕ 添加目标</button>
+            <button class="btn" style="background:var(--accent-indigo);color:#fff;" onclick="openCredentialInjectionModal()">🔑 凭证注入</button>
           </div>
         </div>
 
@@ -1663,6 +1664,7 @@
             <option value="none">无需认证</option>
             <option value="cookie">Cookie</option>
             <option value="basic">账号密码</option>
+            <option value="auto_login">自动登录注入</option>
           </select>
         </div>
       </div>
@@ -1791,6 +1793,102 @@
       <span id="batchMsg" style="font-size:12px;margin-right:auto;color:var(--text-muted);"></span>
       <button class="btn" onclick="closeModal('batchTargetModal')">取消</button>
       <button class="btn btn-primary" onclick="submitBatchTargets()">确认批量添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- 凭证注入弹窗 -->
+<div class="modal-overlay" id="credentialInjectionModal">
+  <div class="modal" style="width:680px;">
+    <div class="modal-header">
+      <h3>🔑 手动登录凭证注入</h3>
+      <button class="btn btn-icon" onclick="closeCredentialInjection()">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- 配置区 -->
+      <div id="credInjectConfig">
+        <div class="form-group">
+          <label>目标 URL *</label>
+          <input type="text" class="form-control" id="ciTargetUrl" placeholder="https://example.com">
+        </div>
+        <div class="form-group">
+          <label>登录页 URL (可选，留空自动检测)</label>
+          <input type="text" class="form-control" id="ciLoginUrl" placeholder="https://example.com/login">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>用户名 *</label>
+            <input type="text" class="form-control" id="ciUsername" placeholder="admin">
+          </div>
+          <div class="form-group">
+            <label>密码 *</label>
+            <input type="password" class="form-control" id="ciPassword" placeholder="password">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>浏览器模式</label>
+            <select class="form-control" id="ciHeadless">
+              <option value="false" selected>有头模式 (可手动处理验证码)</option>
+              <option value="true">无头模式 (后台运行)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>手动登录超时 (秒)</label>
+            <input type="number" class="form-control" id="ciTimeout" value="180" min="30" max="600">
+          </div>
+        </div>
+      </div>
+
+      <!-- 进度显示区 -->
+      <div id="credInjectProgress" style="display:none;">
+        <div style="max-height:280px;overflow-y:auto;background:var(--bg-darker);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px;font-family:monospace;" id="ciLogArea">
+        </div>
+        <div id="ciCaptchaHint" style="display:none;padding:10px 14px;background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:8px;margin-bottom:12px;">
+          <span style="color:#ffc107;font-weight:600;">⚠️ 需要手动操作</span>
+          <span id="ciCaptchaText" style="margin-left:8px;font-size:13px;"></span>
+        </div>
+      </div>
+
+      <!-- 凭证展示区 -->
+      <div id="credInjectResult" style="display:none;">
+        <div style="padding:10px 14px;background:rgba(76,175,80,0.1);border:1px solid rgba(76,175,80,0.3);border-radius:8px;margin-bottom:12px;">
+          <span style="color:#4caf50;font-weight:600;">✅ 凭证捕获成功</span>
+          <span id="ciResultSummary" style="margin-left:8px;font-size:13px;"></span>
+        </div>
+        <div class="form-group">
+          <label>捕获的 Cookie</label>
+          <textarea class="form-control" id="ciCookieOutput" rows="3" readonly style="font-family:monospace;font-size:12px;"></textarea>
+        </div>
+        <div class="form-group" id="ciTokenGroup" style="display:none;">
+          <label>Authorization 头</label>
+          <input type="text" class="form-control" id="ciAuthOutput" readonly style="font-family:monospace;font-size:12px;">
+        </div>
+        <div class="form-group">
+          <label>登录后页面 URL</label>
+          <input type="text" class="form-control" id="ciFinalUrl" readonly style="font-size:12px;">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>扫描策略</label>
+            <select class="form-control" id="ciScanStrategy">
+              <option value="quick">快速扫描</option>
+              <option value="standard" selected>标准扫描</option>
+              <option value="deep">深度扫描</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>备注 (可选)</label>
+            <input type="text" class="form-control" id="ciNotes" placeholder="如：测试账号权限">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeCredentialInjection()">关闭</button>
+      <button class="btn" id="ciCancelBtn" style="display:none;border-color:#f44336;color:#f44336;" onclick="cancelCredentialInjection()">取消登录</button>
+      <button class="btn btn-primary" id="ciStartBtn" onclick="startCredentialInjection()">开始登录</button>
+      <button class="btn btn-primary" id="ciScanBtn" style="display:none;" onclick="startScanWithInjectedCredentials()">使用凭证开始扫描</button>
     </div>
   </div>
 </div>
@@ -2503,7 +2601,16 @@ function openAddTargetModal() { openModal('addTargetModal'); }
 function onAuthChange() {
   const v = document.getElementById('targetAuth').value;
   document.getElementById('authCookieGroup').style.display = v === 'cookie' ? 'block' : 'none';
-  document.getElementById('authBasicGroup').style.display = v === 'basic' ? 'block' : 'none';
+  document.getElementById('authBasicGroup').style.display = (v === 'basic' || v === 'auto_login') ? 'block' : 'none';
+  // 自动登录注入时添加提示
+  const basicGroup = document.getElementById('authBasicGroup');
+  if (v === 'auto_login') {
+    basicGroup.querySelector('.form-group:first-child label').textContent = '用户名 *';
+    basicGroup.querySelector('.form-group:last-child label').textContent = '密码 *';
+  } else if (v === 'basic') {
+    basicGroup.querySelector('.form-group:first-child label').textContent = '用户名';
+    basicGroup.querySelector('.form-group:last-child label').textContent = '密码';
+  }
 }
 
 // ==================== 目标管理 ====================
@@ -2517,6 +2624,25 @@ function addTarget() {
   const password = document.getElementById('targetPassword').value;
   const headers = document.getElementById('targetHeaders').value.trim();
   const notes = document.getElementById('targetNotes').value.trim();
+
+  // ★ 自动登录注入：跳转到凭证注入弹窗
+  if (auth === 'auto_login') {
+    if (!username || !password) { toast('自动登录注入需要填写用户名和密码', 'error'); return; }
+    closeModal('addTargetModal');
+    openCredentialInjectionModal({
+      target_url: url,
+      username: username,
+      password: password,
+    });
+    // 传递扫描策略
+    setTimeout(() => {
+      const ciStrategy = document.getElementById('ciScanStrategy');
+      if (ciStrategy) ciStrategy.value = strategy;
+      const ciNotes = document.getElementById('ciNotes');
+      if (ciNotes && notes) ciNotes.value = notes;
+    }, 100);
+    return;
+  }
 
   let extraHeaders = {};
   if (headers) {
@@ -2547,6 +2673,282 @@ function clearTargetForm() {
   document.getElementById('targetHeaders').value = '';
   document.getElementById('targetNotes').value = '';
   onAuthChange();
+}
+
+// ==================== 凭证注入 ====================
+
+// 当前注入任务的 task_id（用于取消）
+let _ciTaskId = null;
+let _ciAbort = null;
+// 捕获的凭证数据
+let _ciCaptured = null;
+
+function openCredentialInjectionModal(prefill) {
+  // 重置状态
+  _ciCaptured = null;
+  _ciTaskId = null;
+  document.getElementById('credInjectConfig').style.display = 'block';
+  document.getElementById('credInjectProgress').style.display = 'none';
+  document.getElementById('credInjectResult').style.display = 'none';
+  document.getElementById('ciStartBtn').style.display = 'inline-flex';
+  document.getElementById('ciScanBtn').style.display = 'none';
+  document.getElementById('ciCancelBtn').style.display = 'none';
+  document.getElementById('ciLogArea').innerHTML = '';
+  document.getElementById('ciCaptchaHint').style.display = 'none';
+
+  // 预填数据（从添加目标弹窗传入）
+  if (prefill) {
+    if (prefill.target_url) document.getElementById('ciTargetUrl').value = prefill.target_url;
+    if (prefill.username) document.getElementById('ciUsername').value = prefill.username;
+    if (prefill.password) document.getElementById('ciPassword').value = prefill.password;
+    if (prefill.login_url) document.getElementById('ciLoginUrl').value = prefill.login_url;
+  }
+
+  document.getElementById('credentialInjectionModal').classList.add('show');
+}
+
+function closeCredentialInjection() {
+  // 如果正在登录，先取消
+  if (_ciAbort) {
+    cancelCredentialInjection();
+  }
+  document.getElementById('credentialInjectionModal').classList.remove('show');
+}
+
+function _ciLog(msg, type) {
+  const area = document.getElementById('ciLogArea');
+  const color = type === 'error' ? '#f44336' : type === 'warning' ? '#ffc107'
+    : type === 'success' ? '#4caf50' : type === 'captcha' ? '#ff9800' : 'var(--text-secondary)';
+  const time = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.style.color = color;
+  line.textContent = `[${time}] ${msg}`;
+  area.appendChild(line);
+  area.scrollTop = area.scrollHeight;
+}
+
+async function startCredentialInjection() {
+  const targetUrl = document.getElementById('ciTargetUrl').value.trim();
+  const username = document.getElementById('ciUsername').value.trim();
+  const password = document.getElementById('ciPassword').value;
+  const loginUrl = document.getElementById('ciLoginUrl').value.trim();
+  const headless = document.getElementById('ciHeadless').value === 'true';
+  const timeout = parseInt(document.getElementById('ciTimeout').value) || 180;
+
+  if (!targetUrl) { toast('请输入目标 URL', 'error'); return; }
+  if (!username) { toast('请输入用户名', 'error'); return; }
+  if (!password) { toast('请输入密码', 'error'); return; }
+
+  // 切换 UI 状态
+  document.getElementById('credInjectConfig').style.display = 'none';
+  document.getElementById('credInjectProgress').style.display = 'block';
+  document.getElementById('credInjectResult').style.display = 'none';
+  document.getElementById('ciStartBtn').style.display = 'none';
+  document.getElementById('ciCancelBtn').style.display = 'inline-flex';
+  document.getElementById('ciLogArea').innerHTML = '';
+  document.getElementById('ciCaptchaHint').style.display = 'none';
+
+  _ciLog('开始凭证注入流程...', 'status');
+  _ciLog(`目标: ${targetUrl}`, 'status');
+  if (loginUrl) _ciLog(`登录页: ${loginUrl}`, 'status');
+
+  _ciAbort = new AbortController();
+
+  try {
+    const resp = await fetch('/api/credential-injection/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_url: targetUrl, username, password, login_url: loginUrl, headless, timeout }),
+      signal: _ciAbort.signal,
+    });
+
+    if (!resp.ok || !resp.body) {
+      const msg = `请求失败: ${resp.status} ${resp.statusText}`;
+      _ciLog(msg, 'error');
+      toast(msg, 'error');
+      _ciOnError(msg);
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith(':')) continue;
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          _ciHandleEvent(event);
+        } catch (e) { /* ignore parse errors */ }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      _ciLog('用户取消了登录流程', 'warning');
+      _ciOnError('已取消');
+    } else {
+      _ciLog(`连接错误: ${e.message}`, 'error');
+      _ciOnError(e.message);
+    }
+  }
+}
+
+function _ciHandleEvent(event) {
+  const msg = event.message || '';
+  const type = event.type || 'status';
+  const data = event.data || {};
+
+  // 提取 task_id（用于取消操作）
+  if (event.task_id && !_ciTaskId) {
+    _ciTaskId = event.task_id;
+  }
+
+  // done 事件不记录日志
+  if (type === 'done') {
+    _ciAbort = null;
+    return;
+  }
+
+  _ciLog(msg, type);
+
+  // 验证码提示
+  if (type === 'captcha') {
+    const hint = document.getElementById('ciCaptchaHint');
+    const text = document.getElementById('ciCaptchaText');
+    hint.style.display = 'block';
+    text.textContent = msg + (data.manual ? ' — 请在浏览器窗口中操作' : '');
+  } else if (type !== 'done') {
+    document.getElementById('ciCaptchaHint').style.display = 'none';
+  }
+
+  if (type === 'error') {
+    _ciOnError(msg);
+  } else if (type === 'success') {
+    _ciOnSuccess(data);
+  }
+}
+
+function _ciOnError(msg) {
+  _ciAbort = null;
+  _ciTaskId = null;
+  document.getElementById('ciCancelBtn').style.display = 'none';
+  document.getElementById('ciStartBtn').style.display = 'inline-flex';
+  document.getElementById('ciStartBtn').textContent = '重新登录';
+  document.getElementById('credInjectConfig').style.display = 'block';
+  toast('凭证注入失败: ' + msg, 'error');
+}
+
+function _ciOnSuccess(data) {
+  _ciCaptured = data;
+
+  // 填充结果展示
+  document.getElementById('credInjectResult').style.display = 'block';
+  document.getElementById('ciCookieOutput').value = data.cookie_string || '(无 Cookie)';
+  
+  if (data.auth_header) {
+    document.getElementById('ciTokenGroup').style.display = 'block';
+    document.getElementById('ciAuthOutput').value = data.auth_header;
+  } else {
+    document.getElementById('ciTokenGroup').style.display = 'none';
+  }
+
+  document.getElementById('ciFinalUrl').value = data.final_url || '';
+
+  // 汇总信息
+  const parts = [];
+  if (data.cookies && data.cookies.length) parts.push(`Cookie: ${data.cookies.length} 个`);
+  if (data.local_storage && Object.keys(data.local_storage).length) parts.push(`Token: ${Object.keys(data.local_storage).length} 个`);
+  if (data.auth_header) parts.push('Auth 头: 已获取');
+  parts.push(`耗时: ${data.duration_seconds || 0}s`);
+  document.getElementById('ciResultSummary').textContent = parts.join(' | ');
+
+  // 切换按钮
+  document.getElementById('ciCancelBtn').style.display = 'none';
+  document.getElementById('ciStartBtn').style.display = 'none';
+  document.getElementById('ciScanBtn').style.display = 'inline-flex';
+
+  toast('凭证捕获成功！可以开始扫描了', 'success');
+}
+
+async function cancelCredentialInjection() {
+  if (_ciTaskId) {
+    try {
+      await fetch('/api/credential-injection/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: _ciTaskId }),
+      });
+    } catch (e) { /* ignore */ }
+  }
+  if (_ciAbort) {
+    _ciAbort.abort();
+    _ciAbort = null;
+  }
+  _ciTaskId = null;
+  document.getElementById('ciCancelBtn').style.display = 'none';
+  document.getElementById('ciStartBtn').style.display = 'inline-flex';
+  document.getElementById('ciStartBtn').textContent = '重新登录';
+}
+
+async function startScanWithInjectedCredentials() {
+  if (!_ciCaptured || !_ciCaptured.success) {
+    toast('没有可用的凭证，请先完成登录', 'error');
+    return;
+  }
+
+  const targetUrl = document.getElementById('ciTargetUrl').value.trim();
+  const strategy = document.getElementById('ciScanStrategy').value;
+  const notes = document.getElementById('ciNotes').value.trim();
+
+  // 构造目标对象
+  const target = {
+    id: 'target_' + Date.now(),
+    url: targetUrl,
+    strategy: strategy,
+    auth: 'cookie',
+    cookie: _ciCaptured.cookie_string || '',
+    username: '',
+    password: '',
+    headers: {},
+    notes: notes || '凭证注入登录',
+    status: 'idle',
+    createdAt: new Date().toISOString(),
+    taskId: null,
+    // 额外保存注入的 auth_header 和 local_storage
+    _injectedAuth: _ciCaptured.auth_header || '',
+    _injectedLocalStorage: _ciCaptured.local_storage || {},
+  };
+
+  // 合并凭证到 headers：Authorization 头 + localStorage Token
+  // 后端 jwt_headers_to_local_storage() 会从 extra_headers 中提取 token 并注入 localStorage
+  if (_ciCaptured.auth_header) {
+    target.headers['Authorization'] = _ciCaptured.auth_header;
+  }
+  // 将 localStorage 中的 token 也作为 header 传递（后端会自动识别并注入 localStorage）
+  if (_ciCaptured.local_storage) {
+    for (const [key, val] of Object.entries(_ciCaptured.local_storage)) {
+      // 避免覆盖已有的 header
+      if (!target.headers[key]) {
+        target.headers[key] = val;
+      }
+    }
+  }
+
+  _targets.unshift(target);
+  saveTargets();
+  closeModal('credentialInjectionModal');
+  toast('目标已添加，正在启动扫描...', 'success');
+  renderTargets();
+
+  // 直接启动扫描
+  await startScanForTarget(target);
 }
 
 function saveTargets() {
@@ -2970,6 +3372,10 @@ async function startScanForTarget(target) {
   }
   if (target.headers && Object.keys(target.headers).length) {
     message += '\n额外请求头: ' + JSON.stringify(target.headers);
+  }
+  // ★ 凭证注入：传递 localStorage Token（SPA/JWT 场景）
+  if (target._injectedLocalStorage && Object.keys(target._injectedLocalStorage).length) {
+    message += '\nlocalStorage: ' + JSON.stringify(target._injectedLocalStorage);
   }
 
   // ★ 维度分离：前端只暴露 3 个深度选项，后端自动映射为 batch 执行策略

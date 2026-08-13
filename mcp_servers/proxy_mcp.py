@@ -151,9 +151,11 @@ def _persist_flow_to_file(flow: FlowRecord) -> None:
 
 MITM_ADDON_CODE = '''
 """mitmproxy addon：记录流量到共享文件（由 proxy_mcp 读取）。"""
-import json, time, uuid, os, gzip, zlib
+import json, time, uuid, os, gzip, zlib, tempfile
+from pathlib import Path
 
-FLOW_FILE = os.getenv("PROXY_FLOW_FILE", "/tmp/pentest_agent_flows.jsonl")
+_DEFAULT_FLOW_FILE = str(Path(tempfile.gettempdir()) / "pentest_agent_flows.jsonl")
+FLOW_FILE = os.getenv("PROXY_FLOW_FILE", _DEFAULT_FLOW_FILE)
 
 def _get_response_body(flow):
     """安全提取响应体：先解压 gzip/deflate，再解码文本。"""
@@ -207,7 +209,9 @@ _last_read_pos = 0  # 文件读取偏移量
 def _load_new_flows():
     """从 mitmproxy 的共享文件加载新流量（增量读取，不清空文件）。"""
     global _last_read_pos
-    flow_file = os.getenv("PROXY_FLOW_FILE", "/tmp/pentest_agent_flows.jsonl")
+    import tempfile
+    _default_flow = str(Path(tempfile.gettempdir()) / "pentest_agent_flows.jsonl")
+    flow_file = os.getenv("PROXY_FLOW_FILE", _default_flow)
     if not os.path.exists(flow_file):
         return
     try:

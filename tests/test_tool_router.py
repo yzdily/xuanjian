@@ -5,7 +5,7 @@
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import sys
 from pathlib import Path
@@ -120,3 +120,33 @@ class TestToolRouterLazyImport:
         router = ToolRouter()
         assert router._browser_mod is None
         assert router._proxy_mod is None
+
+    def test_lazy_import_caches_module(self):
+        """首次访问后应缓存模块，不再重复 import。"""
+        router = ToolRouter()
+        # 初始状态为 None
+        assert router._browser_mod is None
+        # 模拟 mcp_servers 包，避免触发真实 import
+        fake_pkg = MagicMock()
+        original = sys.modules.get("mcp_servers")
+        try:
+            sys.modules["mcp_servers"] = fake_pkg
+            # 首次 lazy_import：从 mock 包加载模块
+            assert hasattr(router, "_lazy_import")
+            router._lazy_import()
+            assert router._browser_mod is fake_pkg.browser_mcp
+            assert router._proxy_mod is fake_pkg.proxy_mcp
+            first_browser = router._browser_mod
+            # 替换 sys.modules 中的 mock；若再次 import 会得到不同的属性对象
+            fake_pkg2 = MagicMock()
+            sys.modules["mcp_servers"] = fake_pkg2
+            # 第二次调用：模块已缓存（_browser_mod is not None），不应重新 import
+            router._lazy_import()
+            # 缓存生效：仍是首次导入的对象
+            assert router._browser_mod is first_browser
+            assert router._browser_mod is not fake_pkg2.browser_mcp
+        finally:
+            if original is None:
+                sys.modules.pop("mcp_servers", None)
+            else:
+                sys.modules["mcp_servers"] = original

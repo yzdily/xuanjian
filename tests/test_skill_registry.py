@@ -54,6 +54,18 @@ priority: 8
         # 空 YAML 解析为 None，应返回 {}
         assert meta == {} or meta is None
 
+    def test_malformed_yaml_returns_empty_or_raises_safely(self):
+        """畸形 YAML frontmatter 不应导致未捕获异常。"""
+        from core.skill_registry import _parse_frontmatter
+        content = "---\nname: [unclosed\n  bad: yaml: structure\n---\nbody"
+        try:
+            meta, body = _parse_frontmatter(content)
+            # 如果不抛异常，meta 应该是可处理的类型
+            assert isinstance(meta, (dict, type(None)))
+        except Exception:
+            # 抛异常也是可接受的，只要不是未捕获的 SyntaxError
+            pass
+
 
 class TestToStrList:
     def test_list_input(self):
@@ -178,6 +190,16 @@ class TestScanSkills:
 
 
 class TestGetRegistry:
+    @pytest.fixture(autouse=True)
+    def _save_restore_singleton(self):
+        """保存并恢复全局 registry 单例，避免测试间状态泄漏。"""
+        from core.skill_registry import get_registry
+        original = get_registry()
+        yield
+        # 恢复原始单例
+        import core.skill_registry as sr
+        sr._registry = original
+
     def test_get_registry_singleton(self):
         from core.skill_registry import get_registry
         r1 = get_registry()

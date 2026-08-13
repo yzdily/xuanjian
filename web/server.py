@@ -14,6 +14,7 @@ Web Server — FastAPI 主入口（已拆分版）。
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 import sys
@@ -125,6 +126,7 @@ try:
     from web.api.auth_api import router as _auth_router
     from web.api.presets_api import router as _presets_router
     from web.api.dashboard_api import router as _dashboard_router
+    from web.api.credential_injection_api import router as _cred_inject_router
 
     app.include_router(_memory_router)
     app.include_router(_triggers_router)
@@ -139,18 +141,19 @@ try:
     app.include_router(_auth_router)
     app.include_router(_presets_router)
     app.include_router(_dashboard_router)
-    _startup_msgs.append("13 routers")
+    app.include_router(_cred_inject_router)
+    _startup_msgs.append("14 routers")
 except Exception as _ex:
     log.error("业务 router 挂载失败: %s", _ex, exc_info=True)
 
 
 # ============================================================
 # 认证模块：启动时初始化默认用户（admin/admin）
-# ★ 鉴权策略：
+# ★ 鉴权策略（v2 安全加固）：
 #   - 静态 HTML 页面与 /api/auth/* 完全免认证
-#   - 其它业务 API 采用「可选认证」：未登录也能访问（前端会拦截跳转登录）
-#     因此本服务不挂全局 401 拦截中间件，仅在 /api/auth/me 等显式需要身份的
-#     接口内调用 require_auth()。
+#   - 若配置了 XUANJIAN_API_KEY，则所有 /api/ 业务接口强制认证
+#     （Bearer Token 或 X-API-Key），消除"安全工具自身无认证"的矛盾
+#   - 若未配置 XUANJIAN_API_KEY，回退到可选认证模式（兼容本地开发）
 # ============================================================
 try:
     from core import auth as _auth
@@ -216,6 +219,10 @@ _AUTH_WHITELIST = {
 
 _API_KEY = os.getenv("XUANJIAN_API_KEY", "")
 
+# ★ SSE 连接数限制：防止过多 SSE 连接耗尽服务器资源
+_MAX_SSE_CONNECTIONS = int(os.getenv("XUANJIAN_MAX_SSE_CONNECTIONS", "10"))
+_sse_connection_count = 0
+
 
 @app.middleware("http")
 async def _auth_middleware(request: Request, call_next):
@@ -234,22 +241,30 @@ async def _auth_middleware(request: Request, call_next):
         if not token:
             token = request.query_params.get("api_key", "")
 
-        if _API_KEY and token == _API_KEY:
-            return await call_next(request)
-
-        if token:
-            from core import auth as _auth_mod
-            payload = _auth_mod.verify_token(token)
-            if payload:
-                request.state.user = payload.get("username", "unknown")
+        if _API_KEY:
+            # ★ 安全加固：配置了 API Key 时强制认证
+            if token and hmac.compare_digest(token, _API_KEY):
                 return await call_next(request)
 
-        return JSONResponse(
-            status_code=401,
-            content={"ok": False, "error": "请先登录或在请求头添加 X-API-Key", "code": "UNAUTHORIZED"},
-        )
+            if token:
+                from core import auth as _auth_mod
+                payload = _auth_mod.verify_token(token)
+                if payload:
+                    request.state.user = payload.get("username", "unknown")
+                    return await call_next(request)
 
-    return await call_next(request)
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": "请先登录或在请求头添加 X-API-Key", "code": "UNAUTHORIZED"},
+            )
+        else:
+            # 未配置 API Key：可选认证模式（兼容本地开发），有 token 则校验
+            if token:
+                from core import auth as _auth_mod
+                payload = _auth_mod.verify_token(token)
+                if payload:
+                    request.state.user = payload.get("username", "unknown")
+            return await call_next(request)
 
 
 # ============================================================
@@ -489,6 +504,16 @@ async def chat(request: Request):
     bg_task = asyncio.create_task(producer())
     session._bg_task = bg_task
 
+    # ★ SSE 连接数限制
+    global _sse_connection_count
+    if _sse_connection_count >= _MAX_SSE_CONNECTIONS:
+        return JSONResponse(
+            status_code=429,
+            content={"ok": False, "error": f"SSE 连接数已达上限 ({_MAX_SSE_CONNECTIONS})，请稍后重试", "code": "TOO_MANY_CONNECTIONS"},
+        )
+    _sse_connection_count += 1
+    log.info("[sse] 连接建立 (当前活跃: %d/%d)", _sse_connection_count, _MAX_SSE_CONNECTIONS)
+
     async def generate():
         """SSE 流：只是从 session 的事件队列中读取并推送给前端。断开不影响后台任务。"""
         try:
@@ -504,6 +529,10 @@ async def chat(request: Request):
                     yield ": heartbeat\n\n"
         except (GeneratorExit, asyncio.CancelledError):
             log.info("[sse:%s] 前端断开，后台任务继续运行 (done=%s)", task_id, bg_task.done())
+        finally:
+            global _sse_connection_count
+            _sse_connection_count -= 1
+            log.info("[sse] 连接关闭 (当前活跃: %d/%d)", _sse_connection_count, _MAX_SSE_CONNECTIONS)
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

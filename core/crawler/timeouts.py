@@ -56,7 +56,9 @@ NOISE_MAX_PAGE_DURATION_S = NOISE_PAGE_HARD_TIMEOUT_S  # 向后兼容保留旧�
 # ★ v4 新增：页面菜单循环的"进度静默"阈值
 # 30 秒内：captured 没增加 + clicked_count 没增加 + 没新 url → 判定卡死，break。
 # 该值用于 _crawl_page_inner 的菜单循环里。
-PAGE_PROGRESS_SILENCE_S = 30           # 30s 无任何进度 → 视为卡死
+# ★ 2026-08-13: 从 30s 提升到 45s，支持环境变量 PENTEST_PAGE_SILENCE_S 覆盖
+# 日志显示 60s 静默即判定爬完，但实际可能只是页面加载慢或 API 响应延迟
+PAGE_PROGRESS_SILENCE_S = int(os.environ.get("PENTEST_PAGE_SILENCE_S", "45"))
 PAGE_MENU_LOOP_HARD_S = 1800           # 30 分钟兜底（与 NOISE_PAGE_HARD_TIMEOUT_S 同步）
 
 

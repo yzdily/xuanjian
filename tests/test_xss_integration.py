@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import threading
+import pytest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -83,86 +84,121 @@ def start_server(port=18765):
     return server, port
 
 
-async def main():
-    server, port = start_server()
-    base = f"http://127.0.0.1:{port}"
-    print(f"✓ 测试 HTTP server 启动: {base}")
+import pytest
 
-    # 构造 mock sitemap
-    from core.sitemap import Sitemap, APIEndpoint
-    sm = Sitemap(target=base, task_id="xss_test")
-    # 注入几个 API（模拟 Phase 0 爬取结果）
-    sm.apis = {
-        f"GET {base}/search?q=hello": APIEndpoint(method="GET", url=f"{base}/search?q=hello"),
-        f"GET {base}/profile?name=user1": APIEndpoint(method="GET", url=f"{base}/profile?name=user1"),
-        f"GET {base}/jsdetail?id=1": APIEndpoint(method="GET", url=f"{base}/jsdetail?id=1"),
-        f"GET {base}/api/data?q=test": APIEndpoint(method="GET", url=f"{base}/api/data?q=test"),
-    }
 
-    # mock LLM client — 不真实调 LLM，直接 fake 一个 confirmed/false_positive 判定
-    class MockLLM:
-        def chat(self, messages, **kwargs):
-            class FakeResp:
-                content = '''```json
-{
-  "status": "confirmed",
-  "severity": "high",
+def test_xss_full_pipeline_integration(http_target):
+    """XSS 模块端到端集成测试 — 用本地 HTTP server 验证全链路。"""
+    asyncio_mod = asyncio
+
+    # 启动测试 HTTP 服务器
+    # http_target 是 conftest.py 中的工厂固件，返回 base_url
+    # 我们需要用自定义路由
+    import http.server
+    import threading
+
+    server_holder = {}
+
+    def _make_handler():
+        class Handler(XssTestHandler):
+            routes = {}
+        return Handler
+
+    port_holder = [0]
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _make_handler())
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    port_holder[0] = httpd.server_address[1]
+    base = f"http://127.0.0.1:{port_holder[0]}"
+
+    try:
+        # 构造 mock sitemap
+        from core.sitemap import Sitemap, APIEndpoint
+        sm = Sitemap(target=base, task_id="xss_test")
+        sm.apis = {
+            f"GET {base}/search?q=hello": APIEndpoint(method="GET", url=f"{base}/search?q=hello"),
+            f"GET {base}/profile?name=user1": APIEndpoint(method="GET", url=f"{base}/profile?name=user1"),
+            f"GET {base}/jsdetail?id=1": APIEndpoint(method="GET", url=f"{base}/jsdetail?id=1"),
+            f"GET {base}/api/data?q=test": APIEndpoint(method="GET", url=f"{base}/api/data?q=test"),
+        }
+
+        # mock LLM client — 对 /profile（已转义）返回 rejected，其他返回 confirmed
+        class MockLLM:
+            def chat(self, messages, **kwargs):
+                # 从 messages 中提取被研判的 URL
+                msg_text = " ".join(
+                    (m.get("content") or "") if isinstance(m, dict) else (m.content or "")
+                    for m in messages
+                )
+                is_profile = "/profile" in msg_text
+                status = "rejected" if is_profile else "confirmed"
+                severity = "info" if is_profile else "high"
+                class FakeResp:
+                    content = f'''```json
+{{
+  "status": "{status}",
+  "severity": "{severity}",
   "title": "反射型 XSS 测试",
   "description": "测试 LLM 研判流程",
-  "reasoning": "mock judge",
+  "reasoning": "mock judge — /profile 已转义应拒收",
   "confidence": 0.9,
   "reproduce_steps": "1. 访问 PoC URL\\n2. 触发 alert",
   "fix_suggestion": "HTML 实体编码"
-}
+}}
 ```'''
-            return FakeResp()
+                return FakeResp()
 
-    # 跑 XSS 扫描
-    from core.xss import XssScanner
-    scanner = XssScanner(
-        sitemap=sm,
-        llm=MockLLM(),
-        proxy="",  # 不走 mitmproxy
-        enable_param_mining=False,  # 节省时间
-        enable_browser_verify=False,  # 节省时间 — 全链路单测时不起浏览器
-        enable_dom_scan=False,
-        enable_llm_judge=True,
-        max_targets=20,
-    )
+        # 跑 XSS 扫描
+        from core.xss import XssScanner
+        scanner = XssScanner(
+            sitemap=sm,
+            llm=MockLLM(),
+            proxy="",
+            enable_param_mining=False,
+            enable_browser_verify=False,
+            enable_dom_scan=False,
+            enable_llm_judge=True,
+            max_targets=20,
+        )
 
-    print("\n=== 开始 XSS 扫描 ===")
+        done_received = False
+        event_count = 0
+        for evt in asyncio_mod.run(_collect_events(scanner)):
+            event_count += 1
+            if evt.get("type") == "xss_done":
+                done_received = True
+
+        assert event_count > 0, "应产生至少一个事件"
+        assert done_received, "应收到 xss_done 事件"
+
+        # 验证 /search 有 confirmed XSS
+        search_confirmed = sum(
+            1 for f in scanner.findings
+            if "/search" in f.candidate.target.url and f.status.value == "confirmed"
+        )
+        assert search_confirmed >= 1, f"/search 应有 confirmed XSS，实际 {search_confirmed}"
+
+        # 验证 /jsdetail 有 confirmed XSS
+        jsdetail_confirmed = sum(
+            1 for f in scanner.findings
+            if "/jsdetail" in f.candidate.target.url and f.status.value == "confirmed"
+        )
+        assert jsdetail_confirmed >= 1, f"/jsdetail 应有 confirmed XSS，实际 {jsdetail_confirmed}"
+
+        # 验证 /profile 无 confirmed XSS（已转义）
+        profile_confirmed = sum(
+            1 for f in scanner.findings
+            if "/profile" in f.candidate.target.url and f.status.value == "confirmed"
+        )
+        assert profile_confirmed == 0, f"/profile 不应有 confirmed XSS，实际 {profile_confirmed}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+async def _collect_events(scanner):
+    """收集 scanner.run() 的所有事件。"""
+    events = []
     async for evt in scanner.run():
-        msg = evt.get('data', '')
-        print(f"  [{evt['type']}] {msg[:200]}")
-
-    print(f"\n=== 扫描完成 ===")
-    print(f"findings 总数: {len(scanner.findings)}")
-    for f in scanner.findings:
-        d = f.to_dict()
-        print(f"\n[{d['status']}] {d.get('title','')}")
-        print(f"  URL: {d['url']}")
-        print(f"  Param: {d['param']}")
-        print(f"  Payload: {d['payload'][:80]}")
-        print(f"  Context: {d['echo_contexts']}")
-        print(f"  Confidence: {d['judge_confidence']:.2f}")
-
-    # 校验：/search 应该有 confirmed XSS，/profile 应该全部 false_positive，/api/data 也应该 fp
-    search_confirmed = sum(1 for f in scanner.findings
-                            if "/search" in f.candidate.target.url
-                            and f.status.value == "confirmed")
-    profile_findings = [f for f in scanner.findings if "/profile" in f.candidate.target.url]
-    jsdetail_confirmed = sum(1 for f in scanner.findings
-                              if "/jsdetail" in f.candidate.target.url
-                              and f.status.value == "confirmed")
-
-    print(f"\n=== 验证结果 ===")
-    print(f"  /search confirmed: {search_confirmed} 个 (期望 ≥1)")
-    print(f"  /profile findings: {len(profile_findings)} 个 (期望: 大部分应是 needs_review 或 false_positive)")
-    print(f"  /jsdetail confirmed: {jsdetail_confirmed} 个 (期望 ≥1)")
-
-    server.shutdown()
-    print("\n✅ 测试完成")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        events.append(evt)
+    return events

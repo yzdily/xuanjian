@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
 
-_DB_PATH = Path("data/scan_store.db")
+# ★ 安全加固：使用基于项目根目录的绝对路径，避免工作目录依赖
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DB_PATH = _PROJECT_ROOT / "data" / "scan_store.db"
+
+# ★ 并发写入保护：全局锁，序列化所有写操作
+_write_lock = threading.Lock()
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -71,6 +77,7 @@ def _init_db(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_vulns_task ON vulns(task_id);
         CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulns(severity);
+        CREATE INDEX IF NOT EXISTS idx_vulns_type ON vulns(vuln_type);
     """)
     conn.commit()
 
@@ -83,76 +90,77 @@ def upsert_scan(task_id: str, target: str, **kwargs) -> None:
     """插入或更新扫描记录。"""
     conn = _ensure_conn()
     now = time.time()
-
-    existing = conn.execute("SELECT 1 FROM scans WHERE task_id = ?", (task_id,)).fetchone()
-    if existing:
-        sets = ["updated_at = ?"]
-        vals = [now]
-        for k, v in kwargs.items():
-            if k == "metrics":
-                sets.append("metrics_json = ?")
-                vals.append(json.dumps(v, ensure_ascii=False))
-            else:
-                sets.append(f"{k} = ?")
-                vals.append(v)
-        vals.append(task_id)
-        conn.execute(f"UPDATE scans SET {', '.join(sets)} WHERE task_id = ?", vals)
-    else:
-        metrics_json = json.dumps(kwargs.pop("metrics", {}), ensure_ascii=False)
-        conn.execute(
-            """INSERT INTO scans (task_id, target, status, scan_mode, model, metrics_json, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, target, kwargs.get("status", "running"), kwargs.get("scan_mode", "batch"),
-             kwargs.get("model", ""), metrics_json, now, now),
-        )
-    conn.commit()
+    with _write_lock:
+        existing = conn.execute("SELECT 1 FROM scans WHERE task_id = ?", (task_id,)).fetchone()
+        if existing:
+            sets = ["updated_at = ?"]
+            vals = [now]
+            for k, v in kwargs.items():
+                if k == "metrics":
+                    sets.append("metrics_json = ?")
+                    vals.append(json.dumps(v, ensure_ascii=False))
+                else:
+                    sets.append(f"{k} = ?")
+                    vals.append(v)
+            vals.append(task_id)
+            conn.execute(f"UPDATE scans SET {', '.join(sets)} WHERE task_id = ?", vals)
+        else:
+            metrics_json = json.dumps(kwargs.pop("metrics", {}), ensure_ascii=False)
+            conn.execute(
+                """INSERT INTO scans (task_id, target, status, scan_mode, model, metrics_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, target, kwargs.get("status", "running"), kwargs.get("scan_mode", "batch"),
+                 kwargs.get("model", ""), metrics_json, now, now),
+            )
+        conn.commit()
 
 
 def finish_scan(task_id: str, metrics: dict | None = None) -> None:
     """标记扫描完成。"""
     conn = _ensure_conn()
     now = time.time()
-    if metrics:
-        conn.execute(
-            "UPDATE scans SET status = 'finished', finished_at = ?, metrics_json = ?, updated_at = ? WHERE task_id = ?",
-            (now, json.dumps(metrics, ensure_ascii=False), now, task_id),
-        )
-    else:
-        conn.execute(
-            "UPDATE scans SET status = 'finished', finished_at = ?, updated_at = ? WHERE task_id = ?",
-            (now, now, task_id),
-        )
-    conn.commit()
+    with _write_lock:
+        if metrics:
+            conn.execute(
+                "UPDATE scans SET status = 'finished', finished_at = ?, metrics_json = ?, updated_at = ? WHERE task_id = ?",
+                (now, json.dumps(metrics, ensure_ascii=False), now, task_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE scans SET status = 'finished', finished_at = ?, updated_at = ? WHERE task_id = ?",
+                (now, now, task_id),
+            )
+        conn.commit()
 
 
 def upsert_vuln(task_id: str, feature_id: str, vuln_type: str, **kwargs) -> None:
     """插入漏洞记录（自动去重：同 task_id + feature_id + vuln_type 只保留一条）。"""
     conn = _ensure_conn()
     now = time.time()
+    with _write_lock:
+        existing = conn.execute(
+            "SELECT id FROM vulns WHERE task_id = ? AND feature_id = ? AND vuln_type = ?",
+            (task_id, feature_id, vuln_type),
+        ).fetchone()
 
-    existing = conn.execute(
-        "SELECT id FROM vulns WHERE task_id = ? AND feature_id = ? AND vuln_type = ?",
-        (task_id, feature_id, vuln_type),
-    ).fetchone()
-
-    if existing:
-        sets = []
-        vals = []
-        for k, v in kwargs.items():
-            sets.append(f"{k} = ?")
-            vals.append(v)
-        if sets:
-            vals.append(existing["id"])
-            conn.execute(f"UPDATE vulns SET {', '.join(sets)} WHERE id = ?", vals)
-    else:
-        conn.execute(
-            """INSERT INTO vulns (task_id, feature_id, feature_name, vuln_type, severity, status, url, detail, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, feature_id, kwargs.get("feature_name", ""), vuln_type,
-             kwargs.get("severity", "medium"), kwargs.get("status", "confirmed"),
-             kwargs.get("url", ""), kwargs.get("detail", ""), now),
-        )
-    conn.commit()
+        if existing:
+            sets = []
+            vals = []
+            for k, v in kwargs.items():
+                sets.append(f"{k} = ?")
+                vals.append(v)
+            if sets:
+                vals.append(existing["id"])
+                conn.execute(f"UPDATE vulns SET {', '.join(sets)} WHERE id = ?", vals)
+        else:
+            conn.execute(
+                """INSERT INTO vulns (task_id, feature_id, feature_name, vuln_type, severity, status, url, detail, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, feature_id, kwargs.get("feature_name", ""), vuln_type,
+                 kwargs.get("severity", "medium"), kwargs.get("status", "confirmed"),
+                 kwargs.get("url", ""), kwargs.get("detail", ""), now),
+            )
+        conn.commit()
 
 
 def list_scans(limit: int = 50, status: str | None = None) -> list[dict]:

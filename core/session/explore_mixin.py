@@ -97,8 +97,8 @@ class ExplorePhaseMixin:
                         })
                         if self.sitemap:
                             self.sitemap.add_page(target_url, title=path)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("被动侦察探测 %s 失败: %s", path, e)
 
         # 2. dirsearch 风格目录/文件爆破（核心增强）
         dir_summary: dict = {
@@ -115,12 +115,22 @@ class ExplorePhaseMixin:
             # 认证头：目标不可达时通常无有效会话，best-effort 从已有属性提取
             auth_headers = getattr(self, "auth_headers", None) or {}
 
+            # ★ 技术栈感知：从 sitemap 读取技术栈，推断 SPA 标志
+            _dir_tech = getattr(self.sitemap, "tech_stack", "") or "" if self.sitemap else ""
+            _dir_is_spa = any(
+                kw in _dir_tech.lower()
+                for kw in ("react", "vue", "angular", "spa", "single page",
+                           "next.js", "nuxt", "svelte")
+            )
+
             def _on_progress(msg: str):
                 _log.info("[DirScan] %s", msg)
 
             scanner = DirectoryScanner(
                 max_workers=20, timeout=8.0,
                 recursive=True, max_depth=2,
+                tech_stack=_dir_tech,
+                is_spa=_dir_is_spa,
             )
             dir_result = await scanner.scan(
                 url, auth_headers=auth_headers, on_progress=_on_progress,

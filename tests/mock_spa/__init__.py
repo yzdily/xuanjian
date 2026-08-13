@@ -1,0 +1,1 @@
+# Mock SPA test environment

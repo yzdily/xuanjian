@@ -55,6 +55,7 @@ from .url_filter_mixin import UrlFilterMixin
 from .login_mixin import LoginMixin
 from .form_mixin import FormMixin
 from .result_builder_mixin import ResultBuilderMixin
+from .spa_mixin import SPAMixin
 from core.realtime_protocols import classify_realtime_flow, dedupe_realtime_channels, websocket_event
 
 
@@ -147,8 +148,12 @@ async def _write_flow_fallback(resp, url: str, content_type: str, captured: list
         flow_file.parent.mkdir(parents=True, exist_ok=True)
         with open(flow_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    except PermissionError as e:
+        log.warning("降级写入 flows.jsonl 失败（权限不足）: %s (路径=%s)", e, flow_file)
+    except OSError as e:
+        log.warning("降级写入 flows.jsonl 失败（IO错误）: %s (路径=%s)", e, flow_file)
+    except Exception as e:
+        log.debug("降级写入 flows.jsonl 失败: %s", e)
 
 
 # ============================================================
@@ -229,7 +234,7 @@ async def get_cdp_flows(target_url: str, timeout: int = 30) -> list[dict]:
     return flows
 
 
-class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuilderMixin):
+class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuilderMixin, SPAMixin):
     """系统性页面爬取器 — 三遍爬取法。"""
 
     def __init__(
@@ -272,6 +277,12 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
 
         # ★ SPA 检测：目标 URL 含 # 且 # 后有路径 → 视为 SPA hash 路由
         self._is_spa = "#/" in target or "#!" in target
+
+        # ★ SPA 增强检测结果（首次爬取后由 _detect_spa_enhanced 填充）
+        self._spa_info: dict[str, Any] = {}
+
+        # ★ 跨轮次认证态复用：手动浏览/登录后提取的认证态，注入到后续轮次
+        self._extracted_auth_state: dict[str, Any] | None = None
 
         self.rounds: list[CrawlRoundResult] = []
 
@@ -993,6 +1004,18 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
             except Exception as e:
                 self._report(f"  ⚠️ Header 注入失败: {e}")
 
+        # ★ 跨轮次认证态复用：如果前一轮手动浏览/登录提取了认证态，注入到当前轮
+        if not cookies_injected and self._extracted_auth_state:
+            try:
+                injected = await self._apply_auth_state_async(
+                    ctx, self._extracted_auth_state, self.target
+                )
+                if injected:
+                    cookies_injected = True
+                    self._report("  🔄 已复用前轮提取的认证态（Cookie/Header/localStorage）")
+            except Exception as e:
+                log.debug("跨轮次认证态注入失败: %s", e)
+
         page = await ctx.new_page()
 
         # 请求监听
@@ -1450,62 +1473,27 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                 except Exception as _e:
                     log.debug("localStorage 提取失败: %s", _e)
 
-                # 尝试从 SPA 框架提取所有前端路由（Vue Router / React Router）
-                # 同时检测路由模式（hash 或 history）
+                # ★ SPA 增强检测：框架指纹 + 路由提取 + 动态内容比例
+                # 替代原有内联 evaluate，使用 SPAMixin._detect_spa_enhanced
                 try:
-                    spa_info = await page.evaluate("""() => {
-                        const result = {routes: [], mode: 'hash'};
-                        try {
-                            // Vue 3
-                            const app = document.querySelector('#app');
-                            if (app && app.__vue_app__) {
-                                const router = app.__vue_app__.config.globalProperties.$router;
-                                if (router) {
-                                    result.routes = router.getRoutes().map(r => r.path).filter(p => p && p !== '/');
-                                    // 检测 history 模式：vue-router 4.x
-                                    const opt = router.options || {};
-                                    const hist = opt.history;
-                                    if (hist) {
-                                        // createWebHashHistory → base 含 #；createWebHistory → 不含
-                                        const histStr = String(hist.createCurrentLocation || hist.location || '');
-                                        if (location.hash && location.hash.startsWith('#/')) {
-                                            result.mode = 'hash';
-                                        } else {
-                                            result.mode = 'history';
-                                        }
-                                    }
-                                    return result;
-                                }
-                            }
-                            // Vue 2
-                            if (app && app.__vue__ && app.__vue__.$router) {
-                                const router = app.__vue__.$router;
-                                result.routes = router.options.routes.map(r => r.path).filter(p => p && p !== '/');
-                                result.mode = router.mode || (location.hash.startsWith('#/') ? 'hash' : 'history');
-                                return result;
-                            }
-                            // React Router (v6 没有公开 API，但 history 对象常被挂在 window)
-                            // 试着从 window.__REACT_ROUTER_HISTORY__ 或 window.history.state.routes 读取
-                            if (window.__reactRouterHistory__) {
-                                // 这个 API 不稳定，留空
-                            }
-                            // 兜底：根据当前 URL 判断模式
-                            result.mode = location.hash && location.hash.startsWith('#/') ? 'hash' : 'history';
-                        } catch(e) {}
-                        return result;
-                    }""")
-                    if spa_info and isinstance(spa_info, dict):
-                        spa_routes = spa_info.get("routes", []) or []
-                        # 根据检测到的模式覆盖 _is_spa（如果检测到 history 模式且有路由，强制设为非 hash 模式）
-                        detected_mode = spa_info.get("mode", "hash")
-                        if spa_routes and detected_mode == "history":
-                            self._is_spa = False  # history 模式不应该拼 #/
-                            self._report(f"  🗺️ 检测到 SPA history 模式")
-                    else:
-                        spa_routes = spa_info if isinstance(spa_info, list) else []
+                    spa_info = await self._detect_spa_enhanced(page)
+                    self._spa_info = spa_info  # 缓存供 BFS 后降级判定使用
+                    spa_routes = spa_info.get("spa_routes", []) or []
+                    detected_mode = spa_info.get("router_mode", "hash")
+                    framework = spa_info.get("framework", "")
+                    # 根据检测到的模式覆盖 _is_spa
+                    if spa_routes and detected_mode == "history":
+                        self._is_spa = False  # history 模式不应该拼 #/
+                        self._report(f"  🗺️ 检测到 SPA history 模式")
+                    if framework:
+                        self._report(
+                            f"  🗺️ SPA 框架: {framework}, 路由模式: {detected_mode}, "
+                            f"路由数: {len(spa_routes)}, 链接数: {spa_info.get('link_count', 0)}"
+                        )
                     if spa_routes:
                         self._report(f"  🗺️ 从 SPA Router 提取到 {len(spa_routes)} 个前端路由")
                 except Exception:
+                    spa_info = {}
                     spa_routes = []
 
             # 开始爬取
@@ -1604,6 +1592,41 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                             # 策略：把路径中的纯数字段替换为 {id} 作为模式，相同模式最多入队 3 次
                             if not self._is_duplicate_id_page(link, visited):
                                 to_visit.append(link)
+
+            # ★ SPA 降级：BFS 结束后若页面数过少且检测到 SPA → 手动浏览模式
+            # 手动浏览模式会在有头浏览器中提示用户操作，同时录制所有 API 请求
+            if not self._stop_requested and page_count < self.max_pages:
+                captured_api_count = len(result.api_endpoints)
+                if self._should_fallback_to_manual(page_count, self._spa_info, captured_api_count):
+                    import os as _os
+                    # 手动浏览只在有头浏览器中启用（headless 模式下跳过，仅做 JS 深度分析）
+                    _is_headless = _os.getenv("BROWSER_HEADLESS", "auto").lower()
+                    if _is_headless != "true":
+                        self._report(
+                            f"  🔄 SPA 降级: BFS 仅发现 {page_count} 页 / {captured_api_count} API, "
+                            f"启动手动浏览模式（请在浏览器中操作）"
+                        )
+                        try:
+                            manual_result = await self._manual_browse_session(page, captured)
+                            # 合并手动浏览发现的 API
+                            for api in manual_result.get("apis", []):
+                                key = f"{api.get('method', 'GET')} {api.get('url', '')}"
+                                if key not in result.api_endpoints:
+                                    result.api_endpoints[key] = api
+                            # 保存认证态供后续轮次复用
+                            if manual_result.get("auth_state"):
+                                self._extracted_auth_state = manual_result["auth_state"]
+                            self._report(
+                                f"  📼 手动浏览补充: {len(manual_result.get('apis', []))} API, "
+                                f"{manual_result.get('pages_visited', 0)} 页面"
+                            )
+                        except Exception as e:
+                            self._report(f"  ⚠️ 手动浏览模式失败: {e}")
+                    else:
+                        self._report(
+                            f"  ⚠️ SPA 降级条件满足（{page_count} 页）但当前为 headless 模式，"
+                            f"跳过手动浏览，将依赖 JS 深度分析"
+                        )
 
             # ★ ID 池回填：为带占位符的路径（如 /admin/user/{id}、/edit/:id 等）
             # 用真实 ID 拼出 URL 进入第二轮爬取

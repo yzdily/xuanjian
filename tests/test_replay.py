@@ -41,11 +41,11 @@ def isolated_replay(tmp_path, monkeypatch):
 
 
 def _mk_frame(run_id="run1", kind=FrameKind.DECISION, **kw):
+    kw.setdefault("timestamp", time.time())
     return ReplayFrame(
         frame_id=new_frame_id(),
         run_id=run_id,
         kind=kind,
-        timestamp=time.time(),
         **kw,
     )
 
@@ -105,8 +105,7 @@ class TestStore:
 
     def test_list_runs_sorted(self, isolated_replay):
         save_frame(_mk_frame(run_id="r1"))
-        time.sleep(0.01)
-        save_frame(_mk_frame(run_id="r2"))
+        save_frame(_mk_frame(run_id="r2", timestamp=time.time() + 1))
         runs = list_runs()
         assert len(runs) == 2
         # 按 ended_at 倒序

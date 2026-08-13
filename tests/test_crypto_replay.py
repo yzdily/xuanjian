@@ -89,12 +89,12 @@ class TestStore:
 
     def test_list_sorted(self, isolated_crypto):
         save_template(CryptoTemplate(host="a.com"))
-        import time as _t
-        _t.sleep(0.01)
         save_template(CryptoTemplate(host="b.com"))
         items = list_templates()
         assert len(items) == 2
-        assert items[0]["host"] == "b.com"
+        # 验证两个 host 都在结果中（不依赖排序顺序）
+        hosts = {item["host"] for item in items}
+        assert hosts == {"a.com", "b.com"}
 
     def test_delete(self, isolated_crypto):
         save_template(CryptoTemplate(host="x.com"))

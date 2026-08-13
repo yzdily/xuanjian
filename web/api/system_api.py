@@ -435,33 +435,6 @@ async def list_targets(status: str = "", keyword: str = "", limit: int = 0):
     return {"ok": True, "targets": items, "total": len(items)}
 
 
-@router.post("/api/targets/batch")
-async def batch_add_targets(request: Request):
-    """批量添加目标。
-
-    请求体：{"targets": [{"url": "http://1.1.1.1", "name": "目标1"}, ...]}
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "请求体必须是 JSON"})
-    items = body.get("targets")
-    if not isinstance(items, list) or not items:
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "error": "targets 字段必须是非空数组"},
-        )
-    added, skipped, errors = _add_targets_internal(items)
-    log.info("批量添加目标: 成功=%d 跳过=%d", added, skipped)
-    return {
-        "ok": True,
-        "added": added,
-        "skipped": skipped,
-        "errors": errors,
-        "message": f"成功添加 {added} 个目标，跳过 {skipped} 个",
-    }
-
-
 @router.post("/api/targets/csv")
 async def csv_upload_targets(file: UploadFile = File(...)):
     """CSV 上传：解析 CSV 中的 URL 列并批量入库。

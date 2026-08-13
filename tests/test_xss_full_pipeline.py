@@ -11,7 +11,6 @@ XSS 完整流水线端到端验证（13-step）。
 import asyncio
 import os
 import sys
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -42,7 +41,6 @@ def test_import_all_modules():
         TemplateInjectionScanner, build_template_probes,
         build_csti_xss_payloads,
     )  # noqa
-    print("[✓] 所有模块导入成功")
 
 
 def test_header_injection_generation():
@@ -71,7 +69,6 @@ def test_header_injection_generation():
     # 验证 Cookie 注入也被生成
     cookie_names = {t.param_name for t in targets if t.injection_point.value == "cookie"}
     assert "session" in cookie_names or "csrf" in cookie_names
-    print(f"[✓] Header 注入: 生成 {len(targets)} 个目标")
 
 
 def test_csp_parser():
@@ -84,13 +81,11 @@ def test_csp_parser():
     assert analysis.score < 5, f"应低分: {analysis.score}"
     assert len(analysis.bypass_paths) >= 2, f"应有多个 bypass: {analysis.bypass_paths}"
     assert "unsafe-inline" in str(analysis.bypass_paths).lower()
-    print(f"[✓] CSP 不安全配置识别: score={analysis.score:.1f}, bypass={len(analysis.bypass_paths)}")
 
     # Case 2: 严格 CSP
     csp_safe = "default-src 'none'; script-src 'self' 'nonce-abc123' 'strict-dynamic'; object-src 'none'; base-uri 'none'"
     analysis2 = parse_csp(csp_safe)
     assert analysis2.score >= 6, f"严格 CSP 应高分: {analysis2.score}"
-    print(f"[✓] CSP 严格配置识别: score={analysis2.score:.1f}, level={analysis2.mitigation_level}")
 
 
 def test_blind_payloads():
@@ -102,7 +97,6 @@ def test_blind_payloads():
     # 每个 payload 必须包含 token
     for p in payloads:
         assert token in p, f"payload 缺 token: {p}"
-    print(f"[✓] 盲打 payload: {len(payloads)} 个, token={token[:12]}...")
 
 
 def test_mxss_payloads():
@@ -122,7 +116,6 @@ def test_mxss_payloads():
     t2 = InjectionTarget(url="x", param_name="user_id", injection_point=InjectionPoint.BODY_JSON)
     assert is_likely_richtext_target(t1)
     assert not is_likely_richtext_target(t2)
-    print(f"[✓] Mutation XSS: {len(payloads)} 个 payload, 富文本识别正常")
 
 
 def test_postmessage_static():
@@ -135,7 +128,7 @@ def test_postmessage_static():
         // 没有 origin 校验！
         document.getElementById('x').innerHTML = e.data.html;
     });
-    
+
     if (window.config) {
         loadConfig(window.config);
     }
@@ -143,11 +136,9 @@ def test_postmessage_static():
     pm_risks = find_postmessage_risks_in_js(js_code, js_url="test.js")
     assert len(pm_risks) > 0, "应识别 postMessage 风险"
     assert pm_risks[0]["has_origin_check"] is False
-    print(f"[✓] postMessage 静态: 识别 {len(pm_risks)} 个风险")
 
     clobber = find_dom_clobbering_risks_in_js(js_code, js_url="test.js")
     assert any(r["var_name"] == "config" for r in clobber), "应识别 window.config clobbering"
-    print(f"[✓] DOM Clobbering 静态: 识别 {len(clobber)} 个风险")
 
 
 def test_template_probes():
@@ -163,7 +154,6 @@ def test_template_probes():
         assert check(f"<html>{expected}</html>")
     xss = build_csti_xss_payloads("test_marker")
     assert len(xss) >= 3
-    print(f"[✓] 模板注入: {len(probes)} 个探测器, {len(xss)} 个 XSS 升级")
 
 
 def test_waf_bypass_heuristic():
@@ -175,7 +165,6 @@ def test_waf_bypass_heuristic():
     assert len(variants) > 0, "至少应生成 1 个变种"
     # 验证变种不是原 payload
     assert payload not in variants
-    print(f"[✓] WAF bypass 启发式: {len(variants)} 个变种")
 
 
 def test_scanner_pipeline_initialization():
@@ -210,8 +199,15 @@ def test_scanner_pipeline_initialization():
         enable_csp_analysis=True,
         max_targets=10,
     )
-    assert scanner is not None
-    print(f"[✓] XssScanner 流水线初始化: 13-step 全部装配完成")
+    # 验证流水线组件正确装配
+    assert scanner.sitemap is sm
+    assert scanner.llm is llm
+    assert scanner.sitemap.target == "http://example.com"
+    assert scanner.enable_header_injection is True
+    assert scanner.enable_dom_scan is True
+    assert scanner.enable_waf_bypass is True
+    assert scanner.enable_postmessage is True
+    assert scanner.enable_csp_analysis is True
 
 
 def test_scanner_dry_run():
@@ -253,7 +249,6 @@ def test_scanner_dry_run():
                 done_received = True
         assert events_count > 0
         assert done_received, "应收到 xss_done 事件"
-        print(f"[✓] Scanner 干跑通过: {events_count} 个事件, 完整 13-step 跑完")
 
     asyncio.run(_run())
 
@@ -269,7 +264,6 @@ def test_extract_file_urls():
     text_resp = '上传成功: https://cdn.example.com/files/test.html'
     urls2 = extract_file_urls_from_response(text_resp, "http://example.com/upload")
     assert any("test.html" in u for u in urls2)
-    print(f"[✓] 文件 URL 提取: JSON 和文本响应都支持")
 
 
 def test_oob_receiver_lifecycle():
@@ -283,34 +277,5 @@ def test_oob_receiver_lifecycle():
         hits = await r.get_hits("token123")
         assert len(hits) == 1
         assert hits[0]["ua"] == "TestUA"
-        print(f"[✓] OOB receiver: 注册 + 命中 + 查询正常")
 
     asyncio.run(_run())
-
-
-def main():
-    print("=" * 60)
-    print("XSS 完整流水线 P0/P1/P2 端到端联调测试")
-    print("=" * 60)
-    started = time.time()
-    test_import_all_modules()
-    test_header_injection_generation()
-    test_csp_parser()
-    test_blind_payloads()
-    test_mxss_payloads()
-    test_postmessage_static()
-    test_template_probes()
-    test_waf_bypass_heuristic()
-    test_scanner_pipeline_initialization()
-    test_extract_file_urls()
-    test_oob_receiver_lifecycle()
-    # 异步测试
-    asyncio.run(test_scanner_dry_run())
-    elapsed = time.time() - started
-    print("=" * 60)
-    print(f"全部测试通过 ✅  (耗时 {elapsed:.2f}s)")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()

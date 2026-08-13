@@ -27,6 +27,8 @@
 | **URL 全流程渗透** | 输入目标 URL，自动完成爬虫、分析、测试、报告 |
 | **账号密码登录渗透** | 输入账号密码 + URL，自动登录后渗透 |
 | **凭证注入渗透** | 输入 Cookie / JWT / Header，绕过登录直接测试 |
+| **手动登录凭证捕获** | Playwright 有头模式手动登录，自动捕获 Cookie/Token/Authorization，支持验证码人工介入 |
+| **SPA 智能降级** | 自动检测 Vue/React/Angular SPA，链接不足时切换手动浏览 + 流量录制模式 |
 | **验证码自动识别** | 集成 OCR，自动识别图形验证码（复杂验证码支持手动配合） |
 | **自定义 SKILL** | 把自己的挖洞经验写成方法论，遇强则强 |
 
@@ -48,6 +50,7 @@
 | **日志回溯** | 完整的 LLM 调用 + Agent 行为日志 |
 | **经验沉淀** | 历史漏洞经验自动学习，同类目标复用 |
 | **自定义报告模板** | 支持自定义报告输出格式 |
+| **合规报告** | 内置合规报告模板，支持漏洞统计与修复追踪 |
 | **模型热切换** | 10 个 LLM 随意切换，Web UI 一键完成 |
 | **用量观测** | LLM 调用次数 / Token 消耗 / 费用实时监控 |
 
@@ -57,13 +60,15 @@
 
 - **Web 注入类**：SQL 注入（内置 Fuzz 引擎）、XSS（反射/存储/DOM，内置 13-step 专项引擎）
 - **认证授权类**：IDOR 越权、认证绕过、未授权访问
-- **服务端类**：SSRF（含危害证明）、信息泄露、竞态条件
+- **服务端类**：SSRF（含 OOB 带外验证 + 危害证明）、信息泄露、竞态条件
 - **业务逻辑类**：验证码绕过、用户枚举、业务逻辑分析
+- **其他**：CSRF、XXE、SSTI、文件上传、路径穿越、命令注入
 
 - **智能渗透**：浏览器驱动 + 流量拦截改包 + 业务理解 + JS 深度分析 + 前端加密突破
 - **危害验证**：独立 LLM 审核员验证漏洞真实危害，按 SRC 标准去误报
 - **检测层假阳性铁律**：FastScanner 在检测阶段即执行硬规则过滤，不依赖事后 LLM 裁决（详见下文）
 - **补测机制**：扫描全量流量，发现遗漏的新 API 自动补测
+- **PoC 生成**：自动生成漏洞 PoC 脚本，便于复现与提交
 - **可扩展**：用户可自定义 SKILL，支持任意漏洞类型
 
 ### 🚫 假阳性防护体系
@@ -76,15 +81,18 @@
 | **空 data 检测** | 200 但 `data:null`/`data:[]` → 无数据泄露，不报漏洞 | 未授权访问、CORS |
 | **WAF 拦截页识别** | 403/418/429/503 + `blocked`/`firewall`/`拦截` 关键词 → 跳过，不算漏洞 | 目录穿越、命令注入、SSRF |
 | **响应归一化** | 布尔盲注比较前剥离时间戳/JWT/CSRF token/hash 等动态内容 | SQL 注入 |
+| **SQL 布尔盲注三层校验** | True≈基线 + False=WAF/错误页 → 跳过；True≈基线 + False≈基线 → 参数被忽略 | SQL 注入 |
 | **时间盲注二次复现** | 延迟≥3.5s 且必须二次复现才算确认，排除网络抖动 | SQL 注入 |
 | **XSS 可执行上下文** | 探针在 HTML 注释/纯 JSON/textarea 中 → 降级为弱证据 | XSS |
-| **证据质量分级** | 所有漏洞设置 `body_confirmed`/`header_only` 标签，供二次裁决参考 | 全部 9 类漏洞 |
+| **证据质量分级** | 所有漏洞设置 `body_confirmed`/`header_only` 标签，供二次裁决参考 | 全部漏洞类型 |
 | **命令注入特征收紧** | 移除 `whoami`/`total` 等通用词，要求命令输出特征 + 排除 payload 反射 | 命令注入 |
-| **SSRF 特征收紧** | 弱证据分支从仅匹配 `"127.0.0.1"` 字符串 → 要求内网服务特征（Apache/nginx 标题等） | SSRF |
+| **SSRF 特征收紧** | 弱证据分支要求内网服务特征（Apache/nginx 标题等），支持 OOB 带外验证 | SSRF |
+| **登录接口白名单** | 登录/认证类接口跳过未授权访问检测，避免误报 | 未授权访问 |
+| **CSRF Token 名扩展** | 扩展 CSRF Token 名识别列表，减少误报 | CSRF |
 
 ### 🔌 多入口
 
-- **Web UI** — 对话式交互、多会话管理、实时报告
+- **Web UI** — 对话式交互、多会话管理、实时报告、凭证注入登录
 - **Burp Suite 插件** — 右键发送 + 被动扫描 + SSE 实时反馈
 - **REST API** — 支持第三方集成和自动化流水线
 
@@ -134,11 +142,11 @@ cd burp-plugin && ./gradlew jar
 
 **首页突破** — 自动登录并识别首页攻击面：
 
-<img alt="首页突破" src="首页.png" />
+<img alt="首页突破" src="image/首页.png" />
 
 **多系统并行** — 同时对两个目标系统进行渗透测试：
 
-<img alt="多系统并行测试" src="系统.png" />
+<img alt="多系统并行测试" src="image/系统.png" />
 
 ---
 
@@ -148,7 +156,7 @@ cd burp-plugin && ./gradlew jar
 
 | 阶段 | 做什么 | 谁执行 |
 |------|--------|--------|
-| **Phase 0** | 站点探索（爬取 + JS 分析 + 流量抓取） | AutoCrawler |
+| **Phase 0** | 站点探索（爬虫 + JS 分析 + 流量抓取 + SPA 降级） | AutoCrawler |
 | **Phase 0.5** | 业务理解（分析业务语义 → 推导攻击假设） | BusinessUnderstanding |
 | **Phase 1** | 功能分析（识别功能点 → 生成 Checklist） | AnalyzeWorker |
 | **Phase 1.5** | 业务对账（Checklist 与业务理解交叉验证） | 主 Agent |
@@ -156,7 +164,7 @@ cd burp-plugin && ./gradlew jar
 | **Phase 2b** | 浏览器漏洞测试（XSS / CSRF …） | 主 Agent |
 | **Phase 2.55** | 补测（扫描遗漏的 API） | SupplementalTestAgent |
 | **Phase 2.6** | 危害验证（去误报：检测层铁律 + LLM 审核员双重过滤） | HarmValidator |
-| **Phase 3** | 汇总报告（覆盖矩阵 + 漏洞详情 + 修复建议） | 主 Agent |
+| **Phase 3** | 汇总报告（覆盖矩阵 + 漏洞详情 + 修复建议 + PoC） | 主 Agent |
 
 > 详细架构文档：[ARCHITECTURE.md](docs/ARCHITECTURE.md) / [ARCHITECTURE_DETAILED.md](docs/ARCHITECTURE_DETAILED.md)
 
@@ -168,12 +176,22 @@ cd burp-plugin && ./gradlew jar
 
 ```
 skills_my/
-├── discovery/           # 漏洞发现方法论
-│   ├── _core/       (9)  渗透哲学 / 入口点映射 / 攻击面发现 / 认证绕过 …
-│   ├── _phase/      (9)  爬虫策略 / JS 提取 / 被动侦察 / 业务分析 …
-│   ├── personal/    (3)  IDOR / 验证码绕过 / 中国特色漏洞
-│   └── tech-stack/  (1)  国产技术栈指纹
-└── exploit/          (1)  SSRF 危害证明
+├── discovery/                # 漏洞发现方法论
+│   ├── builtin/
+│   │   ├── _core/       (9)  渗透哲学 / 入口点映射 / 攻击面发现 / 认证绕过 …
+│   │   ├── _phase/     (10)  爬虫策略 / JS 提取 / 被动侦察 / 业务分析 …
+│   │   └── tech-stack/  (1)  国产技术栈指纹
+│   └── personal/
+│       ├── auth/        (2)  IDOR 越权 / 验证码绕过
+│       ├── csrf/        (1)  CSRF 检测方法论
+│       └── sqli/        (1)  SQL 注入检测方法论
+├── exploit/                  # 漏洞利用方法论
+│   ├── exploit-ssrf/    (1)  SSRF 危害证明
+│   └── spring-jndi-exploit/ (1) Spring JNDI 注入利用
+└── wooyun-legacy-main/       # Wooyun 历史漏洞知识库
+    ├── categories/     (15)  SQL注入 / XSS / SSRF / 命令执行 / 逻辑漏洞 …
+    ├── knowledge/       (8)  分类漏洞知识参考
+    └── examples/        (2)  银行渗透 / 电信渗透实战案例
 ```
 
 > 📖 把你的挖洞经验写成 SKILL
@@ -189,10 +207,12 @@ skills_my/
 | 检测层假阳性铁律 | ✅ 硬规则过滤 | ❌ | ❌ |
 | 危害验证去误报 | ✅ 独立审核 | ❌ | ❌ |
 | 浏览器交互 | ✅ Playwright | ❌ | ❌ |
+| SPA 智能降级 | ✅ 手动浏览+流量录制 | ❌ | ❌ |
 | 前端加密突破 | ✅ CryptoHook | ❌ | ❌ |
 | 方法论驱动 | ✅ SKILL 引擎 | ❌ | ❌ |
 | 经验学习 | ✅ Memory | ❌ | ❌ |
-| 报告质量 | 灵活模版 | 需人工整理 | 无报告 |
+| PoC 自动生成 | ✅ | ❌ | ❌ |
+| 报告质量 | 灵活模版+合规报告 | 需人工整理 | 无报告 |
 
 ---
 
@@ -201,18 +221,25 @@ skills_my/
 ```
 ├── core/              # Agent 核心引擎
 │   ├── session/       #   分阶段状态机
-│   ├── crawler/       #   Playwright 爬虫
+│   ├── crawler/       #   Playwright 爬虫（含 SPA 降级 mixin）
 │   ├── xss/           #   XSS 专项引擎
 │   ├── parallel/      #   并行调度
 │   ├── harm_validation/ #  危害验证 + 假阳性过滤（LLM 审核员）
-│   └── sitemap/       #   站点地图 + Checklist
+│   ├── sitemap/       #   站点地图 + Checklist + 路径过滤
+│   ├── credential_injector.py  # 独立凭证注入器（手动登录）
+│   ├── false_positive_manager.py # 误报追踪管理
+│   ├── poc_generator.py  # PoC 自动生成
+│   ├── compliance_report.py # 合规报告
+│   └── port_scanner.py   # 端口扫描
 ├── web/               # Web UI + FastAPI
+│   └── api/           #   REST API（含凭证注入 API）
 ├── mcp_servers/       # MCP 工具服务
 ├── burp-plugin/       # Burp Suite 插件 (Java)
 ├── crypto_hook/       # Frida 前端加密拦截
-├── skills_my/         # 方法论知识库
+├── skills_my/         # 方法论知识库 + Wooyun 历史漏洞库
+├── image/             # README 截图
 ├── docs/              # 项目文档
-├── tests/             # 单元测试（含假阳性防护测试 71 用例）
+├── tests/             # 单元测试（含假阳性防护、SPA、竞态条件等）
 └── data/              # 运行时数据 (gitignored)
 ```
 
