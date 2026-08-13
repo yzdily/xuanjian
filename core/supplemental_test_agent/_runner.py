@@ -15,8 +15,6 @@ from typing import Any, AsyncGenerator
 from core.log import get_logger
 
 from ._constants import FEATURES_PER_WORKER, PER_API_TIMEOUT_S, TOTAL_BUDGET_S
-from ._discovery import discover_apis_from_dirscan, discover_new_apis_from_flows
-from ._attach import attach_apis_to_sitemap, _normalize_related_api_for_scan
 
 log = get_logger("supplemental")
 
@@ -39,6 +37,12 @@ async def run_supplemental_test(
       - {"type": "worker_event", "evt": ..} — 子 Agent 产生的事件（透传给前端）
       - {"type": "done", "summary": {...}}  — 全部完成
     """
+    # late import: 让测试 patch.object(sta, ...) 能生效（包级 re-export 而非模块级绑定）
+    from core.supplemental_test_agent import (
+        discover_new_apis_from_flows,
+        discover_apis_from_dirscan,
+        attach_apis_to_sitemap,
+    )
     started = time.time()
     summary: dict[str, Any] = {
         "discovered": 0,
@@ -403,6 +407,13 @@ async def run_supplemental_test_local(
 
     这样 FAST 模式也能覆盖爬取后新发现的 API，不增加 LLM 成本。
     """
+    # late import: 让测试 patch.object(sta, ...) 能生效（包级 re-export 而非模块级绑定）
+    from core.supplemental_test_agent import (
+        discover_new_apis_from_flows,
+        discover_apis_from_dirscan,
+        attach_apis_to_sitemap,
+        _normalize_related_api_for_scan,
+    )
     started = time.time()
     summary: dict[str, Any] = {
         "discovered": 0,
@@ -474,6 +485,24 @@ async def run_supplemental_test_local(
                 "msg": (
                     "[本地补测] 没有可分析的新流量（flows.jsonl 为空），"
                     "将启动主动目录爆破补充发现。"
+                ),
+            }
+        elif scan_stats.get("total_scanned", 0) > 0 and len(apis) == 0:
+            # ★ 流量被抓但 0 新 API：消除"看着正常、实为空心"的误导
+            # 典型场景：登录页 GET + 静态资源被代理抓到，但登录 POST 未被抓到
+            # 或所有流量都是已知 API / 非 2xx / 非业务请求
+            _non_biz = scan_stats.get("non_business", 0)
+            _already = scan_stats.get("already_known", 0)
+            _not_2xx = scan_stats.get("not_2xx", 0)
+            _total = scan_stats.get("total_scanned", 0)
+            summary["warning"] = "flows_no_new_api"
+            yield {
+                "type": "warn",
+                "msg": (
+                    f"[本地补测] 代理抓到 {_total} 条流量但未发现新 API"
+                    f"（非业务 {_non_biz} / 已知 {_already} / 非2xx {_not_2xx}）。"
+                    f"可能原因：登录 POST 未被代理抓取、流量均为静态资源、"
+                    f"或业务 API 已在 Phase 0 全部发现。将启动主动目录爆破补充发现。"
                 ),
             }
 
@@ -685,3 +714,98 @@ async def run_supplemental_test_local(
             "msg": f"[本地补测] 异常（{type(e).__name__}: {str(e)[:160]}），已跳过",
         }
         yield {"type": "done", "summary": summary}
+
+
+# ============================================================
+# 兜底层 3: 测试覆盖不足告警
+# ============================================================
+
+def _generate_coverage_warning(reason: str, details: dict | None = None) -> str:
+    """兜底层3: 所有手段失败时，生成测试覆盖不足告警。
+
+    返回 Markdown 格式的告警文本，供报告使用。
+    """
+    lines = [
+        "> ## ⚠️ 测试覆盖不足告警",
+        "> ",
+        "> **补测链路全部失效**——当前测试覆盖度不足，建议人工补测。",
+        "> ",
+        f"> **失效原因**: {reason}",
+    ]
+    if details:
+        lines.append("> ")
+        lines.append("> **详细信息**:")
+        for k, v in details.items():
+            lines.append(f"> - {k}: {v}")
+    lines.append("> ")
+    lines.append(
+        "> **建议**: 1) 检查 mitmproxy/CDP 流量捕获状态; "
+        "2) 降低扫描速率避免 WAF 封禁; 3) 对关键端点执行人工测试"
+    )
+    return "\n".join(lines)
+
+
+# ============================================================
+# 补测质量度量报告
+# ============================================================
+
+def _build_supplemental_quality_report(summary: dict, sitemap) -> str:
+    """★ OPT6: 补测质量度量报告 — 补测完成后输出质量统计。
+
+    度量维度：
+    1. 流量覆盖率：扫描了多少条流量、发现多少新 API
+    2. 功能点转化率：新 API → 新功能点的转化比例
+    3. 测试覆盖率：补测功能点中实际被测试的比例
+    4. 空心化预警：如果补测 0 新 API 或 0 测试，输出警告
+    """
+    lines = ["📊 **补测质量度量报告**\n"]
+
+    # 1. 流量覆盖率
+    scan_stats = summary.get("scan_stats") or {}
+    total_scanned = scan_stats.get("total_scanned", 0)
+    discovered = summary.get("discovered", 0)
+    if total_scanned > 0:
+        api_rate = round(discovered / total_scanned * 100, 1)
+        lines.append(f"- 流量扫描: {total_scanned} 条 → 发现 {discovered} 个新 API（转化率 {api_rate}%）")
+    else:
+        lines.append(f"- 流量扫描: 未扫描到新流量")
+
+    # 2. 功能点转化率
+    new_features = summary.get("new_features", 0)
+    attached = summary.get("attached_features", 0)
+    total_new = new_features + attached
+    if discovered > 0:
+        fp_rate = round(total_new / discovered * 100, 1)
+        lines.append(f"- 功能点转化: {discovered} API → {total_new} 个功能点（转化率 {fp_rate}%）")
+    elif total_new > 0:
+        lines.append(f"- 功能点转化: {total_new} 个功能点（来自目录爆破等非流量来源）")
+
+    # 3. 测试覆盖率
+    tested = summary.get("tested_features", 0)
+    skipped = summary.get("skipped_features", 0)
+    testable = tested + skipped
+    if testable > 0:
+        test_rate = round(tested / testable * 100, 1)
+        lines.append(f"- 测试覆盖: {tested}/{testable} 功能点已测试（覆盖率 {test_rate}%）")
+        if skipped > 0:
+            lines.append(f"  - 其中 {skipped} 个因超时/异常被跳过")
+
+    # 4. 空心化预警
+    warnings = []
+    if total_scanned > 0 and discovered == 0:
+        warnings.append(f"扫描了 {total_scanned} 条流量但未发现新 API — 可能流量已被主扫描覆盖，或目标为纯前端 SPA")
+    if testable > 0 and tested == 0:
+        warnings.append(f"有 {testable} 个功能点待测但全部失败/跳过 — 补测链路可能存在异常")
+    if summary.get("error"):
+        warnings.append(f"补测过程中发生错误: {summary['error'][:100]}")
+
+    if warnings:
+        lines.append("\n⚠️ **质量告警:**")
+        for w in warnings:
+            lines.append(f"  - {w}")
+
+    # 5. 耗时
+    elapsed = summary.get("elapsed", 0.0)
+    lines.append(f"\n⏱️ 补测耗时: {elapsed:.1f}s")
+
+    return "\n".join(lines) if len(lines) > 2 else ""

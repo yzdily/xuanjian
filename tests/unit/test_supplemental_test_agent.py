@@ -1434,6 +1434,7 @@ def _dirscan_stats(**overrides) -> dict:
         "dirscan_total": 0, "dirscan_discovered": 0,
         "dirscan_sensitive": 0, "dirscan_already_known": 0,
         "dirscan_duplicate": 0, "dirscan_error": "",
+        "waf_blocked": False, "timeout_blocked": False,
     }
     base.update(overrides)
     return base

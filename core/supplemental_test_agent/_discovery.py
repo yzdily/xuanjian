@@ -382,6 +382,8 @@ async def discover_apis_from_dirscan(
         "dirscan_already_known": 0,
         "dirscan_duplicate": 0,
         "dirscan_error": "",
+        "waf_blocked": False,
+        "timeout_blocked": False,
     }
 
     if not target_url:
@@ -434,6 +436,8 @@ async def discover_apis_from_dirscan(
 
     stats["dirscan_total"] = dir_result.total_requests
     stats["dirscan_sensitive"] = dir_result.sensitive_count
+    stats["waf_blocked"] = getattr(dir_result, "waf_blocked", False)
+    stats["timeout_blocked"] = getattr(dir_result, "timeout_blocked", False)
 
     # 把目录扫描发现的存活路径转换为 _DiscoveredAPI
     discovered: list[_DiscoveredAPI] = []
@@ -487,3 +491,164 @@ async def discover_apis_from_dirscan(
         dir_result.total_requests, len(discovered), dir_result.sensitive_count,
     )
     return discovered, stats
+
+
+# ============================================================
+# 流量字典过滤（CDP/被动 JS 发现的端点复用同一过滤逻辑）
+# ============================================================
+
+def _filter_flow_dicts_for_new_apis(
+    flows: list[dict],
+    sitemap: Sitemap,
+    target_url: str,
+    *,
+    require_2xx: bool = True,
+    extra_known_keys: set[str] | None = None,
+) -> list[_DiscoveredAPI]:
+    """对内存中的 flow 字典列表应用与 discover_new_apis_from_flows 相同的过滤，
+    返回 scope 内、非静态、且不在 sitemap.apis 里的新 API。
+
+    与 discover_new_apis_from_flows 的区别：
+      - 不做 timestamp / task_id 过滤（CDP 流量是即时捕获的）
+      - require_2xx=False 时跳过 2xx 检查（用于被动 JS 发现的未实测候选端点）
+    """
+    if not flows:
+        return []
+
+    target_host = urlparse(target_url).netloc.lower() if target_url else ""
+    extra_scope: set[str] = set()
+    try:
+        ex = getattr(sitemap, "extra_scope", None)
+        if ex:
+            extra_scope = {d.lower().lstrip(".") for d in ex if d}
+    except Exception:
+        pass
+    in_scope_hosts = ({target_host} | extra_scope) if target_host else extra_scope
+
+    known_keys: set[str] = set()
+    try:
+        for api_key in (sitemap.apis or {}).keys():
+            parts = api_key.split(" ", 1)
+            if len(parts) == 2:
+                m = parts[0].upper()
+                u = parts[1].strip()
+                pu = urlparse(u)
+                if pu.netloc:
+                    known_keys.add(f"{m} {pu.netloc.lower()}{pu.path}")
+                else:
+                    known_keys.add(f"{m} {pu.path}")
+    except Exception:
+        pass
+    if extra_known_keys:
+        known_keys |= extra_known_keys
+
+    seen: dict[str, _DiscoveredAPI] = {}
+    for flow in flows:
+        try:
+            api = _DiscoveredAPI(flow)
+        except Exception:
+            continue
+        if not api.host or not _host_in_scope(api.host, in_scope_hosts):
+            continue
+        if _is_third_party(api.host):
+            continue
+        if require_2xx and not (200 <= api.status_code < 300):
+            continue
+        if _is_non_business_path(api.path):
+            continue
+        norm_key = f"{api.method} {api.host}{api.path}"
+        if norm_key in known_keys or f"{api.method} {api.path}" in known_keys:
+            continue
+        if api.key in seen:
+            continue
+        seen[api.key] = api
+    return list(seen.values())
+
+
+# ============================================================
+# 兜底层 1: CDP 流量重捕获
+# ============================================================
+
+async def _fallback_cdp_recapture(target_url: str) -> list[dict]:
+    """兜底层1: flows 为空时，通过 CDP 重捕获流量。
+
+    当 mitmproxy 故障导致 flows.jsonl 为空时，尝试通过 Playwright CDP
+    重新捕获 XHR/Fetch 请求作为 flows 的替代数据源。
+    """
+    try:
+        from core.crawler.crawler_core import get_cdp_flows
+        cdp_flows = await get_cdp_flows(target_url, timeout=30)
+        if cdp_flows:
+            log.info("[补测兜底] CDP 流量重捕获: 获取 %d 条流量", len(cdp_flows))
+            return cdp_flows
+    except ImportError:
+        log.debug("[补测兜底] CDP 流量捕获模块不可用")
+    except Exception as e:
+        log.debug("[补测兜底] CDP 流量重捕获失败: %s", e)
+    return []
+
+
+# ============================================================
+# 兜底层 2: 被动 JS 源码分析
+# ============================================================
+
+async def _fallback_passive_js_analysis(
+    target_url: str,
+    sitemap: Sitemap | None = None,
+) -> list[dict]:
+    """兜底层2: dirscan 端点全部被封禁时，降级为被动 JS 源码分析。
+
+    从已缓存的 JS 文件中提取 API 路径模式，作为 dirscan 的替代发现手段。
+    """
+    discovered: list[dict] = []
+    try:
+        js_cache: dict | None = None
+
+        # 优先使用 core.js_analyzer 的全局 JS 源码缓存（按 target 隔离）
+        try:
+            from core.js_analyzer import _js_source_cache, _normalize_target_key
+            target_key = _normalize_target_key(target_url)
+            js_cache = _js_source_cache.get(target_key, {}) or None
+        except Exception:
+            pass
+
+        # 兼容多种属性名（sitemap / session 上可能挂载的 JS 缓存）
+        if not js_cache and sitemap is not None:
+            js_cache = (
+                getattr(sitemap, "_js_content_cache", None)
+                or getattr(sitemap, "js_cache", None)
+                or getattr(sitemap, "_js_cache", None)
+            )
+
+        if not js_cache:
+            return discovered
+
+        import re
+        api_pattern = re.compile(
+            r'''["'`](/(?:api|rest|service|v\d+)/[a-zA-Z0-9_/\-{}]+)["'`]''',
+            re.IGNORECASE,
+        )
+        seen: set[str] = set()
+        base = target_url.rstrip("/")
+        for js_url, js_content in js_cache.items():
+            if not js_content:
+                continue
+            matches = api_pattern.findall(js_content)
+            for path in matches:
+                if path in seen:
+                    continue
+                seen.add(path)
+                discovered.append({
+                    "path": path,
+                    "method": "GET",
+                    "source": "passive_js",
+                    "url": f"{base}{path}",
+                })
+        if discovered:
+            log.info(
+                "[补测兜底] 被动 JS 分析: 从 %d 个 JS 文件提取 %d 个 API 路径",
+                len(js_cache), len(discovered),
+            )
+    except Exception as e:
+        log.debug("[补测兜底] 被动 JS 分析失败: %s", e)
+    return discovered

@@ -31,6 +31,8 @@
 
 from __future__ import annotations
 
+import time  # re-export: 测试与外部通过 core.supplemental_test_agent.time 访问
+
 # ============================================================
 # 配置常量与第三方域名黑名单
 # ============================================================
@@ -58,6 +60,10 @@ from ._discovery import (
     _SENSITIVE_ENDPOINT_PREFIXES,
     _ADMIN_PANEL_PATHS,
     _AUTH_PATH_PREFIXES,
+    # 兜底层 1/2 + 流量字典过滤（从旧单文件恢复，包化拆分时丢失）
+    _filter_flow_dicts_for_new_apis,
+    _fallback_cdp_recapture,
+    _fallback_passive_js_analysis,
 )
 
 # ============================================================
@@ -78,6 +84,9 @@ from ._runner import (
     run_supplemental_test,
     _run_worker_with_timeout,
     run_supplemental_test_local,
+    # 兜底层 3 + 质量度量报告（从旧单文件恢复，包化拆分时丢失）
+    _generate_coverage_warning,
+    _build_supplemental_quality_report,
 )
 
 # ============================================================
