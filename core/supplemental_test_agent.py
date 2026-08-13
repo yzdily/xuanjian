@@ -649,6 +649,7 @@ def attach_apis_to_sitemap(
                 # 加 tag 便于报告区分
                 try:
                     fp.findings.append("[supplemental] 由 Phase 2.55 补测 Agent 发现")
+                    fp.origin = "speculative"  # ★ P0-2: 标记为推测项，与爬取确认项区分
                 except Exception:
                     pass
                 new_features.append(fp)
@@ -1606,6 +1607,8 @@ async def run_supplemental_test_local(
             }
 
             # 对每个 URL 跑 FastScanner（共享 scanner 实例）
+            _feature_was_scanned = False
+            _feature_had_vuln = False
             for method, url in scan_urls:
                 # ★ WAF/超时全局封禁后跳过剩余 URL
                 if waf_blocked_global:
@@ -1622,6 +1625,7 @@ async def run_supplemental_test_local(
                         auth_headers=auth_headers or {},
                     )
                     result = await scanner.scan_target(target)
+                    _feature_was_scanned = True
                     # ★ 检查本次扫描是否触发 WAF 或超时熔断
                     scan_stats = scanner.get_accumulated_stats()
                     if scan_stats.get("waf_blocked") or scan_stats.get("timeout_blocked"):
@@ -1633,6 +1637,7 @@ async def run_supplemental_test_local(
                         }
                     if result.vuln_count > 0:
                         total_vulns += result.vuln_count
+                        _feature_had_vuln = True
                         # 回写 checklist
                         cl_results = convert_findings_to_checklist_results(result.findings)
                         for finding in cl_results:
@@ -1648,6 +1653,24 @@ async def run_supplemental_test_local(
                                     break
                 except Exception as e:
                     log.warning("[本地补测] FastScanner 扫描 %s 失败: %s", url, e)
+
+            # ★ P0-1: 补测结果回写完成率 — 已实测但无漏洞的 PENDING 项标记为 NOT_VULN。
+            # 原逻辑仅在发现漏洞时回写 VULN，0 漏洞时 checklist 项留 PENDING，
+            # 导致 _compute_real_completion 不计入 real_done，完成率被严重低估。
+            if _feature_was_scanned and not _feature_had_vuln:
+                _marked = 0
+                for c in fp.checklist:
+                    if c.result == CheckResult.PENDING:
+                        c.result = CheckResult.NOT_VULN
+                        c.detail = "FastScanner 补测已扫描，未发现漏洞"
+                        c.source = "fast_scanner_supplemental"
+                        c.tested_at = time.time()
+                        _marked += 1
+                if _marked > 0:
+                    yield {
+                        "type": "info",
+                        "msg": f"[本地补测] {fp.name} 已实测 0 漏洞，{_marked} 项 checklist 标记为 NOT_VULN（回写完成率）",
+                    }
 
             summary["tested_features"] += 1
 

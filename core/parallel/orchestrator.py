@@ -1990,14 +1990,28 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                 )
         elif cov.get("vulns", 0) == 0:
             pending_str = f" {pending} 项未测;" if pending > 0 else ""
+            # ★ P1-2: 低覆盖时不再称"扫描完成"，避免误导
+            _rc = session._compute_real_completion() if hasattr(session, "_compute_real_completion") else {}
+            _real_rate = _rc.get("real_rate", 0.0)
+            _valid_rate = _rc.get("validated_rate", 0.0)
+            if _real_rate < 10.0:
+                _status_prefix = f"部分完成 / 覆盖不足（真实完成率 {_real_rate}%）"
+            elif _valid_rate < 10.0 and _rc.get("speculative_total", 0) > 0:
+                _status_prefix = f"部分完成（已确认项 {_valid_rate}%，另有推测项 {_rc.get('speculative_total', 0)} 项）"
+            else:
+                _status_prefix = "扫描完成"
             session.sitemap.termination_reason = (
-                f"扫描完成：{checks_done}/{checks_total} 项测试完成，"
+                f"{_status_prefix}：{checks_done}/{checks_total} 项测试完成，"
                 f"未发现漏洞。{pending_str}{supp_info}{hv_info}"
             ).strip()
         else:
             pending_str = f" {pending} 项未测;" if pending > 0 else ""
+            # ★ P1-2: 有漏洞但低覆盖时也标注
+            _rc = session._compute_real_completion() if hasattr(session, "_compute_real_completion") else {}
+            _real_rate = _rc.get("real_rate", 0.0)
+            _status_prefix = "部分完成 / 覆盖不足" if _real_rate < 10.0 else "扫描完成"
             session.sitemap.termination_reason = (
-                f"扫描完成：{cov.get('vulns', 0)} 个漏洞已确认。"
+                f"{_status_prefix}：{cov.get('vulns', 0)} 个漏洞已确认。"
                 f"{pending_str}{supp_info}{hv_info}"
             ).strip()
         try:

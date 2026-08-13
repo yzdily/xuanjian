@@ -1502,6 +1502,16 @@ class ChatLoopMixin:
                 _upgrade_reason = ""
                 _user_mode_fast = getattr(self, "user_scan_mode", "smart") == "fast"
                 if _user_mode_fast:
+                    # ★ P2-2: 页面类型感知 — 认证页面（登录/注册）直接视为 high-value 自动升级
+                    _auth_page_patterns = (
+                        "passport/login", "/login", "login.html", "/signin",
+                        "/register", "register.html", "/signup", "/auth",
+                    )
+                    _target_url_lower = (getattr(self, "target_url", "") or "").lower()
+                    if any(pat in _target_url_lower for pat in _auth_page_patterns):
+                        _should_upgrade = True
+                        _upgrade_reason = f"目标 URL 含认证页面特征（{_target_url_lower}），建议 STANDARD 模式深度检测"
+
                     # 检查 sitemap 中是否存在高危关键词
                     _high_risk_keywords = ("pay", "transfer", "upload", "admin", "delete", "password", "token", "secret")
                     _high_risk_count = 0

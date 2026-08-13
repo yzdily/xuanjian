@@ -124,35 +124,52 @@ class ReportMixin:
         """
         if not self.sitemap:
             return {"real_done": 0, "skipped": 0, "pending": 0, "total": 0,
-                    "real_rate": 0.0, "skip_rate": 0.0}
+                    "real_rate": 0.0, "skip_rate": 0.0, "pending_rate": 0.0}
         try:
             cov = self.sitemap.get_coverage()
         except Exception:
             return {"real_done": 0, "skipped": 0, "pending": 0, "total": 0,
-                    "real_rate": 0.0, "skip_rate": 0.0}
+                    "real_rate": 0.0, "skip_rate": 0.0, "pending_rate": 0.0}
 
         from core.sitemap.constants import CheckResult
         real_done = 0
         skipped = 0
         pending = 0
         total = 0
+        # ★ P0-2: validated/speculative 分母解耦
+        valid_done = 0
+        valid_total = 0
+        spec_done = 0
+        spec_total = 0
         try:
             for fp in self.sitemap.features.values():
                 if not fp.checklist:
                     continue
+                fp_origin = getattr(fp, "origin", "validated")
                 for c in fp.checklist:
                     total += 1
+                    if fp_origin == "speculative":
+                        spec_total += 1
+                    else:
+                        valid_total += 1
                     if c.result == CheckResult.SKIPPED:
                         skipped += 1
                     elif c.result == CheckResult.PENDING:
                         pending += 1
                     else:
                         real_done += 1
+                        if fp_origin == "speculative":
+                            spec_done += 1
+                        else:
+                            valid_done += 1
         except Exception:
             pass
 
         real_rate = round(real_done / total * 100, 1) if total > 0 else 0.0
         skip_rate = round(skipped / total * 100, 1) if total > 0 else 0.0
+        pending_rate = round(pending / total * 100, 1) if total > 0 else 0.0
+        validated_rate = round(valid_done / valid_total * 100, 1) if valid_total > 0 else 0.0
+        speculative_rate = round(spec_done / spec_total * 100, 1) if spec_total > 0 else 0.0
         return {
             "real_done": real_done,
             "skipped": skipped,
@@ -160,15 +177,23 @@ class ReportMixin:
             "total": total,
             "real_rate": real_rate,
             "skip_rate": skip_rate,
+            "pending_rate": pending_rate,
+            # ★ P0-2: 分母解耦后的分类统计
+            "validated_total": valid_total,
+            "validated_done": valid_done,
+            "validated_rate": validated_rate,
+            "speculative_total": spec_total,
+            "speculative_done": spec_done,
+            "speculative_rate": speculative_rate,
         }
 
     def _detect_hollowing(self) -> dict | None:
         """检测测试过程是否空心化。
 
-        空心化判定条件（同时满足）：
-        1. 真实完成率 < 10%
-        2. 跳过率 > 70%
-        3. 漏洞数 = 0
+        空心化判定条件（满足任一即判定，且漏洞数 = 0）：
+        1. 原始条件：真实完成率 < 10% 且 跳过率 > 70%
+        2. ★ P1-1 新增：真实完成率 < 5% 且 (跳过率 + 未测率) > 80%
+           — 覆盖"大面积未测(pending)而非跳过(skipped)"的场景
 
         返回 None 表示未空心化；返回 dict 包含告警信息和根因诊断。
         """
@@ -182,8 +207,16 @@ class ReportMixin:
         except Exception:
             vulns = 0
 
-        # 空心化判定
-        if rc["real_rate"] < 10.0 and rc["skip_rate"] > 70.0 and vulns == 0:
+        _pending_rate = rc.get("pending_rate", 0.0)
+        _uncovered_rate = rc["skip_rate"] + _pending_rate
+
+        # 空心化判定（两条路径，满足任一即触发）
+        _hollowed = (
+            (rc["real_rate"] < 10.0 and rc["skip_rate"] > 70.0 and vulns == 0)
+            or (rc["real_rate"] < 5.0 and _uncovered_rate > 80.0 and vulns == 0)
+        )
+
+        if _hollowed:
             # 根因诊断
             causes = []
             fs_stats = {}
@@ -209,22 +242,28 @@ class ReportMixin:
                 causes.append(f"虚假端点比例过高（{ghost_count}/{total_apis}）")
 
             if not causes:
-                causes.append("检测项大面积跳过，疑似 FAST 模式全量跳过 LLM 检测")
+                if _pending_rate > 50.0:
+                    causes.append(f"大面积未测（pending {rc.get('pending', 0)} 项 / {_pending_rate}%），补测结果可能未回写完成率")
+                else:
+                    causes.append("检测项大面积跳过，疑似 FAST 模式全量跳过 LLM 检测")
 
             return {
                 "is_hollowed": True,
                 "alert_level": "danger",
                 "real_done": rc["real_done"],
                 "skipped": rc["skipped"],
+                "pending": rc.get("pending", 0),
                 "total": rc["total"],
                 "real_rate": rc["real_rate"],
                 "skip_rate": rc["skip_rate"],
+                "pending_rate": _pending_rate,
                 "vulns": vulns,
                 "causes": causes,
                 "message": (
                     f"⚠️ 空心化告警：测试过程疑似空心化。"
                     f"真实完成 {rc['real_done']}/{rc['total']} 项（{rc['real_rate']}%），"
                     f"跳过 {rc['skipped']} 项（{rc['skip_rate']}%），"
+                    f"未测 {rc.get('pending', 0)} 项（{_pending_rate}%），"
                     f"发现漏洞 {vulns} 个。"
                     f"根因：{'；'.join(causes)}"
                 ),

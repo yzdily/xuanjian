@@ -81,6 +81,7 @@ class CheckItem:
     skill_used: str = ""        # 用了哪个 SKILL
     tested_at: float = 0
     needs_browser: bool = False # 是否需要浏览器才能测试（XSS验证/CSRF/验证码等）
+    source: str = ""            # ★ 测试来源标识：fast_scanner / fast_scanner_supplemental / worker / main 等
 
 
 @dataclass
@@ -100,6 +101,7 @@ class FeaturePoint:
     requires_auth: bool = False        # 是否需要登录后才能测试
     deferred: bool = False             # 延迟状态：暂不生成 checklist，等突破后激活
     module: str = ""                   # 所属模块（一级分类），如 "权限管理"、"数据看板"
+    origin: str = "validated"          # ★ 来源标识：validated(爬取确认) / speculative(补测推测)
 
     def get_pending_checks(self) -> list[CheckItem]:
         return [c for c in self.checklist if c.result == CheckResult.PENDING]
