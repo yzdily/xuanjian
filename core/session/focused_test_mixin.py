@@ -24,6 +24,7 @@ from typing import AsyncGenerator
 
 from core.sitemap import Sitemap, Priority, CheckItem
 from core.log import get_logger
+from core.prompts import load_template
 
 log = get_logger("session.focused_test")
 
@@ -214,24 +215,12 @@ class FocusedTestMixin:
         """用 LLM 分析指定功能应该测试哪些漏洞类型。"""
         from core.llm import Message
 
-        prompt = (
-            "你是渗透测试专家。请分析以下 Web 功能，判断最可能存在的漏洞类型。\n\n"
-            f"## 功能信息\n"
-            f"- 名称: {feat_name}\n"
-            f"- 描述: {description}\n"
-            f"- 推测API: {estimated_api or '未知'}\n"
-            f"- 交互类型: {interaction_type or '未知'}\n\n"
-            "## 要求\n"
-            "1. 根据功能的业务语义判断最可能的漏洞\n"
-            "2. 按可能性从高到低排序，最多 8 项\n"
-            "3. 只输出 JSON 数组\n\n"
-            "可选的漏洞类型（必须用标准名称）：\n"
-            "SQL注入, XSS, 存储型XSS, IDOR越权, 未授权访问, 垂直越权, 信息泄露, "
-            "CSRF, SSRF, 文件上传绕过, XXE, 命令注入, SSTI, 开放重定向, "
-            "金额篡改, 竞态条件, Mass Assignment, 越权导出, 密码重置逻辑, "
-            "弱密码/默认密码, 验证码绕过, 短信轰炸, Cookie/JWT安全, "
-            "CORS配置, 用户枚举, Host头投毒\n\n"
-            "输出格式：\n```json\n[\"SQL注入\", \"IDOR越权\"]\n```"
+        prompt = load_template(
+            "focused_test_suggest",
+            feat_name=feat_name,
+            description=description,
+            estimated_api=estimated_api or "未知",
+            interaction_type=interaction_type or "未知",
         )
 
         try:

@@ -19,6 +19,7 @@ from typing import AsyncGenerator
 from core.llm import LLMClient, Message
 from core.context import ContextManager
 from core.log import get_logger
+from core.prompts import load_prompt
 
 log = get_logger("analyze_worker")
 
@@ -133,21 +134,7 @@ class AnalyzeWorker:
 
             # 系统提示
             ctx.add_system(
-                "你是渗透测试功能分析专家。你的任务是将一组 API 端点归类为业务功能点。\n\n"
-                "## 输出规则\n"
-                "1. 将下面的 API 列表按业务功能归类，每个功能点包含：name, description, module, related_apis, priority, requires_auth\n"
-                "2. 相关的 API 归为同一个功能点（如 /user/list + /user/create + /user/delete = '用户管理'功能）\n"
-                "3. 不要遗漏任何 API，每个 API 必须归属到至少一个功能点\n"
-                "4. priority 从 critical/high/medium/low 中选\n"
-                "5. 涉及认证、权限、支付、数据导出的功能标 critical 或 high\n"
-                "6. module 用 / 分隔层级（如 '系统管理/用户管理'）\n"
-                "7. requires_auth：需要登录才能访问的设为 true\n\n"
-                "## 输出格式\n"
-                "直接输出 JSON 数组，不要任何解释文字：\n"
-                "```json\n"
-                '[{"name":"功能名","description":"描述","module":"一级/二级","page_url":"/path",'
-                '"related_apis":["GET /api/xxx","POST /api/yyy"],"priority":"high","requires_auth":true}]\n'
-                "```"
+                load_prompt("analyze_worker_system")
             )
 
             # 用户提示：目标信息 + API 列表

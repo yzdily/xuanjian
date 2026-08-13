@@ -211,3 +211,31 @@
     method: status_code
     expected: 200
   fix: 限制开发工具的访问，生产环境关闭
+
+- name: JSONP 接口信息泄露
+  type: info_disclosure
+  severity: medium
+  description: 检测 JSONP 回调接口，可能泄露用户信息或被 CSRF 利用
+  detection:
+    method: body_pattern
+    patterns:
+      - "callback("
+      - "jsonp"
+      - "jQuery"
+    content_type: javascript
+  fix: 限制 JSONP 接口的回调域名白名单，敏感接口改用同源 JSON 响应
+
+- name: 硬编码地图 API Key 泄露
+  type: info_disclosure
+  severity: medium
+  description: 前端 JS 硬编码地图服务 API Key（高德/百度/Google），可被滥用产生费用
+  detection:
+    method: body_pattern
+    patterns:
+      - "key=AIza[A-Za-z0-9_\\-]{35}"
+      - "amap_key=['\"][A-Za-z0-9]{32}['\"]"
+      - "map_key=['\"][A-Za-z0-9]{32}['\"]"
+      - "baidu_ak=['\"][A-Za-z0-9]{32}['\"]"
+      - "ak=['\"][A-Za-z0-9]{32}['\"]"
+  fix: 将地图 API Key 迁移到后端代理调用，前端使用受限 Key 并配置域名白名单
+

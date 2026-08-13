@@ -15,6 +15,7 @@ import re
 from typing import AsyncGenerator
 
 from core.log import get_logger
+from core.prompts import load_prompt
 
 log = get_logger("session.explore")
 
@@ -554,7 +555,7 @@ class ExplorePhaseMixin:
 
         try:
             messages = [
-                Message(role="system", content="你是安全测试助手，负责判断域名是否属于目标业务。"),
+                Message(role="system", content=load_prompt("explore_domain_judge")),
                 Message(role="user", content=prompt),
             ]
             response = await asyncio.to_thread(self.llm.chat, messages, caller="domain_filter")

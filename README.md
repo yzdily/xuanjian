@@ -32,13 +32,28 @@
 | **验证码自动识别** | 集成 OCR，自动识别图形验证码（复杂验证码支持手动配合） |
 | **自定义 SKILL** | 把自己的挖洞经验写成方法论，遇强则强 |
 
-### ⚡ 三种扫描模式
+### ⚡ 扫描模式（两个正交维度）
 
-| 模式 | 流程 | 适用场景 |
+玄鉴的「扫描模式」由**两个正交维度**组合决定，避免混用：
+
+**维度一 · 扫描深度**（决定是否调 LLM、并发、超时、跳过哪些阶段）
+
+| 深度 | LLM | 适用场景 |
+|------|-----|---------|
+| **FAST** | 否（纯本地规则） | 快速过一遍，去误报由检测层硬规则保证 |
+| **STANDARD** | 部分（精简调用） | 日常渗透，平衡速度与深度 |
+| **DEEP** | 完整全流程 | 全量 LLM 分析 + 危害验证 |
+| **SMART** | 自动选择 | 先分析目标再选 FAST/STANDARD/DEEP |
+
+**维度二 · 编排方式**（决定任务如何编排）
+
+| 编排 | 流程 | 适用场景 |
 |------|------|---------|
 | **批处理 (Batch)** | 爬虫 → 分析 → 并行测试 → 报告 | 全站渗透，全自动 |
 | **实时 (Realtime)** | 发现即测，边点边出结果 | 快速验证 |
 | **包测 (Packet)** | 单个 HTTP 数据包跑漏洞 Checklist | Burp 联动，定点测试 |
+
+> 两个维度独立选择，例如「FAST × Batch」= 不调 LLM 的全站并行扫描，「DEEP × Realtime」= 全流程 LLM 的边爬边测。代码中深度维度对应 `ScanMode` / `session.user_scan_mode`，编排维度对应 `session.scan_mode`。
 
 ### 🔧 工程化能力
 
@@ -166,7 +181,7 @@ cd burp-plugin && ./gradlew jar
 | **Phase 2.6** | 危害验证（去误报：检测层铁律 + LLM 审核员双重过滤） | HarmValidator |
 | **Phase 3** | 汇总报告（覆盖矩阵 + 漏洞详情 + 修复建议 + PoC） | 主 Agent |
 
-> 详细架构文档：[ARCHITECTURE.md](docs/ARCHITECTURE.md) / [ARCHITECTURE_DETAILED.md](docs/ARCHITECTURE_DETAILED.md)
+> **扫描模式**：深度维度（FAST/STANDARD/DEEP/SMART，对应 `ScanMode` / `session.user_scan_mode`）与编排维度（Batch/Realtime/Packet，对应 `session.scan_mode`）两个正交维度独立选择，详见下方「扫描模式」章节。
 
 ---
 
@@ -220,12 +235,22 @@ skills_my/
 
 ```
 ├── core/              # Agent 核心引擎
-│   ├── session/       #   分阶段状态机
-│   ├── crawler/       #   Playwright 爬虫（含 SPA 降级 mixin）
-│   ├── xss/           #   XSS 专项引擎
-│   ├── parallel/      #   并行调度
-│   ├── harm_validation/ #  危害验证 + 假阳性过滤（LLM 审核员）
+│   ├── session/       #   分阶段状态机（base + 各阶段 mixin）
+│   ├── crawler/       #   Playwright 爬虫（crawler_core + SPA/表单/登录等 mixin + _blocklist 黑名单）
+│   ├── xss/           #   XSS 专项引擎（13-step，含 DOM/OOB/上传/CSP 等）
+│   ├── parallel/      #   并行调度（orchestrator + _orchestrator_helpers + batch_test）
+│   ├── harm_validation/ #  危害验证 + 假阳性过滤（validator + render + _render_helpers）
 │   ├── sitemap/       #   站点地图 + Checklist + 路径过滤
+│   ├── fast_scanner/  #   快速检测引擎（11 子模块：_engine + FP 硬规则 _fp_filters + 各类 _checks_*）
+│   ├── llm/           #   LLM 客户端（10 子模块：_client + _pool + _response_cache + _tokens 等）
+│   ├── js_analyzer/   #   JS 深度分析（9 子模块：_extractors + _patterns + _cache + _llm 等）
+│   ├── browse_worker/ #   浏览器浏览 Worker（5 子模块：_menu_parser + _menu_grouper + _ledger + _worker）
+│   ├── dir_scanner/   #   目录扫描（5 子模块：_constants + _wordlist + _models + _scanner）
+│   ├── supplemental_test_agent/ # 补测 Agent（5 子模块：_discovery + _attach + _runner）
+│   ├── worker_agent/  #   渗透 Worker Agent（3 子模块：_agent + _helpers mixin）
+│   ├── fuzz/          #   Fuzz 引擎（sqli + race_condition + waf_bypass）
+│   ├── crypto_replay/ #   前端加密回放（learner + applier + store）
+│   ├── scripted_scan/ #   脚本化扫描（OpenAPI 导出 + runner）
 │   ├── credential_injector.py  # 独立凭证注入器（手动登录）
 │   ├── false_positive_manager.py # 误报追踪管理
 │   ├── poc_generator.py  # PoC 自动生成
@@ -242,6 +267,8 @@ skills_my/
 ├── tests/             # 单元测试（含假阳性防护、SPA、竞态条件等）
 └── data/              # 运行时数据 (gitignored)
 ```
+
+> **包拆分说明**：标注「N 子模块」的包均由原单文件 God File 拆分而来（如 `fast_scanner.py` 3991 行 → `fast_scanner/` 11 子模块）。所有公开/私有名通过 `__init__.py` re-export 保持向后兼容，`from core.fast_scanner import FastScanner` 等导入路径不变。
 
 ---
 

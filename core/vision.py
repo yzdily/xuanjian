@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from core.log import get_logger
+from core.prompts import load_prompt, load_template
 
 log = get_logger("vision")
 
@@ -24,63 +25,7 @@ log = get_logger("vision")
 # 截图分析 Prompt
 # ============================================================
 
-_SCREENSHOT_ANALYSIS_PROMPT = """\
-你是一个 Web 安全测试专家。请分析这张网页截图，识别页面中的**功能点**。
-
-## 分析要求
-
-1. 识别页面中所有可见的**交互功能**（按钮、表单、输入框、链接、菜单等）
-2. 判断每个功能的**业务语义**（如：登录、搜索、下单、编辑用户、删除订单等）
-3. 如果能看到 URL 地址栏，提取 URL
-4. 如果能看到页面标题/导航，提取页面名称
-5. 识别页面类型（登录页、列表页、详情页、表单页、后台管理等）
-
-## 输出格式
-
-严格返回 JSON（不要返回其他内容）：
-```json
-{
-  "page_type": "列表页/详情页/表单页/登录页/后台管理/...",
-  "page_title": "页面标题（如果可见）",
-  "visible_url": "地址栏中的URL（如果可见）",
-  "features": [
-    {
-      "name": "功能名称（如：用户搜索、订单删除、密码修改）",
-      "description": "功能描述（包含可见的输入字段、按钮文字等）",
-      "interaction_type": "form/button/link/search/upload/...",
-      "estimated_api": "推测的API路径（如 POST /api/user/delete）"
-    }
-  ],
-  "navigation": ["可见的导航菜单项列表"],
-  "notes": "其他观察（如：看到了验证码、有文件上传区域等）"
-}
-```
-"""
-
-_SCREENSHOT_FILTER_PROMPT = """\
-你是一个 Web 安全测试专家。用户上传了一张网页截图，并指定了要测试的功能。
-
-## 截图分析结果
-{analysis_json}
-
-## 用户指定要测试的功能
-{user_instruction}
-
-## 任务
-从截图分析结果中，筛选出用户想要测试的功能点。如果用户的描述模糊，选择最匹配的。
-
-严格返回 JSON 数组（不要返回其他内容）：
-```json
-[
-  {
-    "name": "功能名称",
-    "description": "功能描述",
-    "interaction_type": "form/button/link/...",
-    "estimated_api": "推测的API路径"
-  }
-]
-```
-"""
+_SCREENSHOT_ANALYSIS_PROMPT = load_prompt("screenshot_analysis")
 
 
 # ============================================================
@@ -177,10 +122,12 @@ async def filter_features_by_instruction(
     """
     from core.llm import Message
 
-    # 注意：不能用 str.format()，因为模板中包含 JSON 示例的花括号会导致 KeyError
-    prompt = _SCREENSHOT_FILTER_PROMPT.replace(
-        "{analysis_json}", json.dumps(analysis_result, ensure_ascii=False, indent=2)
-    ).replace("{user_instruction}", user_instruction)
+    # 模板中字面花括号已转义（{{ }}），load_template 用 str.format 填充占位符
+    prompt = load_template(
+        "screenshot_filter",
+        analysis_json=json.dumps(analysis_result, ensure_ascii=False, indent=2),
+        user_instruction=user_instruction,
+    )
 
     messages = [
         Message(role="system", content=prompt),
@@ -216,54 +163,6 @@ async def filter_features_by_instruction(
 # OCR 降级方案：OCR 提取文字 → 普通 LLM 分析功能点
 # ============================================================
 
-_OCR_ANALYSIS_PROMPT = """\
-你是一个 Web 安全测试专家。以下是通过 OCR 从一张网页截图中提取的文字内容（按位置排列）。
-请根据这些文字信息，推断页面中的功能点。
-
-## OCR 提取的文字内容
-{ocr_text}
-
-## 分析要求
-
-1. 根据文字内容推断页面中可能存在的**交互功能**（按钮、表单、链接、菜单等）
-2. 判断每个功能的**业务语义**（如：登录、搜索、下单、编辑用户、删除订单等）
-3. 如果文字中包含 URL，提取 URL
-4. 如果文字中包含页面标题/导航信息，提取页面名称
-5. 推断页面类型（登录页、列表页、详情页、表单页、后台管理等）
-
-## 推断技巧
-- 看到"登录"、"用户名"、"密码"等文字 → 登录功能
-- 看到"搜索"、"查询"、"筛选"等文字 → 搜索/筛选功能
-- 看到"新增"、"添加"、"创建"等文字 → 创建功能
-- 看到"编辑"、"修改"、"更新"等文字 → 编辑功能
-- 看到"删除"、"移除"等文字 → 删除功能
-- 看到"导出"、"下载"等文字 → 导出功能
-- 看到"上传"、"导入"等文字 → 上传/导入功能
-- 看到表头文字（如"序号"、"名称"、"操作"）→ 列表页
-- 看到导航菜单文字 → 提取为 navigation
-
-## 输出格式
-
-严格返回 JSON（不要返回其他内容）：
-```json
-{
-  "page_type": "列表页/详情页/表单页/登录页/后台管理/...",
-  "page_title": "页面标题（如果能推断）",
-  "visible_url": "URL（如果文字中包含）",
-  "features": [
-    {
-      "name": "功能名称",
-      "description": "功能描述（基于 OCR 文字推断）",
-      "interaction_type": "form/button/link/search/upload/...",
-      "estimated_api": "推测的API路径"
-    }
-  ],
-  "navigation": ["导航菜单项列表"],
-  "notes": "其他观察（注明：此结果基于 OCR 文字推断，可能不完全准确）"
-}
-```
-"""
-
 
 async def _ocr_fallback_analyze(
     llm_client,
@@ -296,8 +195,7 @@ async def _ocr_fallback_analyze(
     log.info("OCR 提取到 %d 个字符，开始用 LLM 分析功能点", len(ocr_text))
 
     # 2) 用普通 LLM 分析 OCR 文字
-    # 注意：不能用 str.format()，因为模板中包含 JSON 示例的花括号会导致 KeyError
-    prompt = _OCR_ANALYSIS_PROMPT.replace("{ocr_text}", ocr_text[:3000])  # 限制长度防止 token 爆炸
+    prompt = load_template("ocr_analysis", ocr_text=ocr_text[:3000])  # 限制长度防止 token 爆炸
 
     messages = [
         Message(role="system", content=prompt),

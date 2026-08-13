@@ -283,9 +283,8 @@ class TestScanStrategyConfigCrawlTimeout:
 
         fast_cfg = ScanConfig.from_mode(ScanMode.FAST)
         strategy = get_scan_strategy("fast")
-        # FAST 模式 crawl_timeout=180（见 scan_strategies.py from_mode FAST 分支）
-        assert strategy.crawl_timeout == fast_cfg.crawl_timeout
-        assert strategy.crawl_timeout == 180
+        # FAST crawl_timeout=180（与 tests/unit/test_scan_strategies.py 一致；本断言校验透传一致性）
+        assert strategy.crawl_timeout == fast_cfg.crawl_timeout == 180
         assert strategy.fast_scan_timeout == fast_cfg.fast_scan_timeout
 
     def test_crawl_timeout_is_real_attribute_not_missing(self):

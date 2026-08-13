@@ -18,6 +18,7 @@ ScanStrategies 单元测试 — core.scan_strategies
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -61,6 +62,50 @@ class TestScanMode:
     def test_invalid_str_raises(self):
         with pytest.raises(ValueError):
             ScanMode("nonexistent")
+
+    # ----- StrEnum 语义（云序列化 bug 修复回归）-----
+    def test_member_equals_str_value(self):
+        """StrEnum 修复核心：成员与其字符串值可直接比较为 True。"""
+        assert ScanMode.FAST == "fast"
+        assert ScanMode.STANDARD == "standard"
+        assert ScanMode.DEEP == "deep"
+        assert ScanMode.SMART == "smart"
+
+    def test_member_is_str_instance(self):
+        assert isinstance(ScanMode.FAST, str)
+        assert isinstance(ScanMode.STANDARD, str)
+
+    def test_json_serializes_as_plain_string(self):
+        """成员可被 json 原生序列化为字符串，无需显式 .value。"""
+        assert json.dumps(ScanMode.FAST) == '"fast"'
+        assert json.dumps(ScanMode.STANDARD) == '"standard"'
+        # 在容器内同样按字符串序列化
+        assert json.dumps({"mode": ScanMode.DEEP}) == '{"mode": "deep"}'
+
+    def test_json_roundtrip_preserves_value(self):
+        s = json.dumps(ScanMode.SMART)
+        assert json.loads(s) == "smart"
+        assert ScanMode(json.loads(s)) is ScanMode.SMART
+
+    def test_str_lookup_returns_member(self):
+        assert ScanMode("fast") is ScanMode.FAST
+
+    def test_member_passes_through_member_lookup(self):
+        """ScanMode(已存在的成员) 仍返回该成员（str 子类 hash/eq 与其值一致）。"""
+        assert ScanMode(ScanMode.FAST) is ScanMode.FAST
+        assert ScanMode(ScanMode.DEEP) is ScanMode.DEEP
+
+    def test_member_hash_compatible_with_str(self):
+        """成员 hash 与其字符串值一致，可作为 dict/set 键与字符串互通。"""
+        assert hash(ScanMode.FAST) == hash("fast")
+        d = {ScanMode.FAST: 1}
+        assert d["fast"] == 1
+        assert ScanMode.FAST in {"fast"}
+
+    def test_mode_value_still_str(self):
+        """.value 仍返回普通字符串（向后兼容 to_dict 等序列化路径）。"""
+        assert ScanMode.FAST.value == "fast"
+        assert type(ScanMode.FAST.value) is str
 
 
 # ============================================================

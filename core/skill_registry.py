@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.di import register_resetter
+
 try:
     import yaml  # PyYAML，PentestAgent 已依赖 mitmproxy 间接装上
     _HAS_YAML = True
@@ -331,6 +333,17 @@ def reload_registry() -> SkillRegistry:
     return _registry
 
 
+def reset_registry() -> None:
+    """重置 SkillRegistry 单例为 None（下次 get_registry 懒加载重建）。
+
+    与 reload_registry 的区别：不立即触发扫描，仅置空，供测试隔离使用
+    （已通过 core.di.register_resetter 注册，可由 reset_singletons 统一调用）。
+    """
+    global _registry
+    _registry = None
+    reset_exploit_skill_map()
+
+
 def find_skill_path(skill_name: str) -> Path | None:
     """按 SKILL name（目录名）找到 SKILL.md 路径。"""
     reg = get_registry()
@@ -442,3 +455,8 @@ def reset_exploit_skill_map() -> None:
     """重置 exploit skill 映射缓存（热重载时调用）。"""
     global _EXPLOIT_SKILL_MAP
     _EXPLOIT_SKILL_MAP = None
+
+
+# ---- 注册到 core.di 统一单例重置注册表（测试隔离用）----
+register_resetter("skill_registry", reset_registry)
+register_resetter("exploit_skill_map", reset_exploit_skill_map)

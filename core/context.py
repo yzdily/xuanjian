@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from core.llm import LLMClient, Message, estimate_messages_tokens
+from core.prompts import load_prompt
 
 
 # ---- 压缩触发阈值 ----
@@ -23,35 +24,11 @@ COMPRESS_THRESHOLD = int(os.getenv("CONTEXT_COMPRESS_THRESHOLD", "30"))
 # 可通过环境变量 CONTEXT_TOKEN_COMPRESS_THRESHOLD 覆盖
 CONTEXT_TOKEN_COMPRESS_THRESHOLD = int(os.getenv("CONTEXT_TOKEN_COMPRESS_THRESHOLD", "24000"))
 
-COMPRESS_PROMPT = """你是一个渗透测试过程记录压缩器。请将以下对话历史压缩为精简摘要，保留：
-1. 已发现的所有资产信息（URL、API端点、技术栈、Cookie/Token 结构）
-2. 已尝试的攻击方向及结果（成功/失败/待验证）
-3. 已确认的漏洞（含重放步骤）
-4. 当前正在推进的方向和下一步计划
-
-丢弃：
-- 工具的原始输出（只保留关键发现）
-- 重复的失败尝试
-- 闲聊和确认性回复
-
-输出格式为 Markdown，分为"资产"、"已测试"、"漏洞"、"当前方向"四个部分。"""
+COMPRESS_PROMPT = load_prompt("compress")
 
 # ★ 2026-05-28：BrowseWorker 专用压缩 prompt
 # 针对浏览器操作场景优化，重点保留 checklist 进度和 selector 失败记录
-BROWSE_COMPRESS_PROMPT = """你是一个浏览器操作过程记录压缩器。请将以下对话历史压缩为精简摘要，保留：
-1. 已完成的 ✅ 项目编号列表（如：已完成 ✅1、✅2、✅5、✅8）
-2. 当前正在操作的 ⬜ 编号和对应页面 URL
-3. 遇到的 selector 失败记录（哪些被跳过了，原因是什么）
-4. 已抓到的关键 API 端点摘要（方法 + 路径，不需要完整 URL）
-5. 发现的异常情况（如：某页面需要额外权限、某功能跳转到外部系统）
-
-丢弃：
-- proxy_get_traffic 的完整流量输出（只保留 API 端点列表）
-- browser_get_content 的完整 DOM 内容（只保留关键表单和按钮信息）
-- 重复的截图确认消息
-- browser_click/browser_fill 的成功确认（只保留失败的）
-
-输出格式为 Markdown，分为"已完成"、"进行中"、"跳过/失败"、"已抓API"四个部分。"""
+BROWSE_COMPRESS_PROMPT = load_prompt("browse_compress")
 
 
 class ContextManager:

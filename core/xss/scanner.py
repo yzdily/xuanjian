@@ -329,7 +329,18 @@ class XssScanner:
         # ============================================================
         # Step 6: DOM XSS 静态分析
         # ============================================================
-        if self.enable_dom_scan:
+        # ★ SEC-6: 静态官网/门户收敛 — DOM XSS 依赖动态交互，
+        # 对纯静态站点（无表单或仅登录表单）跳过以节省 112s+ 流水线（8.2.txt L133 暴露的问题）
+        _sec6_is_static_site = False
+        try:
+            _bu = getattr(self.sitemap, "business_understanding", {}) or {}
+            _domain = (_bu.get("understanding") or {}).get("domain", {}) if isinstance(_bu, dict) else {}
+            _domain_label = (_domain.get("label", "") or "").lower() if isinstance(_domain, dict) else ""
+            if any(kw in _domain_label for kw in ("静态", "门户", "官网", "static", "portal")):
+                _sec6_is_static_site = True
+        except Exception:
+            pass
+        if self.enable_dom_scan and not _sec6_is_static_site:
             yield {"type": "xss_step", "data": "🔬 Step 6: DOM XSS 静态分析"}
             try:
                 dom_cands = scan_sitemap_for_dom_xss(self.sitemap)
@@ -344,7 +355,8 @@ class XssScanner:
         # ============================================================
         # Step 7: postMessage / DOM Clobbering
         # ============================================================
-        if self.enable_postmessage:
+        # ★ SEC-6: 静态站点收敛 — postMessage/Clobbering 依赖动态页面交互
+        if self.enable_postmessage and not _sec6_is_static_site:
             yield {"type": "xss_step", "data": "📩 Step 7: postMessage / DOM Clobbering"}
             try:
                 from core.xss.postmessage_scanner import PostMessageScanner
@@ -375,7 +387,8 @@ class XssScanner:
         # ============================================================
         # Step 8: 文件上传 XSS
         # ============================================================
-        if self.enable_upload_xss:
+        # ★ SEC-6: 静态站点收敛 — 文件上传 XSS 需要上传端点，静态站点通常无
+        if self.enable_upload_xss and not _sec6_is_static_site:
             yield {"type": "xss_step", "data": "📤 Step 8: 文件上传 XSS"}
             try:
                 from core.xss.upload_xss import UploadXssScanner

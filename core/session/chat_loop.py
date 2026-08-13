@@ -19,6 +19,7 @@ from core.config import MAX_TOOL_RESULT, CONTEXT_BATCH_SIZE, MAIN_MAX_ROUNDS, RE
 from core.tools import ALL_MAIN_TOOLS
 from core.intent import parse_user_intent
 from core.log import get_logger, metrics
+from core.prompts import load_prompt
 # ★ 统一的工具调用 arguments 解析（避免 JSON 解析失败被静默吞掉）
 from core.llm import parse_tool_call_arguments, Message, ContextLimitError
 from core.scan_store import upsert_scan, finish_scan as _finish_scan
@@ -521,10 +522,7 @@ class ChatLoopMixin:
                     )
                     return
                 self.current_context.add_system(
-                    "你是游刃AISec自动化渗透智能体。用户还没有给你明确的目标。\n"
-                    "请根据用户的输入自然回复，引导用户提供：\n"
-                    "1. 目标 URL（必须）\n2. 测试账号密码（如果有）\n3. 特别关注的功能或已知信息（可选）\n\n"
-                    "不要编造目标，不要开始测试。"
+                    load_prompt("chat_loop_no_target")
                 )
                 self.current_context.add_user(user_message)
                 messages = self.current_context.get_messages()
@@ -928,13 +926,20 @@ class ChatLoopMixin:
             _skip_anon = bool(credentials)
             # ★ 根据 scan_mode 读取 ScanConfig 的爬虫配置（fast 模式用短超时/少页面）
             from core.scan_strategies import get_scan_strategy
-            _crawl_cfg = get_scan_strategy(getattr(self, "user_scan_mode", "batch"))
+            _crawl_cfg = get_scan_strategy(getattr(self, "user_scan_mode", "standard"))
             _crawl_max_pages = _crawl_cfg.crawl_max_pages
             _crawl_hard_timeout = _crawl_cfg.total_timeout
             # fast 模式大幅缩短爬虫超时（crawl_timeout 是给纯爬虫的，total_timeout 是整轮）
             if _crawl_cfg.mode.value == "fast":
                 _crawl_hard_timeout = min(_crawl_cfg.crawl_timeout, 240)
-                _crawl_silent = 60
+                # ★ PM-3: 静默超时自适应 — 登录页/单页目标保持 60s（zhenduan 诊断③：
+                #   登录页翻来覆去爬是浪费）；多页站点放宽到 120s（8.2.txt 日志 L47
+                #   暴露 szfgs 34 菜单 60s 就停、剩 3141 未访问的问题）
+                _tgt_low = (url or "").lower()
+                if "/login" in _tgt_low or "/signin" in _tgt_low:
+                    _crawl_silent = 60
+                else:
+                    _crawl_silent = 120
             else:
                 _crawl_silent = 180
             crawler = AutoCrawler(
@@ -947,6 +952,37 @@ class ChatLoopMixin:
             yield self._event("system",
                 "正在登录爬取站点（跳过匿名，直接使用凭证）..." if credentials
                 else "正在匿名爬取站点（进度实时更新）...")
+
+            # ★ SEC-2: Phase 0 爬虫启动前做 mitmproxy 健康检查 + 自动重启
+            # orchestrator 已有 Phase 2 检查，但 Phase 0 爬虫产生的流量若没代理会丢失。
+            # 提前到爬虫前检查，失败则告警（降级写入已由 crawler_core _write_flow_fallback 兜底，
+            # POST body 已通过 on_request 捕获到 captured 并由 _write_flow_fallback 写入 flows.jsonl）。
+            try:
+                from core.parallel.orchestrator import (
+                    _check_mitmproxy_health, _try_restart_mitmproxy,
+                )
+                _p0_port = int(os.getenv("PROXY_PORT", "18080"))
+                if not _check_mitmproxy_health(_p0_port):
+                    yield self._event("system",
+                        f"⚠️ Phase 0: mitmproxy 代理不可用（端口 {_p0_port}），尝试自动重启")
+                    _p0_ok = _try_restart_mitmproxy(_p0_port)
+                    if _p0_ok:
+                        yield self._event("system",
+                            f"✅ Phase 0: mitmproxy 代理已自动重启（端口 {_p0_port}）")
+                    else:
+                        # 持久化降级标记到 sitemap，供报告横幅渲染（与 Phase 2 标记一致）
+                        try:
+                            self.sitemap.traffic_degraded_reason = (
+                                f"Phase 0: mitmproxy 代理不可用且重启失败（端口 {_p0_port}），"
+                                "流量记录依赖 Playwright 降级写入，flows.jsonl 可能不完整。"
+                            )
+                        except Exception:
+                            pass
+                        yield self._event("system",
+                            f"⚠️ Phase 0: mitmproxy 重启失败，"
+                            f"流量将依赖 Playwright 降级写入（POST body 已包含）")
+            except Exception as _e:
+                log.debug("Phase 0 mitmproxy 健康检查异常（非致命）: %s", _e)
 
             # ★ 2026-05-26：监控循环抽到 _run_crawler_with_timeout，消除与第二轮重复的 80 行
             # 主轮特性：周期保存 sitemap（30s）、silent_timeout 需 elapsed >= 60 才生效
@@ -1139,6 +1175,19 @@ class ChatLoopMixin:
                             f"📋 表单接口桥接: 补登 {len(_form_added)} 个未提交表单的提交接口（"
                             f"{'; '.join(_form_added[:3])}"
                             f"{'...' if len(_form_added) > 3 else ''}）")
+                    else:
+                        # ★ SEC-3: fast 模式 + 登录页目标但桥接 0 产出 → 明确告警
+                        # 避免"空心扫描"被 ✅ 伪装成正常（zhenduan 诊断②）
+                        _tgt_low = (self.target_url or "").lower()
+                        _forms_cnt = len(crawl_result.get("forms", []) or [])
+                        if ("/login" in _tgt_low or "/signin" in _tgt_low) and _forms_cnt > 0:
+                            yield self._event("system",
+                                f"⚠️ 表单接口桥接: 目标含登录页且发现 {_forms_cnt} 个表单，"
+                                f"但桥接补登 0 个接口 — 检查表单 action 是否为有效 HTTP 端点")
+                        elif _forms_cnt > 0:
+                            yield self._event("system",
+                                f"⚠️ 表单接口桥接: 发现 {_forms_cnt} 个表单但补登 0 个接口，"
+                                f"可能表单 action 全为非业务（javascript:/mailto:）")
                 except Exception as _form_err:
                     log.warning("表单接口桥接失败: %s", _form_err)
 
@@ -1529,13 +1578,29 @@ class ChatLoopMixin:
                             _upgrade_reason = f"业务 API 数量较多（{len(self.sitemap.apis)} 个），FAST 模式覆盖不足"
 
                     if _should_upgrade:
+                        # ★ PM-5: 升级决策增加目标类型维度 — 纯静态官网/门户即使 API 数
+                        # 达标，STANDARD 模式增量也有限（8.2.txt L64 升级后仍 0 漏洞）
+                        _pm5_static = False
+                        try:
+                            _bu = getattr(self.sitemap, "business_understanding", {}) or {}
+                            _dl = ((_bu.get("understanding") or {}).get("domain", {}) or {}).get("label", "") or ""
+                            if any(kw in _dl.lower() for kw in ("静态", "门户", "官网", "static", "portal")):
+                                _pm5_static = True
+                        except Exception:
+                            pass
+                        if _pm5_static:
+                            yield self._event("system",
+                                f"ℹ️ 目标为静态官网/门户，即使 API 达 {_high_risk_count} 个高危 / "
+                                f"{len(self.sitemap.apis)} 个业务 API，STANDARD 模式增量有限，"
+                                f"建议保持 FAST 或手动指定 STANDARD")
                         log.info("[OPT2] 自动升级: FAST → STANDARD（原因: %s）", _upgrade_reason)
                         # 切换到 STANDARD 模式（orchestrator 通过 get_scan_strategy 读取 user_scan_mode）
                         if self._original_user_scan_mode is None:
                             self._original_user_scan_mode = "fast"
                         self.user_scan_mode = "standard"
                         self._mode_escalated = True
-                        yield self._event("system", f"⚡ 扫描模式自动升级: FAST → STANDARD（{_upgrade_reason}）")
+                        if not _pm5_static:
+                            yield self._event("system", f"⚡ 扫描模式自动升级: FAST → STANDARD（{_upgrade_reason}）")
 
                 # ★ FAST 模式：跳过 Phase 1 LLM 分析，直接推进到 Phase 2 本地规则引擎测试
                 _user_mode = getattr(self, "user_scan_mode", "smart")

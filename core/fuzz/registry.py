@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from core.log import get_logger
 from core.fuzz.base import BaseFuzzer, FuzzTask, FuzzEvidence, FuzzResult
+from core.di import register_resetter
 
 log = get_logger("fuzz.registry")
 
@@ -118,3 +119,7 @@ def reset_fuzz_router() -> None:
     """重置全局路由器（测试用）。"""
     global _router
     _router = None
+
+
+# ---- 注册到 core.di 统一单例重置注册表（测试隔离用）----
+register_resetter("fuzz_router", reset_fuzz_router)

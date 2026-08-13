@@ -1,6 +1,11 @@
 """
 ScanStrategies — 扫描策略模块
 
+【两个正交维度，不可混用】
+- 深度维度（本模块，ScanMode）：FAST / STANDARD / DEEP / SMART —— 决定是否调 LLM、并发数、超时、跳过哪些阶段。
+- 编排维度（session.scan_mode + strategy_base）：batch 批处理 / realtime 实时 / packet 包测 —— 决定任务如何编排（全站并行 / 边爬边测 / 单包）。
+get_scan_strategy 只接收深度模式；batch 在此仅作跨维兼容桥接（显式映射到 STANDARD 深度），不应作为深度默认值传入。
+
 三档扫描策略 + 智能选择：
 - 快速扫描: 仅本地规则引擎，不走 LLM
 - 标准扫描: 本地规则 + LLM 分析（减少 LLM 调用）
@@ -23,8 +28,20 @@ from core.log import get_logger
 log = get_logger("scan_strategies")
 
 
-class ScanMode(Enum):
-    """扫描模式"""
+class ScanMode(str, Enum):
+    """扫描模式（StrEnum 语义：成员本身即字符串）。
+
+    修复云序列化 bug：原 ``class ScanMode(Enum)`` 下 ``ScanMode.FAST == "fast"``
+    恒为 ``False``，导致跨进程/跨服务传递的模式字符串与枚举成员比较失效，序列化时
+    也需显式 ``.value``。改为 ``(str, Enum)`` 后成员即为字符串子类：
+
+    - ``ScanMode.FAST == "fast"`` → ``True``
+    - ``isinstance(ScanMode.FAST, str)`` → ``True``
+    - ``json.dumps(ScanMode.FAST)`` → ``'"fast"'``（原生序列化为字符串）
+
+    兼容性：``.value`` / ``is`` / 成员间 ``==`` 行为不变；``ScanMode(member)`` 仍返回
+    该成员自身（因成员 hash/eq 与其字符串值一致）。
+    """
     FAST = "fast"        # 快速：仅本地规则
     STANDARD = "standard"  # 标准：本地规则 + LLM 分析
     DEEP = "deep"        # 深度：本地规则 + 完整 LLM 流程
@@ -463,14 +480,19 @@ class ScanStrategyConfig:
 
 
 def get_scan_strategy(user_mode: str) -> ScanStrategyConfig:
-    """根据用户选择的模式返回策略配置（供 orchestrator 调用）"""
+    """根据【深度维度】模式返回策略配置（供 orchestrator 调用）。
+
+    仅接收深度模式（fast/standard/deep/smart）。batch 是编排维度名，
+    此处仅作跨维兼容桥接显式映射到 STANDARD 深度，不应作为深度默认值传入；
+    调用方应传入 session.user_scan_mode（深度），默认值用 "standard" 而非 "batch"。
+    """
     mode_map = {
         "fast": ScanMode.FAST,
-        "quick": ScanMode.FAST,   # ★ 兼容前端 quick 别名
+        "quick": ScanMode.FAST,   # ★ 兼容前端 quick 别名（同为深度维度）
         "standard": ScanMode.STANDARD,
         "deep": ScanMode.DEEP,
         "smart": ScanMode.SMART,
-        "batch": ScanMode.STANDARD,  # 兼容旧模式名
+        "batch": ScanMode.STANDARD,  # ★ 跨维兼容桥接：编排模式 batch → STANDARD 深度（仅向后兼容，勿作深度默认）
     }
     scan_mode = mode_map.get(user_mode, ScanMode.STANDARD)
     cfg = ScanConfig.from_mode(scan_mode)

@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 # ★ exploit skill 加载
 from core.skill_registry import find_exploit_skills_for_vuln
+from core.prompts import load_prompt
 
 # 允许 harm_validation LLM 使用的工具子集（只读 + 重发请求，不改 sitemap/不写笔记）
 HARM_TOOL_NAMES = {
@@ -280,11 +281,7 @@ def build_rescue_messages(
             trace_lines.append(f"- {tn}({args_brief}) → {res_brief}")
         trace_summary = "\n\n## 你刚才调过的工具（最后 5 条）\n" + "\n".join(trace_lines)
 
-    rescue_system = (
-        "你是 SRC 漏洞审核员。**只做一件事：输出 JSON 数组**。\n"
-        "不要解释，不要思考，不要调用任何工具，不要输出任何前后缀。\n"
-        "如果某字段不确定，用空字符串 \"\" 占位，但必须保证 JSON 合法。"
-    )
+    rescue_system = load_prompt("rescue_system")
 
     rescue_user = (
         f"请对以下 {len(vulns)} 个候选漏洞输出最终裁决 JSON 数组：\n\n"

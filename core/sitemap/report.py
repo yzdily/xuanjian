@@ -215,6 +215,18 @@ class ReportMixin:
             f"",
         ]
 
+        # ★ PM-1: 可测性覆盖率透明化 — 业务 API ≤ 2 或功能点=0 时显示红色横幅
+        # 避免"扫描完成 0 漏洞"的空心假象误导用户（zhenduan 诊断①空心扫描）
+        _pm1_business_apis = sum(
+            1 for a in (getattr(self, "apis", {}) or {}).values()
+            if isinstance(a, dict) and a.get("discovered_by") != "dirscan"
+        )
+        _pm1_feat_cnt = cov.get('total_deduped', cov['total'])
+        if _pm1_feat_cnt == 0 or _pm1_business_apis <= 2:
+            lines.append(f"> 🔴 **可测性覆盖率不足**：业务 API 仅 {_pm1_business_apis} 个，功能点 {_pm1_feat_cnt} 个。")
+            lines.append(f"> 本次扫描覆盖严重不足，0 漏洞不代表目标安全，建议补充凭证后重测或更换扫描模式。")
+            lines.append(f"")
+
         # ★ 终止原因横幅：Fast 模式 / 降级模式等情况下在报告头部醒目提示
         # 避免"98.6% 完成 0 漏洞"的空心假象误导用户
         _term_reason = getattr(self, "termination_reason", "") or ""
@@ -231,6 +243,33 @@ class ReportMixin:
             lines.append(f"> 🔴 **流量抓取降级模式**：{_traffic_degraded_reason or 'mitmproxy 代理不可用，flows.jsonl 由 Playwright 降级写入，可能不完整。'}")
             lines.append(f"> 流量不完整可能影响补测覆盖度，请审慎评估本次测试结果。")
             lines.append(f"")
+
+        # ★ PM-2: 能力降级清单 — 汇总本次扫描中失效的关键能力及影响
+        # 让用户一眼看到"哪些关键环节失效了"，而非只看末尾"扫描完成"
+        _pm2_degradations: list[str] = []
+        if _traffic_degraded:
+            _pm2_degradations.append(
+                f"- **mitmproxy 流量抓取降级**：{_traffic_degraded_reason or '代理不可用'} → 补测覆盖度可能不足"
+            )
+        # harm_validation 失败标记（Phase 2.6 错误时由 orchestrator 写入）
+        _harm_err = getattr(self, "_harm_validation_error", "") or ""
+        if _harm_err:
+            _pm2_degradations.append(
+                f"- **危害验证失败**：{_harm_err} → 缺少 SRC 收录裁决，漏洞等级可能偏低"
+            )
+        # FastScanner 0 命中标记
+        _fast_zero = getattr(self, "_fast_scanner_zero_hit", False)
+        if _fast_zero:
+            _pm2_degradations.append(
+                f"- **FastScanner 本地规则 0 命中**：规则引擎未生效，可能遗漏信息泄露/未授权类漏洞"
+            )
+        if _pm2_degradations:
+            lines.append("### 1.2 能力降级清单")
+            lines.append("")
+            lines.append("> 本次扫描存在以下能力降级，结果可能不完整：")
+            lines.append("")
+            lines.extend(_pm2_degradations)
+            lines.append("")
 
         lines.extend(self._render_execution_quality_summary())
 

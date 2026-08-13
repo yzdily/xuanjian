@@ -21,45 +21,9 @@ from typing import AsyncGenerator
 
 from core.sitemap import Sitemap, Priority, CheckItem
 from core.log import get_logger
+from core.prompts import load_template
 
 log = get_logger("session.idle")
-
-
-# ---- LLM 分析数据包的 prompt ----
-_PACKET_ANALYSIS_PROMPT = """\
-你是渗透测试专家。请分析以下 HTTP 数据包，判断该接口**最可能存在**的漏洞类型。
-
-## HTTP 数据包
-
-{packet_summary}
-
-## 分析要求
-
-1. 根据接口的 **业务语义**（不是 HTTP 方法）判断：
-   - 有用户输入进入数据库查询？→ SQL注入
-   - 操作他人资源（ID/用户ID参数）？→ IDOR越权
-   - 无需认证即可访问敏感数据？→ 未授权访问
-   - 响应包含敏感数据？→ 信息泄露
-   - 有 URL/回调参数？→ SSRF
-   - 有文件上传？→ 文件上传绕过
-   - 涉及金额/余额？→ 金额篡改/竞态条件
-2. **排除不相关的类型**：纯 JSON API 不需要测 XSS/CSRF/文件上传/XXE/SSTI（除非有明确证据）
-3. 按可能性从高到低排序，**最多 8 项**
-
-## 输出格式
-
-只输出 JSON 数组，不要解释：
-```json
-["SQL注入", "IDOR越权", "未授权访问"]
-```
-
-可选的漏洞类型（必须用这些标准名称）：
-SQL注入, XSS, 存储型XSS, IDOR越权, 未授权访问, 垂直越权, 信息泄露,
-CSRF, SSRF, 文件上传绕过, XXE, 命令注入, SSTI, 开放重定向,
-金额篡改, 竞态条件, Mass Assignment, 越权导出, 密码重置逻辑,
-弱密码/默认密码, 验证码绕过, 短信轰炸, Cookie/JWT安全,
-CORS配置, 用户枚举, Host头投毒
-"""
 
 
 class IdlePhaseMixin:
@@ -161,7 +125,7 @@ class IdlePhaseMixin:
         try:
             from core.llm import Message
             llm_messages = [
-                Message(role="system", content=_PACKET_ANALYSIS_PROMPT.format(packet_summary=packet_summary)),
+                Message(role="system", content=load_template("packet_analysis", packet_summary=packet_summary)),
                 Message(role="user", content="请分析上述数据包，输出最可能存在的漏洞类型列表。"),
             ]
             response = await asyncio.to_thread(

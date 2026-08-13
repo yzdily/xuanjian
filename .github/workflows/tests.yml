@@ -1,0 +1,51 @@
+# ============================================================
+# XuanJian 测试门禁 — 真 CI Gate
+# 触发: push / PR → main
+# 门禁: pytest --cov-fail-under=70（覆盖率 < 70% 则 CI 失败）
+# 跳过: slow / e2e / llm 标记（需真实浏览器/目标/LLM Provider）
+# ============================================================
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # ---------- 1. 检出代码 ----------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- 2. 安装 Python ----------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ---------- 3. 安装依赖 ----------
+      # pip install -e ".[dev]" 安装运行时依赖 + dev extras（pytest/cov/ruff）
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # ---------- 4. 运行测试 + 覆盖率门禁 ----------
+      # pyproject.toml addopts 已含 --cov=core/web/mcp_servers + xml 报告
+      # --cov-fail-under=70 覆盖 pyproject.toml 的 fail_under=0（本地默认宽松）
+      # -m 排除需要真实资源的标记：slow(浏览器/LLM) / e2e(真实目标) / llm(Provider)
+      - name: Run tests (coverage gate ≥ 70%)
+        run: pytest -m "not slow and not e2e and not llm" --cov-fail-under=70
+
+      # ---------- 5. 上传覆盖率报告 ----------
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn

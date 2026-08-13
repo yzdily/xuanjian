@@ -399,7 +399,14 @@ def build_context_for_llm(
             if v.get("url"):
                 target_url = v["url"]
                 break
-        vuln_types = " ".join({v.get("vuln_type", "") for v in vulnerabilities if v.get("vuln_type")})
+        # ★ SEC-1: 防御非字符串 vuln_type（list/dict/slice 等）导致 set 抛
+        # 'unhashable type' 而让 Phase 2.6 整体崩溃。
+        _vt_set: set[str] = set()
+        for v in vulnerabilities:
+            vt = v.get("vuln_type", "")
+            if isinstance(vt, str) and vt:
+                _vt_set.add(vt)
+        vuln_types = " ".join(_vt_set)
         lessons = _mem.recall(target_url=target_url, vuln_type=vuln_types,
                              query="未授权访问 信息泄露 公开信息 漏洞误判", limit=10)
         if lessons:
