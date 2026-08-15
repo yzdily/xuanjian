@@ -17,6 +17,7 @@ AutoCrawler — 主类（编排层）。
 - 表单填写与提交        → core/crawler/form_mixin.py
 - 结果构建与对比验证    → core/crawler/result_builder_mixin.py
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -186,32 +187,10 @@ async def get_cdp_flows(target_url: str, timeout: int = 30) -> list[dict]:
             )
             page = await context.new_page()
 
-            # 收集 XHR/Fetch 请求
+            # 收集 XHR/Fetch 请求（监听器已提升为模块级 _cdp_on_request / _cdp_on_response）
             captured = []
-
-            async def on_request(request):
-                if request.resource_type in ("xhr", "fetch"):
-                    captured.append({
-                        "method": request.method,
-                        "url": request.url,
-                        "request_headers": dict(request.headers),
-                        "request_body": request.post_data or "",
-                        "timestamp": _asyncio.get_event_loop().time(),
-                    })
-
-            async def on_response(response):
-                # 匹配请求并补充响应信息
-                for item in captured:
-                    if item["url"] == response.url and "status" not in item:
-                        try:
-                            item["status"] = response.status
-                            item["response_headers"] = dict(response.headers)
-                            item["response_body"] = await response.text() if response.status < 400 else ""
-                        except Exception:
-                            pass
-
-            page.on("request", on_request)
-            page.on("response", on_response)
+            page.on("request", lambda r: _cdp_on_request(r, captured))
+            page.on("response", lambda r: _cdp_on_response(r, captured))
 
             # 导航到目标页面并等待
             try:
@@ -233,6 +212,219 @@ async def get_cdp_flows(target_url: str, timeout: int = 30) -> list[dict]:
         log.debug("[CDP] 流量捕获失败: %s", e)
 
     return flows
+
+
+# ============================================================
+# 模块级纯函数 / 监听器（D6 阶段 0：2026-08-14）
+# 从 AutoCrawler 方法内提升的嵌套 def，闭包捕获的变量改为显式参数，
+# 保持运行时行为不变。便于单测与后续按阶段 decompose。
+# 说明：含大段内嵌 JS 模板串或核心流量副作用的嵌套函数
+#（_expand_menu_level、_crawl_round 的请求/响应监听器）按 P0-2 原则
+# 推迟到「先补行为测试再 decompose」的 phase 3 处理。
+# ============================================================
+
+def _cdp_on_request(request, captured: list) -> None:
+    """get_cdp_flows 的 XHR/Fetch 请求监听器（原嵌套函数，同步）。"""
+    if request.resource_type in ("xhr", "fetch"):
+        captured.append({
+            "method": request.method,
+            "url": request.url,
+            "request_headers": dict(request.headers),
+            "request_body": request.post_data or "",
+            "timestamp": time.monotonic(),
+        })
+
+
+async def _cdp_on_response(response, captured: list) -> None:
+    """get_cdp_flows 的响应监听器（原嵌套函数）。"""
+    for item in captured:
+        if item["url"] == response.url and "status" not in item:
+            try:
+                item["status"] = response.status
+                item["response_headers"] = dict(response.headers)
+                item["response_body"] = await response.text() if response.status < 400 else ""
+            except Exception:
+                pass
+
+
+def _collect_paths_from_menu_node(node, out: set[str]) -> None:
+    """递归从菜单树节点中提取 path 字段（原 _crawl_round 内嵌套函数）。"""
+    if not isinstance(node, (dict, list)):
+        return
+    if isinstance(node, list):
+        for item in node:
+            _collect_paths_from_menu_node(item, out)
+        return
+    # dict：尝试常见的 path 字段名
+    for key in ("path", "url", "router", "route", "menuUrl", "menuPath"):
+        v = node.get(key)
+        if isinstance(v, str) and v.strip() and not v.startswith(("http://", "https://", "javascript:", "#")):
+            # 排除明显的非路径值（如全大写组件名）
+            p = v.strip()
+            if p.startswith("/") or "/" in p:
+                out.add(p if p.startswith("/") else "/" + p)
+    # 递归 children/childList/subMenus 等
+    for ckey in ("children", "childList", "subMenus", "subList", "items", "nodes", "menus"):
+        if ckey in node:
+            _collect_paths_from_menu_node(node[ckey], out)
+
+
+def _collect_ids_from_url(url: str, id_pool: dict[str, set[str]]) -> None:
+    """从 URL 中提取数字/UUID ID，按前缀分组存入 id_pool（原 _crawl_round 内嵌套函数）。"""
+    try:
+        from urllib.parse import urlparse, parse_qs
+        p = urlparse(url)
+        # 1. query 参数里的 id
+        qs = parse_qs(p.query)
+        for k, vs in qs.items():
+            if k.lower() in ("id", "userid", "user_id", "uid", "rid", "role_id",
+                             "menu_id", "menuid", "data_id", "dataid", "biz_id",
+                             "parent_id", "parentid", "row_id", "record_id", "key"):
+                for v in vs:
+                    if v and (v.isdigit() or len(v) > 8):
+                        # 用 path 作为前缀
+                        prefix = p.path.rstrip("/")
+                        id_pool.setdefault(prefix, set()).add(v)
+        # 2. 路径中的纯数字段或 UUID 段：/api/users/123 → 把 /api/users 作为前缀
+        segments = p.path.strip("/").split("/")
+        for i, seg in enumerate(segments):
+            is_id = seg.isdigit() or (
+                len(seg) >= 8 and all(c in "0123456789abcdef-" for c in seg.lower())
+            )
+            if is_id and i > 0:
+                prefix = "/" + "/".join(segments[:i])
+                id_pool.setdefault(prefix, set()).add(seg)
+    except Exception as _e:
+        log.debug("URL ID 收集失败: %s", _e)
+
+
+def _is_menu_tree_structure(data) -> bool:
+    """启发式检测：判断一个 JSON 数据是否是菜单树结构（原 _crawl_round 内嵌套函数）。"""
+    if not isinstance(data, list) or len(data) < 3:
+        return False
+    name_keys = ("name", "title", "label", "menuName", "meta")
+    path_keys = ("path", "url", "route", "router", "menuUrl", "menuPath", "component")
+    children_keys = ("children", "childList", "subMenus", "subList", "items", "nodes", "menus", "routes")
+
+    has_name = 0
+    has_path = 0
+    has_children = 0
+    sample = data[:20]  # 只检查前 20 个节点（性能考虑）
+    for node in sample:
+        if not isinstance(node, dict):
+            return False
+        if any(k in node for k in name_keys):
+            has_name += 1
+        if any(k in node for k in path_keys):
+            has_path += 1
+        if any(k in node and isinstance(node[k], list) and node[k] for k in children_keys):
+            has_children += 1
+
+    total = len(sample)
+    # 至少 60% 有名称字段，30% 有路径字段，20% 有子节点
+    return (has_name / total >= 0.6 and
+            has_path / total >= 0.3 and
+            has_children / total >= 0.2)
+
+
+def _menu_fingerprint(item: dict, page_url: str) -> tuple[str, str] | None:
+    """菜单项任务级去重指纹（原 _crawl_page_inner 内嵌套函数）。"""
+    text = (item.get("text") or "").strip()
+    if not text:
+        return None
+    href = (item.get("href") or "").strip()
+    if href:
+        try:
+            p = urlparse(href)
+            # host + path + fragment（不带 query 追踪参数）
+            host = (p.netloc or "").lower()
+            path = p.path or "/"
+            frag = ("#" + p.fragment) if p.fragment else ""
+            key = f"{host}{path}{frag}"
+            return (text, key)
+        except Exception:
+            return (text, href)
+    else:
+        # 无 href 按钮：仅 text 做全站指纹
+        return (text, "@btn")
+
+
+def _get_wait_params(menu_item: dict, menu_mode) -> dict:
+    """根据菜单评分返回自适应等待参数（原 _crawl_page_inner 内嵌套函数）。"""
+    try:
+        from core.crawler.menu_ranker import score_menu as _sm
+        _s = _sm(menu_item, mode=menu_mode)
+        if _s < 0:
+            return {"initial_quiet_s": 2.0, "max_wait_s": 5.0}
+    except Exception:
+        pass
+    return {}  # 使用默认值
+
+
+def _noise_listener(req, noise) -> None:
+    """噪音探测器请求监听器（原 _crawl_page 内嵌套函数）。"""
+    try:
+        noise.record(req.url, req.resource_type)
+    except Exception as _e:
+        log.debug("噪音探测器记录失败: %s", _e)
+
+
+async def _smart_wait_business_xhr(
+    captured_ref: list,
+    before_idx: int,
+    self,
+    *,
+    initial_quiet_s: float = 5.0,
+    settle_quiet_s: float = 0.8,
+    max_wait_s: float = 9.0,
+) -> int:
+    """点击菜单后，自适应等待业务 API 完成（原 _crawl_page_inner 内嵌套函数）。
+    返回：等待结束时新增的业务（in-scope）请求数。
+
+    2026-05-23: initial_quiet_s 从 0.5 → 5.0，max_wait_s 从 4.0 → 9.0
+    原因：SPA hash 路由跳转后，前端需要 解析路由→挂载组件→useEffect发XHR，
+    整个链路 1-3 秒是常态。0.5s 静默期导致大量菜单点击被判"0 个 API"，
+    实际 API 请求在 0.5s 后才发出但已经没人等了。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_wait_s
+    last_business_count = 0
+    last_business_ts = loop.time()
+
+    # 第一阶段：先给 initial_quiet_s 静默期，观察是否有 in-scope 请求触发
+    t0 = loop.time()
+    while loop.time() - t0 < initial_quiet_s:
+        # 数 in-scope 请求
+        cnt = 0
+        for r in captured_ref[before_idx:]:
+            if r.get("resource_type") in ("xhr", "fetch") and self._is_in_scope(r.get("url", "")):
+                cnt += 1
+        if cnt > last_business_count:
+            last_business_count = cnt
+            last_business_ts = loop.time()
+            break  # 业务请求已开始 → 进第二阶段
+        await asyncio.sleep(0.1)
+
+    if last_business_count == 0:
+        # 静默期内无业务请求 → 大概率静态/锚点跳转，无需再等
+        return 0
+
+    # 第二阶段：业务请求已触发，等待"settle_quiet_s 内无新请求"
+    while loop.time() < deadline:
+        cnt = 0
+        for r in captured_ref[before_idx:]:
+            if r.get("resource_type") in ("xhr", "fetch") and self._is_in_scope(r.get("url", "")):
+                cnt += 1
+        if cnt > last_business_count:
+            last_business_count = cnt
+            last_business_ts = loop.time()
+        # 业务请求 settle_quiet_s 内无新增 → 认为完成
+        if loop.time() - last_business_ts >= settle_quiet_s:
+            return last_business_count
+        await asyncio.sleep(0.15)
+
+    # 总等待上限到了，强制返回（保护慢业务也得让步）
+    return last_business_count
 
 
 class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuilderMixin, SPAMixin):
@@ -850,54 +1042,9 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         # 使用实例变量，跨轮次累积
         _menu_tree_responses = self._menu_tree_responses
 
-        def _collect_paths_from_menu_node(node, out: set[str]):
-            """递归从菜单树节点中提取 path 字段。"""
-            if not isinstance(node, (dict, list)):
-                return
-            if isinstance(node, list):
-                for item in node:
-                    _collect_paths_from_menu_node(item, out)
-                return
-            # dict：尝试常见的 path 字段名
-            for key in ("path", "url", "router", "route", "menuUrl", "menuPath"):
-                v = node.get(key)
-                if isinstance(v, str) and v.strip() and not v.startswith(("http://", "https://", "javascript:", "#")):
-                    # 排除明显的非路径值（如全大写组件名）
-                    p = v.strip()
-                    if p.startswith("/") or "/" in p:
-                        out.add(p if p.startswith("/") else "/" + p)
-            # 递归 children/childList/subMenus 等
-            for ckey in ("children", "childList", "subMenus", "subList", "items", "nodes", "menus"):
-                if ckey in node:
-                    _collect_paths_from_menu_node(node[ckey], out)
+        # _collect_paths_from_menu_node 已提升为模块级函数
 
-        def _collect_ids_from_url(url: str):
-            """从 URL 中提取数字/UUID ID，按前缀分组存入 id_pool。"""
-            try:
-                from urllib.parse import urlparse, parse_qs
-                p = urlparse(url)
-                # 1. query 参数里的 id
-                qs = parse_qs(p.query)
-                for k, vs in qs.items():
-                    if k.lower() in ("id", "userid", "user_id", "uid", "rid", "role_id",
-                                     "menu_id", "menuid", "data_id", "dataid", "biz_id",
-                                     "parent_id", "parentid", "row_id", "record_id", "key"):
-                        for v in vs:
-                            if v and (v.isdigit() or len(v) > 8):
-                                # 用 path 作为前缀
-                                prefix = p.path.rstrip("/")
-                                id_pool.setdefault(prefix, set()).add(v)
-                # 2. 路径中的纯数字段或 UUID 段：/api/users/123 → 把 /api/users 作为前缀
-                segments = p.path.strip("/").split("/")
-                for i, seg in enumerate(segments):
-                    is_id = seg.isdigit() or (
-                        len(seg) >= 8 and all(c in "0123456789abcdef-" for c in seg.lower())
-                    )
-                    if is_id and i > 0:
-                        prefix = "/" + "/".join(segments[:i])
-                        id_pool.setdefault(prefix, set()).add(seg)
-            except Exception as _e:
-                log.debug("URL ID 收集失败: %s", _e)
+        # _collect_ids_from_url 已提升为模块级函数（调用需传 id_pool）
 
         def on_request(req):
             # ★ 2026-05-22 v3 修复：req.post_data 在 body 是二进制内容时
@@ -954,7 +1101,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                 if channels:
                     result.realtime_channels.extend(channels)
                 # 顺带从 URL 收集 ID
-                _collect_ids_from_url(req.url)
+                _collect_ids_from_url(req.url, id_pool)
             except Exception as _e:
                 # 永远不要让 listener 抛异常（会污染日志）
                 log.debug("on_request 监听器异常: %s", _e)
@@ -965,40 +1112,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
             self._api_doc_hits: list[dict] = []
         api_doc_hits = self._api_doc_hits
 
-        def _is_menu_tree_structure(data) -> bool:
-            """启发式检测：判断一个 JSON 数据是否是菜单树结构。
-
-            判定条件（满足全部）：
-            1. 是 list[dict] 且节点数 >= 3
-            2. 每个节点有 name/title/label 类字段
-            3. 至少 30% 的节点有 path/url/route 类字段
-            4. 至少 20% 的节点有 children/items 类递归字段（树深度 >= 2）
-            """
-            if not isinstance(data, list) or len(data) < 3:
-                return False
-            name_keys = ("name", "title", "label", "menuName", "meta")
-            path_keys = ("path", "url", "route", "router", "menuUrl", "menuPath", "component")
-            children_keys = ("children", "childList", "subMenus", "subList", "items", "nodes", "menus", "routes")
-
-            has_name = 0
-            has_path = 0
-            has_children = 0
-            sample = data[:20]  # 只检查前 20 个节点（性能考虑）
-            for node in sample:
-                if not isinstance(node, dict):
-                    return False
-                if any(k in node for k in name_keys):
-                    has_name += 1
-                if any(k in node for k in path_keys):
-                    has_path += 1
-                if any(k in node and isinstance(node[k], list) and node[k] for k in children_keys):
-                    has_children += 1
-
-            total = len(sample)
-            # 至少 60% 有名称字段，30% 有路径字段，20% 有子节点
-            return (has_name / total >= 0.6 and
-                    has_path / total >= 0.3 and
-                    has_children / total >= 0.2)
+        # _is_menu_tree_structure 已提升为模块级函数
 
         async def on_response(resp):
             """监听响应：菜单树 API 解析 + 启发式菜单树检测 + API 文档指纹检测。"""
@@ -1628,14 +1742,10 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         # ★ 2026-05-22 v2: 把当前页噪音探测器暴露给主循环的自适应超时机制
         self._current_page_noise_detector = _noise
 
-        def _noise_listener(req):
-            try:
-                _noise.record(req.url, req.resource_type)
-            except Exception as _e:
-                log.debug("噪音探测器记录失败: %s", _e)
-
+        # _noise_listener 已提升为模块级函数（需绑定 _noise）
+        _noise_handler = lambda r: _noise_listener(r, _noise)
         try:
-            page.on("request", _noise_listener)
+            page.on("request", _noise_handler)
         except Exception as _e:
             log.debug("注册噪音监听器失败: %s", _e)
 
@@ -1645,11 +1755,11 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         result_to_return: CrawledPage | None = None
         try:
             result_to_return = await self._crawl_page_inner(
-                page, url, captured, _noise, _noise_listener
+                page, url, captured, _noise, _noise_handler
             )
         finally:
             try:
-                page.remove_listener("request", _noise_listener)
+                page.remove_listener("request", _noise_handler)
             except Exception as _e:
                 log.debug("移除噪音监听器失败: %s", _e)
             # 清空 detector 引用，避免外层 detector_getter 拿到上一页的探测器
@@ -2352,26 +2462,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         #       Phase B 是菜单遍历，按钮型菜单出现在这里 99% 是全站导航触发器，
         #       同名 text 在不同页面行为基本一致。同名"提交"等通用按钮的损失由
         #       Phase C（按钮专属循环）兜底，不影响菜单遍历的核心目标。
-        def _menu_fingerprint(item: dict, page_url: str) -> tuple[str, str] | None:
-            text = (item.get("text") or "").strip()
-            if not text:
-                return None
-            href = (item.get("href") or "").strip()
-            if href:
-                try:
-                    p = urlparse(href)
-                    # host + path + fragment（不带 query 追踪参数）
-                    # 跨域链接保留 host（不同域同 path 不应去重）
-                    host = (p.netloc or "").lower()
-                    path = p.path or "/"
-                    frag = ("#" + p.fragment) if p.fragment else ""
-                    key = f"{host}{path}{frag}"
-                    return (text, key)
-                except Exception:
-                    return (text, href)
-            else:
-                # 无 href 按钮：仅 text 做全站指纹
-                return (text, "@btn")
+        # _menu_fingerprint 已提升为模块级函数
 
         unique_menu_items = []
         local_seen: set[tuple[str, str]] = set()  # 单页内同样要去重，避免页内同名菜单重复入列
@@ -2515,72 +2606,8 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         #   - 有 in-scope 请求 → 等到 0.8s 内不再有新业务请求 / 上限 4s（保慢业务）
         #   - 第三方 SDK 请求（不在 in-scope）不计入等待，避免 mutinyhq/linkedin 拖累
         # ★ 2026-08-05: 低价值菜单（score<0）缩短静默期到 2s，高价值保持 5s
-        def _get_wait_params(menu_item: dict) -> dict:
-            """根据菜单评分返回自适应等待参数。"""
-            try:
-                from core.crawler.menu_ranker import score_menu as _sm
-                _s = _sm(menu_item, mode=_menu_mode)
-                if _s < 0:
-                    return {"initial_quiet_s": 2.0, "max_wait_s": 5.0}
-            except Exception:
-                pass
-            return {}  # 使用默认值
-        async def _smart_wait_business_xhr(
-            captured_ref: list,
-            before_idx: int,
-            *,
-            initial_quiet_s: float = 5.0,
-            settle_quiet_s: float = 0.8,
-            max_wait_s: float = 9.0,
-        ) -> int:
-            """点击菜单后，自适应等待业务 API 完成。
-            返回：等待结束时新增的业务（in-scope）请求数。
-
-            2026-05-23: initial_quiet_s 从 0.5 → 5.0，max_wait_s 从 4.0 → 9.0
-            原因：SPA hash 路由跳转后，前端需要 解析路由→挂载组件→useEffect发XHR，
-            整个链路 1-3 秒是常态。0.5s 静默期导致大量菜单点击被判"0 个 API"，
-            实际 API 请求在 0.5s 后才发出但已经没人等了。
-            5s 是最大等待，发现 xhr/fetch 后立刻进第二阶段。
-            """
-            loop = asyncio.get_event_loop()
-            deadline = loop.time() + max_wait_s
-            last_business_count = 0
-            last_business_ts = loop.time()
-
-            # 第一阶段：先给 initial_quiet_s 静默期，观察是否有 in-scope 请求触发
-            t0 = loop.time()
-            while loop.time() - t0 < initial_quiet_s:
-                # 数 in-scope 请求
-                cnt = 0
-                for r in captured_ref[before_idx:]:
-                    if r.get("resource_type") in ("xhr", "fetch") and self._is_in_scope(r.get("url", "")):
-                        cnt += 1
-                if cnt > last_business_count:
-                    last_business_count = cnt
-                    last_business_ts = loop.time()
-                    break  # 业务请求已开始 → 进第二阶段
-                await asyncio.sleep(0.1)
-
-            if last_business_count == 0:
-                # 静默期内无业务请求 → 大概率静态/锚点跳转，无需再等
-                return 0
-
-            # 第二阶段：业务请求已触发，等待"settle_quiet_s 内无新请求"
-            while loop.time() < deadline:
-                cnt = 0
-                for r in captured_ref[before_idx:]:
-                    if r.get("resource_type") in ("xhr", "fetch") and self._is_in_scope(r.get("url", "")):
-                        cnt += 1
-                if cnt > last_business_count:
-                    last_business_count = cnt
-                    last_business_ts = loop.time()
-                # 业务请求 settle_quiet_s 内无新增 → 认为完成
-                if loop.time() - last_business_ts >= settle_quiet_s:
-                    return last_business_count
-                await asyncio.sleep(0.15)
-
-            # 总等待上限到了，强制返回（保护慢业务也得让步）
-            return last_business_count
+        # _get_wait_params 已提升为模块级函数（调用需传 menu_mode）
+        # _smart_wait_business_xhr 已提升为模块级函数
 
         # ★ 2026-05-22 v4: 进度感知静默检测（取代 v3 的"整页时间预算"）
         # ----------------------------------------------------------
@@ -2603,7 +2630,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
         # wait_for_selector(timeout=2000) 在 page 还在加载时会等到 networkidle
         # 才返回，实测耗时 30s+（不是 2000ms），整个循环表现为"卡住不动"。
         # 处理：在每轮循环顶部检查 page.url，离开 initial_url 即早退。
-        _loop = asyncio.get_event_loop()
+        _loop = asyncio.get_running_loop()
         _last_progress_ts = _loop.time()
         _menu_absolute_deadline = _loop.time() + PAGE_MENU_LOOP_HARD_S
         _last_captured_len = len(captured)
@@ -2874,7 +2901,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                         continue
                     clicked_count += 1
                     # ★ v3: 业务请求自适应等待（替代 sleep+networkidle）
-                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
+                    await _smart_wait_business_xhr(captured, before, self, **_get_wait_params(el, _menu_mode))
                 else:
                     # 先尝试重新获取元素（SPA 中 DOM 可能已更新）
                     try:
@@ -2937,7 +2964,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     # - 静态/锚点跳转：~0.5s 退出（旧版要 5.8s）
                     # - 业务 XHR 触发：等到业务请求 settle，最长 4s
                     # - 第三方 SDK 不计入，避免 mutinyhq/linkedin/ccm 拖累
-                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
+                    await _smart_wait_business_xhr(captured, before, self, **_get_wait_params(el, _menu_mode))
 
             except Exception:
                 # ★ v4.3: click 异常 → SPA 可能正在渲染，等 1s 再继续下一轮
@@ -3243,7 +3270,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
                     await page.click(selector, timeout=3000)
                     clicked_count += 1
                     _selector_consecutive_fail = 0
-                    await _smart_wait_business_xhr(captured, before, **_get_wait_params(el))
+                    await _smart_wait_business_xhr(captured, before, self, **_get_wait_params(el, _menu_mode))
                     trigger_context = {
                         "page_url": page.url,
                         "element_text": menu_text,
@@ -3284,7 +3311,7 @@ class AutoCrawler(LoginMixin, ScopeMixin, UrlFilterMixin, FormMixin, ResultBuild
 
             max_btn_clicks = 100
             # ★ v4.1: 按钮循环也用进度感知静默 + page.url 早退（同菜单循环）
-            _btn_loop = asyncio.get_event_loop()
+            _btn_loop = asyncio.get_running_loop()
             _btn_last_progress_ts = _btn_loop.time()
             _btn_absolute_deadline = _btn_loop.time() + PAGE_MENU_LOOP_HARD_S
             _btn_last_captured_len = len(captured)

@@ -11,7 +11,6 @@ web/api/diff_api.py — Sitemap Diff + 增量回归 的 HTTP API
 from __future__ import annotations
 
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -21,10 +20,9 @@ from pydantic import BaseModel
 from core.diff import diff_snapshots, list_snapshots, load_snapshot
 from core.diff.regression import build_regression_plan, save_regression_plan
 from core.diff.snapshot import delete_snapshot, take_snapshot
+from web._security import WEB_ROOT
 
 router = APIRouter()
-
-WEB_ROOT = Path(__file__).parent.parent  # web/
 
 
 # ============================================================

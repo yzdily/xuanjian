@@ -21,6 +21,7 @@ SQLi Exploiter — SQL注入深入利用引擎
 适用场景：Phase 2 的 LLM 已经标记了 SQL 注入（vulnerable/needs_review），
           本引擎在 Phase 2.6 中被调用，深入利用并提取数据作为危害证明。
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -938,19 +939,6 @@ class SQLiFuzzer(BaseFuzzer):
             return False
 
         # 归一化响应体（剥离动态内容）
-        def normalize(text: str) -> str:
-            import re as _re
-            if not text:
-                return ""
-            s = text
-            s = _re.sub(r'\b\d{10,13}\b', '', s)  # Unix 时间戳
-            s = _re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?', '', s)  # ISO 时间
-            s = _re.sub(r'(csrf|nonce|_token|token|xsrf)["\']?\s*[:=]\s*["\']?[a-zA-Z0-9_\-]{16,}', '', s, flags=_re.IGNORECASE)
-            s = _re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '', s)  # JWT
-            s = _re.sub(r'\b[0-9a-f]{32,64}\b', '', s, flags=_re.IGNORECASE)  # MD5/SHA hash
-            s = _re.sub(r'\s+', ' ', s).strip()
-            return s
-
         norm_response = normalize(response_body)
         norm_baseline = normalize(baseline_body)
 
@@ -1094,7 +1082,7 @@ class SQLiFuzzer(BaseFuzzer):
                     return True
                 if "用户未登录" in str(data.get("message", "")):
                     return True
-            except:
+            except Exception:  # ★ D11: 原 bare except 会吞 KeyboardInterrupt/SystemExit
                 pass
         return False
 
@@ -1107,7 +1095,7 @@ class SQLiFuzzer(BaseFuzzer):
                 data = json.loads(response.get("body", "{}"))
                 if data.get("data") is None or data.get("data") == []:
                     return True
-            except:
+            except Exception:  # ★ D11: 原 bare except 会吞 KeyboardInterrupt/SystemExit
                 pass
         return False
 
@@ -1269,3 +1257,17 @@ class SQLiFuzzer(BaseFuzzer):
             extracted_data=extracted_data,
             timeline=timeline,
         )
+
+# --- hoisted from _is_true_response (A-grade, no local capture) ---
+def normalize(text: str) -> str:
+    import re as _re
+    if not text:
+        return ""
+    s = text
+    s = _re.sub(r'\b\d{10,13}\b', '', s)  # Unix 时间戳
+    s = _re.sub(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?', '', s)  # ISO 时间
+    s = _re.sub(r'(csrf|nonce|_token|token|xsrf)["\']?\s*[:=]\s*["\']?[a-zA-Z0-9_\-]{16,}', '', s, flags=_re.IGNORECASE)
+    s = _re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '', s)  # JWT
+    s = _re.sub(r'\b[0-9a-f]{32,64}\b', '', s, flags=_re.IGNORECASE)  # MD5/SHA hash
+    s = _re.sub(r'\s+', ' ', s).strip()
+    return s

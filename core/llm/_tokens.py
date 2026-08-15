@@ -67,7 +67,11 @@ _DEFAULT_CONTEXT_WINDOW = int(os.getenv("XUANJIAN_LLM_DEFAULT_CONTEXT_WINDOW", "
 
 # 预检安全系数：估算 token * 此系数 < 上下文窗口才放行
 # 留出余量应对估算偏差 + max_tokens 预留
-_CONTEXT_PRECHECK_SAFETY = 0.85
+# ★ D14 硬拦截：0.85→0.6。生产侧真正的硬拦截由 LLMClient.chat() 在发送前用
+#   此系数计算 available_for_input，超限即抛 ContextLimitError（不可重试），
+#   由 WorkerAgent 捕获后 compress 再重试。0.85 时子 Agent 在 ~52K 才被动超限，
+#   降至 0.6 强制在 ~39K 即触发压缩，从源头避免上下文超载。
+_CONTEXT_PRECHECK_SAFETY = 0.6
 
 
 def get_model_context_window(model: str) -> int:

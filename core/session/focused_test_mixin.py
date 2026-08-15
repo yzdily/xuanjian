@@ -272,7 +272,7 @@ class FocusedTestMixin:
         超时 15 秒，失败不影响后续测试。
         """
         try:
-            from mcp_servers.browser_mcp import browser_goto
+            from core.mcp_bridge import browser_goto
             await asyncio.wait_for(
                 browser_goto(target_url),
                 timeout=15.0,

@@ -15,14 +15,31 @@ import time
 import uuid
 import os
 import re
+import sys
 import gzip
 import zlib
 import logging
 import tempfile
 from pathlib import Path
 
+# ★ 修复 Phase 0 / Phase 2 mitmproxy 代理不可用（端口 18080）：
+# mitmproxy 以 `-s mcp_servers/mitm_addon.py` 加载本脚本时，
+# 只会把脚本所在目录（mcp_servers/）加入 sys.path，
+# 项目根目录不在其中，导致 `from core.config import ...` 抛
+# `ModuleNotFoundError: No module named 'core'`，mitmdump 启动即退出（code=1），
+# 代理永远起不来，所有流量只能降级到 CDP/Playwright。
+# 这里显式把项目根加入 sys.path[0]，让 `import core` 一定可用。
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from mitmproxy import tls
-from core.config import MAX_RESPONSE_BODY_SIZE
+
+try:
+    from core.config import MAX_RESPONSE_BODY_SIZE
+except Exception:
+    # 兜底：core 不可导入时仍让代理正常启动（仅响应体截断阈值回落到默认值 1MB）
+    MAX_RESPONSE_BODY_SIZE = 1_000_000
 
 
 # ★ 跨平台默认路径：使用 tempfile.gettempdir() 替代硬编码 /tmp
@@ -184,6 +201,80 @@ class TlsPassthrough:
             logging.debug(f"[TLS透传] {hostname}")
 
 
+# ============================================================
+# ★ XJ-05: 流量脱敏 — 敏感头部和请求体字段在落盘前脱敏
+# ============================================================
+
+_REDACT_HEADERS = {
+    "authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token",
+    "x-access-token", "proxy-authorization", "x-csrf-token", "x-xsrf-token",
+}
+
+_REDACT_BODY_KEYS = {
+    "password", "passwd", "pwd", "token", "secret", "api_key", "apikey",
+    "access_token", "refresh_token", "session_id", "sessionid", "private_key",
+    "client_secret", "grant_type", "code", "captcha",
+}
+
+_REDACT_PLACEHOLDER = "***REDACTED***"
+
+
+def _redact_headers(headers: dict) -> dict:
+    """脱敏敏感 HTTP 头部。"""
+    redacted = {}
+    for k, v in headers.items():
+        if k.lower() in _REDACT_HEADERS:
+            redacted[k] = _REDACT_PLACEHOLDER
+        else:
+            redacted[k] = v
+    return redacted
+
+
+def _redact_body(body: str) -> str:
+    """脱敏请求/响应体中的敏感字段。
+
+    支持 JSON 和表单格式，非结构化文本原样返回。
+    """
+    if not body or len(body) < 2:
+        return body
+
+    # 尝试 JSON 格式
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            _redact_dict_recursive(parsed)
+            return json.dumps(parsed, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # 尝试表单格式 (key=value&key=value)
+    if "=" in body and "&" in body:
+        try:
+            pairs = body.split("&")
+            changed = False
+            for i, pair in enumerate(pairs):
+                if "=" in pair:
+                    k, _, v = pair.partition("=")
+                    if k.lower() in _REDACT_BODY_KEYS:
+                        pairs[i] = f"{k}={_REDACT_PLACEHOLDER}"
+                        changed = True
+            if changed:
+                return "&".join(pairs)
+        except Exception:
+            pass
+
+    return body
+
+
+def _redact_dict_recursive(d):
+    """递归脱敏字典中的敏感字段。"""
+    for key in list(d.keys()):
+        if key.lower() in _REDACT_BODY_KEYS:
+            d[key] = _REDACT_PLACEHOLDER
+        elif isinstance(d[key], dict):
+            _redact_dict_recursive(d[key])
+
+
 class FlowRecorder:
     """记录 HTTP 请求/响应到 JSONL 文件。"""
 
@@ -221,11 +312,11 @@ class FlowRecorder:
             "timestamp": time.time(),
             "method": flow.request.method,
             "url": url,
-            "request_headers": dict(flow.request.headers),
-            "request_body": request_body,
+            "request_headers": _redact_headers(dict(flow.request.headers)),
+            "request_body": _redact_body(request_body),
             "status_code": flow.response.status_code if flow.response else 0,
-            "response_headers": dict(flow.response.headers) if flow.response else {},
-            "response_body": response_body,
+            "response_headers": _redact_headers(dict(flow.response.headers)) if flow.response else {},
+            "response_body": _redact_body(response_body),
             "content_type": ct,
         }
 

@@ -44,11 +44,21 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
         timeout: float = 10.0,
         proxy: str | None = None,
         request_rate_limit: float = 5.0,
+        hard_timeout: float = 600.0,
     ):
         self.max_workers = max_workers
         self.timeout = timeout
         self.proxy = proxy
         self.request_rate_limit = max(0.0, request_rate_limit)
+        # ★ P0-1: 硬超时感知——引擎主动在接近 deadline 时收尾，避免被 orchestrator 强制 cancel 丢失结果
+        self._hard_timeout = hard_timeout
+        self._deadline: float | None = None  # time.monotonic() 基准的截止时刻
+        self._scan_start_time: float = 0.0
+        self._per_rule_timeout: float = 45.0  # 单条规则 handler 最大执行时间
+        self._heartbeat_interval: float = 60.0  # 进度心跳间隔（秒）
+        self._last_heartbeat: float = 0.0
+        self._targets_scanned: int = 0
+        self._targets_total: int = 0
         self._min_request_interval = (
             1.0 / self.request_rate_limit if self.request_rate_limit > 0 else 0.0
         )
@@ -242,6 +252,10 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
         if self._waf_blocked or self._timeout_blocked:
             return None
 
+        # ★ P0-1: deadline 早退——接近硬超时时不再发起新请求
+        if self._is_deadline_exceeded():
+            return None
+
         # ★ 并发信号量：限制同时在途的 HTTP 请求数
         # gather 创建的协程在此排队，进入后才检查熔断标志，避免数百请求同时发出
         if self._semaphore is None:
@@ -408,6 +422,34 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
                           rule_tag, method, url, payload_tag, e)
                 return None
 
+    def _is_deadline_exceeded(self) -> bool:
+        """检查是否已超过硬超时 deadline。"""
+        if self._deadline is None:
+            return False
+        return time.monotonic() >= self._deadline
+
+    def _remaining_time(self) -> float:
+        """返回距离 deadline 的剩余秒数；无 deadline 时返回无穷大。"""
+        if self._deadline is None:
+            return float("inf")
+        return max(0.0, self._deadline - time.monotonic())
+
+    def _emit_heartbeat(self, phase: str = "") -> None:
+        """进度心跳日志：每隔 _heartbeat_interval 秒输出一次扫描进度。"""
+        now = time.monotonic()
+        if now - self._last_heartbeat < self._heartbeat_interval and self._last_heartbeat > 0:
+            return
+        self._last_heartbeat = now
+        elapsed = now - self._scan_start_time if self._scan_start_time > 0 else 0
+        remaining = self._remaining_time()
+        log.info(
+            "[SCAN] ❤️ 心跳 | 阶段=%s | 已扫 %d/%d 目标 | 已耗时 %.0fs | 剩余预算 %.0fs | "
+            "请求 %d 拦截 %d 超时 %d",
+            phase, self._targets_scanned, self._targets_total,
+            elapsed, remaining,
+            self._total_requests, self._blocked_count, self._timeout_count,
+        )
+
     async def scan_target(
         self,
         target: ScanTarget,
@@ -472,6 +514,11 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
 
         batch_size = min(3, len(all_handlers)) if all_handlers else 1
         for i in range(0, len(all_handlers), batch_size):
+            # ★ P0-1: deadline 检查——接近硬超时时主动收尾，避免被 cancel 丢失已扫结果
+            if self._is_deadline_exceeded():
+                log.info("[SCAN] 硬超时 deadline 到达，跳过剩余 %d 个规则（目标: %s）",
+                         len(all_handlers) - i, target.url)
+                break
             # 批次间检查熔断标志，跳过剩余规则
             if self._waf_blocked:
                 if not self._waf_skip_logged:
@@ -485,8 +532,23 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
                 break
 
             # ★ 调用 handler(target) 获取协程对象
+            # ★ P0-1: 每条规则加 asyncio.wait_for 兜底，防止单规则卡死拖垮整个扫描
             batch = [handler(target) for handler in all_handlers[i:i + batch_size]]
-            results = await asyncio.gather(*batch, return_exceptions=True)
+            # 剩余时间不足时跳过本批（避免 wait_for 刚启动就超时）
+            _remaining = self._remaining_time()
+            _rule_timeout = min(self._per_rule_timeout, _remaining) if _remaining != float("inf") else self._per_rule_timeout
+            if _rule_timeout <= 1.0:
+                log.info("[SCAN] 剩余时间 %.1fs 不足，跳过剩余规则", _remaining)
+                break
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*batch, return_exceptions=True),
+                    timeout=_rule_timeout,
+                )
+            except asyncio.TimeoutError:
+                log.warning("[SCAN] 规则批次超时（%.1fs），跳过本批 %d 条规则",
+                            _rule_timeout, len(batch))
+                continue
             for result in results:
                 if isinstance(result, list):
                     findings.extend(result)
@@ -537,6 +599,14 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
         # ★ Fix4-1：按优先级降序，critical/high 排在最前
         targets = sorted(targets, key=_rank, reverse=True)
 
+        # ★ P0-1: 设置 deadline——引擎主动在接近硬超时时收尾
+        self._scan_start_time = time.monotonic()
+        self._deadline = self._scan_start_time + self._hard_timeout
+        self._targets_total = len(targets)
+        self._targets_scanned = 0
+        self._last_heartbeat = 0.0
+        log.info("[SCAN] 硬超时预算: %.0fs (%d 个目标)", self._hard_timeout, len(targets))
+
         results = []
         # 分批并发，避免连接爆炸
         batch_size = self.max_workers
@@ -547,6 +617,13 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
         i = 0
         n = len(targets)
         while i < n:
+            # ★ P0-1: deadline 检查——接近硬超时时主动收尾
+            if self._is_deadline_exceeded():
+                log.warning("[SCAN] 硬超时 deadline 到达，已扫描 %d/%d 目标，剩余 %d 个目标跳过",
+                            self._targets_scanned, n, n - i)
+                break
+            self._emit_heartbeat(phase="scan_targets")
+
             if self._waf_blocked or self._timeout_blocked:
                 # ★ Fix4-2：封禁后仅继续 critical/high，跳过 medium/low
                 reason = "WAF 全局封禁" if self._waf_blocked else "全局超时熔断"
@@ -590,6 +667,7 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _SitemapIntegrat
                         target_url="unknown", elapsed=0,
                         total_requests=0, rules_run=0,
                     ))
+            self._targets_scanned += len(batch)
             i += batch_size
         return results
 

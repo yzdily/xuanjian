@@ -134,7 +134,7 @@ class AnalyzeWorker:
 
             # 系统提示
             ctx.add_system(
-                load_prompt("analyze_worker_system")
+                load_prompt("analyze_worker_system", with_common=True)
             )
 
             # 用户提示：目标信息 + API 列表

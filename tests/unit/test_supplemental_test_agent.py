@@ -122,8 +122,9 @@ class TestConstants:
         assert TOTAL_BUDGET_S == 30 * 60.0
         assert TOTAL_BUDGET_S == 1800.0
 
-    def test_features_per_worker_is_5(self):
-        assert FEATURES_PER_WORKER == 5
+    def test_features_per_worker_is_3(self):
+        # ★ D14/P0-2 优化：5→3 降低子 Agent 上下文超限风险
+        assert FEATURES_PER_WORKER == 3
 
 
 # ============================================================

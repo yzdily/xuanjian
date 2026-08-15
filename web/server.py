@@ -22,6 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -34,6 +35,9 @@ from core.skill_registry import get_registry
 
 # ★ 共享状态（_pool / _sessions / get_session / ...）
 from web._state import _pool, _sessions, STATE, get_session  # noqa: F401
+from web._security import apply_security_headers  # noqa: F401
+# ★ D9 S6：web 包内路径单源，消除各页面处理器各自 Path(__file__).parent 解析漂移。
+from web._paths import WEB_ROOT, PROJECT_ROOT  # noqa: F401
 
 log = get_logger("server")
 
@@ -219,6 +223,17 @@ _AUTH_WHITELIST = {
 
 _API_KEY = os.getenv("XUANJIAN_API_KEY", "")
 
+# ★ O2 认证不可绕过门禁：AUTH_DISABLED=1 且未设 API_KEY 时打印醒目告警，
+# 避免生产环境静默关认证（XJ-01 补偿）。本地开发显式设此变量时也会被提醒。
+_AUTH_DISABLED = os.getenv("XUANJIAN_AUTH_DISABLED", "0") == "1"
+if _AUTH_DISABLED and not _API_KEY:
+    _startup_msgs.append("auth=DISABLED_NO_KEY")
+    log.warning(
+        "⚠️ [O2 安全告警] XUANJIAN_AUTH_DISABLED=1 且未配置 XUANJIAN_API_KEY —— "
+        "所有 /api/* 业务接口认证已被完全绕过！仅限本地开发使用，"
+        "生产部署必须设置 XUANJIAN_API_KEY 或移除 XUANJIAN_AUTH_DISABLED。"
+    )
+
 # ★ SSE 连接数限制：防止过多 SSE 连接耗尽服务器资源
 _MAX_SSE_CONNECTIONS = int(os.getenv("XUANJIAN_MAX_SSE_CONNECTIONS", "10"))
 _sse_connection_count = 0
@@ -238,8 +253,7 @@ async def _auth_middleware(request: Request, call_next):
             token = auth_header[7:].strip()
         if not token:
             token = request.headers.get("X-API-Key", "")
-        if not token:
-            token = request.query_params.get("api_key", "")
+        # ★ S3 安全加固：不再从 URL query 提取 token（URL 会被日志/浏览器历史记录）
 
         if _API_KEY:
             # ★ 安全加固：配置了 API Key 时强制认证
@@ -258,13 +272,40 @@ async def _auth_middleware(request: Request, call_next):
                 content={"ok": False, "error": "请先登录或在请求头添加 X-API-Key", "code": "UNAUTHORIZED"},
             )
         else:
-            # 未配置 API Key：可选认证模式（兼容本地开发），有 token 则校验
+            # ★ S2 安全加固：未配置 API Key 时，仍要求 JWT 登录认证
+            # （可通过 XUANJIAN_AUTH_DISABLED=1 在本地开发时关闭）
+            if os.getenv("XUANJIAN_AUTH_DISABLED", "0") == "1":
+                if token:
+                    from core import auth as _auth_mod
+                    payload = _auth_mod.verify_token(token)
+                    if payload:
+                        request.state.user = payload.get("username", "unknown")
+                return await call_next(request)
+
             if token:
                 from core import auth as _auth_mod
                 payload = _auth_mod.verify_token(token)
                 if payload:
                     request.state.user = payload.get("username", "unknown")
-            return await call_next(request)
+                    return await call_next(request)
+
+            return JSONResponse(
+                status_code=401,
+                content={"ok": False, "error": "请先登录", "code": "UNAUTHORIZED"},
+            )
+
+
+# ============================================================
+# ★ 全局安全响应头中间件（纵深防御，最低成本覆盖所有响应）
+# 注册在鉴权中间件之后 → 成为最外层包装，对所有响应
+# （含鉴权 401 提前返回、静态页面、SSE 流）统一生效。
+# ============================================================
+
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    apply_security_headers(response)
+    return response
 
 
 # ============================================================
@@ -273,7 +314,7 @@ async def _auth_middleware(request: Request, call_next):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    html_path = Path(__file__).parent / "index.html"
+    html_path = WEB_ROOT / "index.html"
     return HTMLResponse(
         html_path.read_text(encoding="utf-8"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
@@ -283,7 +324,7 @@ async def index():
 @app.get("/llm-monitor", response_class=HTMLResponse)
 async def llm_monitor_page():
     """LLM 用量详细监控页 — 独立页面，含表格、筛选器、诊断详情。"""
-    html_path = Path(__file__).parent / "llm_monitor.html"
+    html_path = WEB_ROOT / "llm_monitor.html"
     if not html_path.exists():
         return HTMLResponse("<h2>LLM Monitor page not found</h2>", status_code=404)
     return HTMLResponse(
@@ -295,7 +336,7 @@ async def llm_monitor_page():
 @app.get("/skill-manager", response_class=HTMLResponse)
 async def skill_manager_page():
     """SKILL 管理独立页面 — 列表/编辑/启用-禁用/上传/Markdown 预览。"""
-    html_path = Path(__file__).parent / "skill_manager.html"
+    html_path = WEB_ROOT / "skill_manager.html"
     if not html_path.exists():
         return HTMLResponse("<h2>Skill Manager page not found</h2>", status_code=404)
     return HTMLResponse(
@@ -307,7 +348,7 @@ async def skill_manager_page():
 @app.get("/reports", response_class=HTMLResponse)
 async def reports_page():
     """报告管理独立页面 — 列出所有 task 的 .md 报告。"""
-    html_path = Path(__file__).parent / "reports.html"
+    html_path = WEB_ROOT / "reports.html"
     if not html_path.exists():
         return HTMLResponse("<h2>Reports page not found</h2>", status_code=404)
     return HTMLResponse(
@@ -319,7 +360,7 @@ async def reports_page():
 @app.get("/memory", response_class=HTMLResponse)
 async def memory_page():
     """记忆管理独立页面 — Hermes 风格经验教训管理。"""
-    html_path = Path(__file__).parent / "memory_manager.html"
+    html_path = WEB_ROOT / "memory_manager.html"
     if not html_path.exists():
         return HTMLResponse("<h2>Memory Manager page not found</h2>", status_code=404)
     return HTMLResponse(
@@ -331,7 +372,7 @@ async def memory_page():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page():
     """安全仪表盘页面 — 漏洞统计、趋势、分布图表。"""
-    html_path = Path(__file__).parent / "dashboard.html"
+    html_path = WEB_ROOT / "dashboard.html"
     if not html_path.exists():
         return HTMLResponse("<h2>Dashboard page not found</h2>", status_code=404)
     return HTMLResponse(
@@ -342,7 +383,7 @@ async def dashboard_page():
 
 @app.get("/logo.png")
 async def logo():
-    logo_path = Path(__file__).parent / "logo.png"
+    logo_path = WEB_ROOT / "logo.png"
     if logo_path.exists():
         return FileResponse(logo_path, media_type="image/png")
     return HTMLResponse("", status_code=404)
@@ -350,7 +391,7 @@ async def logo():
 
 @app.get("/favicon.svg")
 async def favicon():
-    svg_path = Path(__file__).parent / "favicon.svg"
+    svg_path = WEB_ROOT / "favicon.svg"
     if svg_path.exists():
         return FileResponse(svg_path, media_type="image/svg+xml",
                             headers={"Cache-Control": "public, max-age=3600"})
@@ -536,3 +577,15 @@ async def chat(request: Request):
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ============================================================
+# 静态资源：vendored 前端依赖（marked / dompurify）
+# 本地化，不依赖公网 CDN（安全工具不应从外部 CDN 加载可执行 JS）。
+# 文件完整性由前端 <script integrity="sha256-..."> 校验。
+#   marked@4.3.0      sha256 c68075672d976e4777390560baa112194855bd4404b13647da4855aae1f9360c
+#   dompurify@3.2.4   sha256 8eb41b658831fab175fad9bcd00fcb2d84e0ed3a25a55053d4ecd4444b8b43a0
+# ============================================================
+_VENDOR_DIR = WEB_ROOT / "vendor"
+if _VENDOR_DIR.is_dir():
+    app.mount("/vendor", StaticFiles(directory=str(_VENDOR_DIR)), name="vendor")

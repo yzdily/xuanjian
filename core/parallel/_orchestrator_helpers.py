@@ -249,6 +249,7 @@ async def _run_fast_scanner_core(
         max_workers=FAST_SCAN_MAX_WORKERS,
         timeout=FAST_MODE_TIMEOUTS.get("request", 6.0),
         request_rate_limit=FAST_SCAN_RATE_LIMIT,
+        hard_timeout=FAST_MODE_TIMEOUTS.get("hard_timeout", 600.0),
     )
     findings = await scanner.scan_sitemap_features(
         untested, session_info=session_info, sitemap=sitemap

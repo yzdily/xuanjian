@@ -174,27 +174,6 @@ def locate_api_in_js(api_path: str, context_lines: int = 40, target: str = "") -
         search_variants.insert(1, "/".join(path_parts[-2:]))  # user/update
 
     # ★ 按文件质量排序：业务 chunk 优先，入口/路由配置文件最后
-    def _file_priority(js_url: str) -> int:
-        """越小越优先。"""
-        name = js_url.lower().split("/")[-1] if "/" in js_url else js_url.lower()
-        # 明确的业务组件文件（Vue/React 组件）优先级最高
-        if any(kw in name for kw in ("service", "api.", "request", "http", "manage", "view")):
-            return 0
-        # 普通 chunk 文件
-        if name.startswith("chunk-") or name.startswith("async-"):
-            return 1
-        # 内联脚本
-        if name.startswith("inline_"):
-            return 2
-        # 框架/库文件（搜索价值低）
-        if any(kw in name for kw in ("vue-", "react-", "element-plus", "echarts", "ant-design")):
-            return 8
-        # Vite/Webpack 入口文件（最容易产生低质量匹配）
-        if name.startswith("index-") or name.startswith("app-") or name.startswith("main-"):
-            return 7
-        # 其他
-        return 3
-
     sorted_cache = sorted(bucket.items(), key=lambda kv: _file_priority(kv[0]))
 
     # ★ 低质量上下文检测关键词
@@ -202,48 +181,6 @@ def locate_api_in_js(api_path: str, context_lines: int = 40, target: str = "") -
         "__vite__mapDeps", "__vite__", "mapDeps", "chunkFileNames",
         "manualChunks", "rollupOptions", "assetFileNames",
     )
-
-    def _extract_lines_around(js_text: str, match_idx: int, ctx: int) -> tuple[int, int, str]:
-        """高效提取 match_idx 附近的 ±ctx 行，返回 (start_line, end_line, code_block)。
-
-        关键优化：避免 `js_text[:idx].split("\\n")` 这种 O(idx) 内存复制，
-        用 `str.count("\\n", 0, idx)` 直接计数；用 rfind/find 定位行边界，
-        只对真正需要的窗口做切片。
-        """
-        # 当前行号（1-based）
-        line_num = js_text.count("\n", 0, match_idx) + 1
-        start_line = max(1, line_num - ctx)
-        end_line = line_num + ctx
-
-        # 找 start_line 在 js_text 中的字节起点：从 match_idx 往回数 (line_num - start_line) 个 \n
-        steps_back = line_num - start_line
-        pos = match_idx
-        for _ in range(steps_back):
-            pos = js_text.rfind("\n", 0, pos)
-            if pos == -1:
-                pos = 0
-                break
-            # 跳过 '\n' 本身
-        start_byte = pos + 1 if pos > 0 else 0
-
-        # 找 end_line 末尾：从 match_idx 往后数 (end_line - line_num) 个 \n
-        steps_fwd = end_line - line_num
-        pos = match_idx
-        for _ in range(steps_fwd):
-            nxt = js_text.find("\n", pos + 1)
-            if nxt == -1:
-                pos = len(js_text)
-                break
-            pos = nxt
-        end_byte = pos
-
-        code_block = js_text[start_byte:end_byte]
-        # 修正 end_line（如果遇到 EOF 提前结束）
-        if end_byte == len(js_text):
-            actual_end_line = start_line + code_block.count("\n")
-        else:
-            actual_end_line = end_line
-        return start_line, actual_end_line, code_block
 
     results = []
 
@@ -308,3 +245,68 @@ def locate_api_in_js(api_path: str, context_lines: int = 40, target: str = "") -
     #     生成的 JS 上下文经常误导 LLM
     #   - 真业务 API 在前两个 variant（精确/最后两段）就该命中
     return "\n\n".join(results)
+
+# --- hoisted from locate_api_in_js (A-grade, no local capture) ---
+def _file_priority(js_url: str) -> int:
+    """越小越优先。"""
+    name = js_url.lower().split("/")[-1] if "/" in js_url else js_url.lower()
+    # 明确的业务组件文件（Vue/React 组件）优先级最高
+    if any(kw in name for kw in ("service", "api.", "request", "http", "manage", "view")):
+        return 0
+    # 普通 chunk 文件
+    if name.startswith("chunk-") or name.startswith("async-"):
+        return 1
+    # 内联脚本
+    if name.startswith("inline_"):
+        return 2
+    # 框架/库文件（搜索价值低）
+    if any(kw in name for kw in ("vue-", "react-", "element-plus", "echarts", "ant-design")):
+        return 8
+    # Vite/Webpack 入口文件（最容易产生低质量匹配）
+    if name.startswith("index-") or name.startswith("app-") or name.startswith("main-"):
+        return 7
+    # 其他
+    return 3
+
+# --- hoisted from locate_api_in_js (A-grade, no local capture) ---
+def _extract_lines_around(js_text: str, match_idx: int, ctx: int) -> tuple[int, int, str]:
+    """高效提取 match_idx 附近的 ±ctx 行，返回 (start_line, end_line, code_block)。
+
+    关键优化：避免 `js_text[:idx].split("\\n")` 这种 O(idx) 内存复制，
+    用 `str.count("\\n", 0, idx)` 直接计数；用 rfind/find 定位行边界，
+    只对真正需要的窗口做切片。
+    """
+    # 当前行号（1-based）
+    line_num = js_text.count("\n", 0, match_idx) + 1
+    start_line = max(1, line_num - ctx)
+    end_line = line_num + ctx
+
+    # 找 start_line 在 js_text 中的字节起点：从 match_idx 往回数 (line_num - start_line) 个 \n
+    steps_back = line_num - start_line
+    pos = match_idx
+    for _ in range(steps_back):
+        pos = js_text.rfind("\n", 0, pos)
+        if pos == -1:
+            pos = 0
+            break
+        # 跳过 '\n' 本身
+    start_byte = pos + 1 if pos > 0 else 0
+
+    # 找 end_line 末尾：从 match_idx 往后数 (end_line - line_num) 个 \n
+    steps_fwd = end_line - line_num
+    pos = match_idx
+    for _ in range(steps_fwd):
+        nxt = js_text.find("\n", pos + 1)
+        if nxt == -1:
+            pos = len(js_text)
+            break
+        pos = nxt
+    end_byte = pos
+
+    code_block = js_text[start_byte:end_byte]
+    # 修正 end_line（如果遇到 EOF 提前结束）
+    if end_byte == len(js_text):
+        actual_end_line = start_line + code_block.count("\n")
+    else:
+        actual_end_line = end_line
+    return start_line, actual_end_line, code_block

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from core.llm import mask_api_key, LLMConfig
 from core.log import get_logger
@@ -55,6 +55,14 @@ async def upload_screenshot(request: Request):
     import uuid as _uuid
     import base64 as _base64
 
+    # ★ S9: 限制上传大小（10MB）
+    content_length = request.headers.get("content-length", "")
+    if content_length and int(content_length) > 10 * 1024 * 1024:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "上传文件过大（最大 10MB）"},
+        )
+
     upload_dir = Path("data/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -66,9 +74,14 @@ async def upload_screenshot(request: Request):
         if not file:
             return {"error": "未找到 file 字段"}
         ext = Path(file.filename).suffix or ".png"
+        # ★ S9: 限制文件扩展名
+        if ext.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            return {"error": "不支持的文件类型"}
         filename = f"upload_{_uuid.uuid4().hex[:8]}{ext}"
         filepath = upload_dir / filename
         content = await file.read()
+        if len(content) > 10 * 1024 * 1024:
+            return {"error": "上传文件过大（最大 10MB）"}
         filepath.write_bytes(content)
     else:
         body = await request.json()
@@ -76,9 +89,15 @@ async def upload_screenshot(request: Request):
         if not image_base64:
             return {"error": "未提供 image_base64"}
         ext = body.get("ext", ".png")
+        # ★ S9: 限制文件扩展名
+        if ext.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            return {"error": "不支持的文件类型"}
         filename = f"upload_{_uuid.uuid4().hex[:8]}{ext}"
         filepath = upload_dir / filename
-        filepath.write_bytes(_base64.b64decode(image_base64))
+        decoded = _base64.b64decode(image_base64)
+        if len(decoded) > 10 * 1024 * 1024:
+            return {"error": "上传文件过大（最大 10MB）"}
+        filepath.write_bytes(decoded)
 
     return {"path": str(filepath), "filename": filename}
 

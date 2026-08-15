@@ -281,7 +281,7 @@ def build_rescue_messages(
             trace_lines.append(f"- {tn}({args_brief}) → {res_brief}")
         trace_summary = "\n\n## 你刚才调过的工具（最后 5 条）\n" + "\n".join(trace_lines)
 
-    rescue_system = load_prompt("rescue_system")
+    rescue_system = load_prompt("rescue_system", with_common=True)
 
     rescue_user = (
         f"请对以下 {len(vulns)} 个候选漏洞输出最终裁决 JSON 数组：\n\n"

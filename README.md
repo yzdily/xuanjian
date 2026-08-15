@@ -209,6 +209,11 @@ skills_my/
     └── examples/        (2)  银行渗透 / 电信渗透实战案例
 ```
 
+> ⚠️ **许可证注意**：`skills_my/wooyun-legacy-main/` 为 **CC-BY-NC-SA-4.0（非商业）**
+> 第三方内容，与主项目 MIT License 冲突，**禁止商业使用**。主 SKILL 库
+> （`discovery/`/`exploit/`）为 MIT，可商业使用。详见
+> [skills_my/wooyun-legacy-main/LICENSE_NOTICE.md](skills_my/wooyun-legacy-main/LICENSE_NOTICE.md)。
+
 > 📖 把你的挖洞经验写成 SKILL
 
 ---
@@ -277,7 +282,7 @@ skills_my/
 欢迎任何形式的贡献：
 
 - 🐛 提交 Issue — 报告 Bug 或建议新功能
-- 📖 [贡献方法论](docs/CONTRIBUTING_SKILLS.md) — 把你挖到的漏洞经验写成可复用的 SKILL
+- 📖 [贡献方法论](CONTRIBUTING_SKILLS.md) — 把你挖到的漏洞经验写成可复用的 SKILL
 - 🔧 提交 Pull Request — 代码改进、文档修正
 - ⭐ 给项目点个 Star，让更多人看到
 

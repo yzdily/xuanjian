@@ -24,6 +24,7 @@ from web._state import (
     _list_saved_sessions,
     _resolve_sitemap,
 )
+from web._security import validate_task_id
 
 log = get_logger("web.sessions_api")
 
@@ -69,6 +70,10 @@ async def switch_session(request: Request):
     """切换到指定会话。旧会话继续在后台运行不中断。"""
     body = await request.json()
     target_id = body.get("task_id", "")
+
+    # ★ S1 扩展：target_id 校验，防止路径穿越（data/tasks/{target_id}-sitemap.json）。
+    if not validate_task_id(target_id):
+        return {"error": "无效的 task_id"}
 
     cur = STATE["current_session_id"]
     if cur and cur in _sessions:
@@ -119,6 +124,9 @@ async def switch_session(request: Request):
 @router.get("/api/sessions/{task_id}/history")
 async def get_session_history(task_id: str):
     """获取指定会话的完整对话历史。"""
+    # ★ S1 扩展：task_id 校验，防止路径穿越（data/tasks/{task_id}-chat.jsonl）。
+    if not validate_task_id(task_id):
+        return {"error": "无效的 task_id"}
     history = AgentSession.get_chat_history(task_id)
     return {"task_id": task_id, "events": history}
 
@@ -129,8 +137,7 @@ async def delete_session(request: Request):
     body = await request.json()
     target_id = body.get("task_id", "")
 
-    import re
-    if not target_id or not re.match(r'^[a-zA-Z0-9_\-]+$', target_id):
+    if not validate_task_id(target_id):
         return {"error": "无效的 task_id"}
 
     session = _sessions.pop(target_id, None)

@@ -134,7 +134,7 @@ def _generate_heuristic_bypass(original_payload: str, filtered_chars: list, mark
 # ============================================================
 # LLM 驱动的智能绕过
 # ============================================================
-LLM_BYPASS_SYSTEM_PROMPT = load_prompt("xss_waf_bypass")
+LLM_BYPASS_SYSTEM_PROMPT = load_prompt("xss_waf_bypass", with_common=True)
 
 
 async def _llm_generate_bypass(

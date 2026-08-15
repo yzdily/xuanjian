@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("false_positive")
 
@@ -183,17 +184,28 @@ class FalsePositiveManager:
 
 
 # Global instance（向后兼容）
-_fp_manager: FalsePositiveManager | None = None
+@dataclass
+class _FpManagerState:
+    fp_manager: FalsePositiveManager | None = None
+
+
+_state = _FpManagerState()
 
 
 def get_fp_manager() -> FalsePositiveManager:
     """获取误报管理器单例。"""
-    global _fp_manager
-    if _fp_manager is None:
-        _fp_manager = FalsePositiveManager()
-    return _fp_manager
+    if _state.fp_manager is None:
+        _state.fp_manager = FalsePositiveManager()
+    return _state.fp_manager
 
 
 def is_false_positive(finding: dict) -> bool:
     """便捷函数：检查是否为误报。"""
     return get_fp_manager().is_false_positive(finding)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_false_positive_manager__fp_manager() -> None:
+    _state.fp_manager = None
+
+register_resetter("core_false_positive_manager__fp_manager", _reset_core_false_positive_manager__fp_manager)

@@ -42,7 +42,7 @@ async def get_session_info() -> dict:
 
     try:
         # 直接调用 Playwright API 获取完整 Cookie（不经过 browser_get_cookies 的截断）
-        from mcp_servers.browser_mcp import _ensure_browser
+        from core.mcp_bridge import _ensure_browser
         actual = getattr(_ensure_browser, "fn", _ensure_browser)
         page = await actual()
         cookies = await page.context.cookies()

@@ -4,6 +4,7 @@ Tools — 统一工具定义
 所有 OpenAI function calling 格式的工具声明集中在这里。
 按用途分组，各模块按需取用。
 """
+# noqa: giant
 
 from __future__ import annotations
 

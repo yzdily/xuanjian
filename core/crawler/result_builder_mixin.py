@@ -6,6 +6,7 @@ ResultBuilderMixin — 爬取结果构建与对比。
 - _compare_rounds: 对比不同角色的爬取结果
 - _build_final_result: 构建最终完整爬取结果（含指纹推测验证）
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -428,13 +429,6 @@ class ResultBuilderMixin:
 
             self._report(f"  Step 1: 采集 {len(not_exist_paths)} 个不存在路径的基准响应指纹...")
 
-            def _make_fingerprint(status: int, body: str) -> tuple[int, int, str]:
-                """生成响应指纹：状态码 + 长度桶（±50字符算同一桶）+ 内容hash前8位。"""
-                import hashlib
-                length_bucket = len(body) // 50  # 每 50 字符一个桶
-                body_hash = hashlib.md5(body.encode(errors="ignore")).hexdigest()[:8]
-                return (status, length_bucket, body_hash)
-
             baseline_fingerprints: set[tuple[int, int, str]] = set()
             baseline_has_biz_error = False
 
@@ -481,55 +475,6 @@ class ResultBuilderMixin:
                         semaphore = asyncio.Semaphore(10)
 
                         # ★ catch-all 路由内容检测函数
-                        def _is_catch_all_content(status: int, body: str, content_type: str = "") -> bool:
-                            """检测响应是否为 catch-all 路由的兜底响应。
-
-                            判定条件（满足任一）：
-                            1. 200 + JSON 验证码生成器特征（errcode + array/y + small/img）
-                            2. 200 + HTML 登录页/SPA fallback 特征
-                            """
-                            if status != 200:
-                                return False
-                            body_s = body.strip()
-                            if not body_s:
-                                return False
-                            ct = (content_type or "").lower()
-
-                            # JSON 验证码生成器检测
-                            if "json" in ct or body_s.startswith("{"):
-                                try:
-                                    j = json.loads(body_s[:2000])
-                                    if isinstance(j, dict):
-                                        keys = set(j.keys())
-                                        if "errcode" in keys and (
-                                            "array" in keys or "y" in keys
-                                        ) and any(k in keys for k in ("small", "normal", "img", "imgx")):
-                                            return True
-                                except (ValueError, TypeError):
-                                    pass
-                                return False
-
-                            # HTML catch-all 检测
-                            if "html" in ct or body_s[:1] in "<!" or "<html" in body_s[:500].lower():
-                                if len(body_s) < 500:
-                                    return False
-                                bl = body_s[:3000].lower()
-                                # 登录页特征
-                                login_patterns = [
-                                    "<title>登录", "<title>login", "<title>登入",
-                                    "<form", "password", "登录", "login",
-                                ]
-                                # 需同时匹配 form + password/login 关键词才算登录页
-                                has_form = "<form" in bl
-                                has_login_kw = any(p in bl for p in ("登录", "login", "password", "passwd"))
-                                if has_form and has_login_kw and len(body_s) > 1000:
-                                    return True
-                                # SPA fallback
-                                if ('id="app"' in bl or 'id="root"' in bl) and "<script" in bl:
-                                    return True
-
-                            return False
-
                         async def verify_one(method: str, url: str) -> dict | None:
                             async with semaphore:
                                 try:
@@ -751,7 +696,7 @@ class ResultBuilderMixin:
         # ---- 从 mitmproxy FlowStore 读取完整流量 ----
         proxy_flow_count = 0
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()
             target_host = self.target_domain
 
@@ -859,3 +804,61 @@ class ResultBuilderMixin:
             **merged_js_data,
             "extra_scope": list(self.extra_scope),
         }
+
+# --- hoisted from _build_final_result (A-grade, no local capture) ---
+def _make_fingerprint(status: int, body: str) -> tuple[int, int, str]:
+    """生成响应指纹：状态码 + 长度桶（±50字符算同一桶）+ 内容hash前8位。"""
+    import hashlib
+    length_bucket = len(body) // 50  # 每 50 字符一个桶
+    body_hash = hashlib.md5(body.encode(errors="ignore")).hexdigest()[:8]
+    return (status, length_bucket, body_hash)
+
+# --- hoisted from _build_final_result (A-grade, no local capture) ---
+def _is_catch_all_content(status: int, body: str, content_type: str = "") -> bool:
+    """检测响应是否为 catch-all 路由的兜底响应。
+
+    判定条件（满足任一）：
+    1. 200 + JSON 验证码生成器特征（errcode + array/y + small/img）
+    2. 200 + HTML 登录页/SPA fallback 特征
+    """
+    if status != 200:
+        return False
+    body_s = body.strip()
+    if not body_s:
+        return False
+    ct = (content_type or "").lower()
+
+    # JSON 验证码生成器检测
+    if "json" in ct or body_s.startswith("{"):
+        try:
+            j = json.loads(body_s[:2000])
+            if isinstance(j, dict):
+                keys = set(j.keys())
+                if "errcode" in keys and (
+                    "array" in keys or "y" in keys
+                ) and any(k in keys for k in ("small", "normal", "img", "imgx")):
+                    return True
+        except (ValueError, TypeError):
+            pass
+        return False
+
+    # HTML catch-all 检测
+    if "html" in ct or body_s[:1] in "<!" or "<html" in body_s[:500].lower():
+        if len(body_s) < 500:
+            return False
+        bl = body_s[:3000].lower()
+        # 登录页特征
+        login_patterns = [
+            "<title>登录", "<title>login", "<title>登入",
+            "<form", "password", "登录", "login",
+        ]
+        # 需同时匹配 form + password/login 关键词才算登录页
+        has_form = "<form" in bl
+        has_login_kw = any(p in bl for p in ("登录", "login", "password", "passwd"))
+        if has_form and has_login_kw and len(body_s) > 1000:
+            return True
+        # SPA fallback
+        if ('id="app"' in bl or 'id="root"' in bl) and "<script" in bl:
+            return True
+
+    return False

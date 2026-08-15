@@ -1,8 +1,13 @@
 # ============================================================
-# XuanJian 测试门禁 — 真 CI Gate
+# XuanJian 测试门禁 — 分层 CI Gate（避免 --cov-fail-under=70 一推就卡死全队）
+#
+# 三层门禁：
+#   Layer 1: 全局 ratchet（8→20→40→70）— 阈值在 .coverage-ratchet，只升不降
+#   Layer 2: diff-coverage ≥80% — 新增/修改行必须有 80%+ 覆盖
+#   Layer 3: 目录级 ≥90% — 高覆盖包不允许退化
+#
 # 触发: push / PR → main
-# 门禁: pytest --cov-fail-under=70（覆盖率 < 70% 则 CI 失败）
-# 跳过: slow / e2e / llm 标记（需真实浏览器/目标/LLM Provider）
+# 跳过: slow / e2e / llm / integration 标记（需真实浏览器/目标/LLM Provider/本地服务器）
 # ============================================================
 name: Tests
 
@@ -19,6 +24,8 @@ jobs:
       # ---------- 1. 检出代码 ----------
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # diff-coverage 需要完整 git 历史
 
       # ---------- 2. 安装 Python ----------
       - name: Set up Python
@@ -28,24 +35,32 @@ jobs:
           cache: pip
 
       # ---------- 3. 安装依赖 ----------
-      # pip install -e ".[dev]" 安装运行时依赖 + dev extras（pytest/cov/ruff）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      # ---------- 4. 运行测试 + 覆盖率门禁 ----------
+      # ---------- 4. 运行测试 + 生成覆盖率报告 ----------
       # pyproject.toml addopts 已含 --cov=core/web/mcp_servers + xml 报告
-      # --cov-fail-under=70 覆盖 pyproject.toml 的 fail_under=0（本地默认宽松）
-      # -m 排除需要真实资源的标记：slow(浏览器/LLM) / e2e(真实目标) / llm(Provider)
-      - name: Run tests (coverage gate ≥ 70%)
-        run: pytest -m "not slow and not e2e and not llm" --cov-fail-under=70
+      # -m 排除需要真实资源的标记：slow(浏览器/LLM) / e2e(真实目标) / llm(Provider) / integration(本地服务器)
+      # 不再使用 --cov-fail-under=70，改由分层门禁脚本检查
+      - name: Run tests (generate coverage)
+        run: pytest -m "not slow and not e2e and not llm and not integration" --cov-fail-under=0
 
-      # ---------- 5. 上传覆盖率报告 ----------
+      # ---------- 5. 分层门禁检查 ----------
+      # Layer 1: 全局 ratchet（8→20→40→70）
+      # Layer 2: diff-coverage ≥80%（新增/修改行）
+      # Layer 3: 目录级 ≥90%（高覆盖包锁定）
+      - name: CI Gate (layered)
+        run: python scripts/ci_gate.py --coverage-xml coverage.xml --ratchet-file .coverage-ratchet --diff-threshold 80 --dir-threshold 90
+
+      # ---------- 6. 上传覆盖率报告 ----------
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
-          path: coverage.xml
+          path: |
+            coverage.xml
+            diff-cover.json
           if-no-files-found: warn

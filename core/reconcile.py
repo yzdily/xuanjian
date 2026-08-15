@@ -241,7 +241,11 @@ async def reconcile_once(
 
 
 def _extract_json(raw_text: str) -> Optional[dict]:
-    """从 LLM 响应中提取 JSON 对象。"""
+    """从 LLM 响应中提取 JSON 对象。
+
+    ★ P2-4: 增加字符串感知——JSON 值中包含 { } 字符时（如配置描述），
+    原逻辑 depth 计数会被误导导致解析失败。
+    """
     if not raw_text:
         return None
     # 1. ```json ... ```
@@ -251,15 +255,29 @@ def _extract_json(raw_text: str) -> Optional[dict]:
             return json.loads(m.group(1))
         except (json.JSONDecodeError, ValueError):
             pass
-    # 2. 第一个 { 到匹配的 }
+    # 2. 第一个 { 到匹配的 }（字符串感知版）
     start = raw_text.find("{")
     if start < 0:
         return None
     depth = 0
+    in_string = False
+    escape = False
     for i in range(start, len(raw_text)):
-        if raw_text[i] == "{":
+        ch = raw_text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
             depth += 1
-        elif raw_text[i] == "}":
+        elif ch == "}":
             depth -= 1
             if depth == 0:
                 try:

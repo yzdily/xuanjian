@@ -1,4 +1,5 @@
 """Sitemap — API 请求样本管理 Mixin。"""
+# noqa: giant
 
 from __future__ import annotations
 

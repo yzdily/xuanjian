@@ -382,7 +382,21 @@ class LLMClient:
 
         elapsed = time.time() - t0
         resp = _llm._parse_sse_chat_payload(resp)
-        choice = resp.choices[0]
+
+        # ★ D8 防御：非标准/截断 SSE 响应可能返回空 choices（或根本不是 chat 结构）。
+        # 原代码 resp.choices[0] 直接 IndexError 且不被 _monitor 记录，导致 worker_agent 无法走兜底。
+        # 这里降级为「带监控的错误」，让上层显式处理而非静默崩溃（保持与上方 API 异常一致的 raise 契约）。
+        _choices = getattr(resp, "choices", None)
+        if not _choices:
+            _llm._monitor.record(
+                model=self.config.model, input_tokens=0, output_tokens=0,
+                elapsed=elapsed, caller=caller, has_tools=bool(tools),
+                call_id=call_id, is_error=True,
+                error="LLM 返回空 choices（非标准/截断响应）",
+                req_summary=req_summary, resp_summary=str(resp)[:300],
+            )
+            raise ValueError("LLM 返回空 choices：非标准或截断的响应，无法解析首选项")
+        choice = _choices[0]
         msg = choice.message
 
         # 提取响应摘要

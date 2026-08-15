@@ -12,15 +12,23 @@ core/diff/register.py — 把 diff 模块挂到事件总线上
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from core.events import Events, bus
 from core.log import get_logger
 from core.diff.snapshot import take_snapshot
+from core.di import register_resetter
 
 log = get_logger("diff.register")
 
-_attached = False
+
+@dataclass
+class _DiffRegisterState:
+    attached: bool = False
+
+
+_state = _DiffRegisterState()
 
 
 def _on_crawl_snapshot_done(payload: dict[str, Any]) -> None:
@@ -42,12 +50,18 @@ def _on_crawl_snapshot_done(payload: dict[str, Any]) -> None:
 
 def attach() -> None:
     """注册事件订阅。重复调用是幂等的。"""
-    global _attached
-    if _attached:
+    if _state.attached:
         return
     bus.on(Events.CRAWL_SNAPSHOT_DONE, _on_crawl_snapshot_done)
-    _attached = True
+    _state.attached = True
     log.debug("diff 模块已挂载到事件总线")
 
 
 __all__ = ["attach"]
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_diff_register__attached() -> None:
+    _state.attached = False
+
+register_resetter("core_diff_register__attached", _reset_core_diff_register__attached)

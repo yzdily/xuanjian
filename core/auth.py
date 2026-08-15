@@ -24,10 +24,12 @@ import os
 import secrets
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("auth")
 
@@ -39,42 +41,49 @@ log = get_logger("auth")
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _USERS_FILE = _PROJECT_ROOT / "data" / "users.json"
 _LOCK = Lock()
-_CACHE: dict[str, dict] | None = None  # username -> user dict
+
+
+@dataclass
+class _AuthState:
+    secret_key: str | None = None
+    cache: dict[str, dict] | None = None  # username -> user dict
+
+
+_state = _AuthState()
 
 # Token 有效期：24 小时（秒）
 TOKEN_TTL = 24 * 60 * 60
 
 # ★ Token 签名密钥：优先从环境变量读取，否则启动时生成随机密钥并持久化
 _SECRET_FILE = _PROJECT_ROOT / "data" / ".auth_secret"
-_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "")
+_state.secret_key = os.getenv("AUTH_SECRET_KEY", "")
 
 
 def _load_or_generate_secret() -> str:
     """加载或生成签名密钥，持久化到 data/.auth_secret。"""
-    global _SECRET_KEY
-    if _SECRET_KEY:
-        return _SECRET_KEY
+    if _state.secret_key:
+        return _state.secret_key
     if _SECRET_FILE.exists():
         try:
-            _SECRET_KEY = _SECRET_FILE.read_text(encoding="utf-8").strip()
-            if _SECRET_KEY:
-                return _SECRET_KEY
+            _state.secret_key = _SECRET_FILE.read_text(encoding="utf-8").strip()
+            if _state.secret_key:
+                return _state.secret_key
         except Exception as e:
             log.warning("读取签名密钥文件失败: %s", e, exc_info=True)
     # 生成 32 字节随机密钥
-    _SECRET_KEY = secrets.token_hex(32)
+    _state.secret_key = secrets.token_hex(32)
     try:
         _SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _SECRET_FILE.write_text(_SECRET_KEY, encoding="utf-8")
+        _SECRET_FILE.write_text(_state.secret_key, encoding="utf-8")
         # 设置文件权限仅当前用户可读（Unix）
         if os.name != "nt":
             os.chmod(_SECRET_FILE, 0o600)
     except Exception as e:
         log.warning("持久化 auth secret 失败: %s", e)
-    return _SECRET_KEY
+    return _state.secret_key
 
 
-_SECRET_KEY = _load_or_generate_secret()
+_state.secret_key = _load_or_generate_secret()
 
 # ★ 登录失败限速配置
 _LOGIN_FAIL_LIMIT = 5        # 最大失败次数
@@ -163,9 +172,8 @@ def _ensure_dir() -> None:
 
 def _load() -> dict[str, dict]:
     """加载用户表到内存缓存。文件不存在则返回空字典。"""
-    global _CACHE
-    if _CACHE is not None:
-        return _CACHE
+    if _state.cache is not None:
+        return _state.cache
     _ensure_dir()
     users: dict[str, dict] = {}
     if _USERS_FILE.exists():
@@ -175,8 +183,8 @@ def _load() -> dict[str, dict]:
                 users = data
         except Exception as e:
             log.error("读取 users.json 失败: %s", e)
-    _CACHE = users
-    return _CACHE
+    _state.cache = users
+    return _state.cache
 
 
 def _flush() -> None:
@@ -204,7 +212,7 @@ def _create_token(username: str) -> str:
     header_b64 = _b64url_encode(json.dumps(header, ensure_ascii=False).encode("utf-8"))
     payload_b64 = _b64url_encode(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
     signing_input = f"{header_b64}.{payload_b64}"
-    sig = hmac.new(_SECRET_KEY.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256).hexdigest()
+    sig = hmac.new(_state.secret_key.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{signing_input}.{sig}"
 
 
@@ -222,7 +230,7 @@ def verify_token(token: str) -> dict | None:
     # 重新计算签名做常量时间比较，防止伪造
     signing_input = f"{header_b64}.{payload_b64}"
     expected_sig = hmac.new(
-        _SECRET_KEY.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256
+        _state.secret_key.encode("utf-8"), signing_input.encode("utf-8"), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(sig, expected_sig):
         log.warning("token 签名校验失败")
@@ -265,7 +273,7 @@ def register(username: str, password: str) -> dict:
     if len(password) < 8:
         return {"ok": False, "error": "密码至少 8 个字符"}
     # ★ 安全加固：支持通过环境变量关闭开放注册
-    if os.getenv("XUANJIAN_DISABLE_REGISTER", "0") == "1":
+    if os.getenv("XUANJIAN_DISABLE_REGISTER", "1") == "1":
         return {"ok": False, "error": "系统已关闭注册功能，请联系管理员创建账号"}
     with _LOCK:
         users = _load()
@@ -409,15 +417,26 @@ def init_default_user() -> None:
             "role": "admin",
         }
         _flush()
-        # 用醒目方式打印到控制台和日志，方便用户首次登录拿到密码
-        banner = (
-            "=" * 60 + "\n"
-            f"  默认管理员账号已创建\n"
-            f"  用户名: {_DEFAULT_USERNAME}\n"
-            f"  密码  : {password}\n"
-            f"  请尽快登录后修改密码！\n"
-            f"  （密码已持久化到 data/.default_password，下次启动沿用）\n"
-            + "=" * 60
-        )
-        print(banner)
-        log.warning("默认用户已创建: %s — 请尽快登录后修改密码", _DEFAULT_USERNAME)
+        # ★ XJ-03 安全加固：不再向控制台打印明文密码
+        # 密码已持久化到 data/.default_password，用户可从该文件查看
+        print("=" * 60)
+        print("  默认管理员账号已创建")
+        print(f"  用户名: {_DEFAULT_USERNAME}")
+        print("  密码  : 请查看 data/.default_password 文件")
+        print("  请尽快登录后修改密码！")
+        print("=" * 60)
+        log.warning("默认用户已创建: %s — 密码已写入 data/.default_password，请查看该文件", _DEFAULT_USERNAME)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_auth__SECRET_KEY() -> None:
+    _state.secret_key = ""
+
+register_resetter("core_auth__SECRET_KEY", _reset_core_auth__SECRET_KEY)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_auth__CACHE() -> None:
+    _state.cache = None
+
+register_resetter("core_auth__CACHE", _reset_core_auth__CACHE)

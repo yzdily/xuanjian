@@ -29,6 +29,7 @@ _PROCESS_RUN_ID: str = ""
 
 def _get_process_run_id() -> str:
     """进程级兜底 run_id，避免没传 task_id 时数据散落。"""
+    # @intentional_global D7-D类：进程级兜底 run_id，故意全局聚合散落数据，CI 白名单豁免
     global _PROCESS_RUN_ID
     if not _PROCESS_RUN_ID:
         _PROCESS_RUN_ID = new_run_id("proc")

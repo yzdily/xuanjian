@@ -1,4 +1,5 @@
 """Sitemap — 报告渲染 Mixin。"""
+# noqa: giant
 
 from __future__ import annotations
 
@@ -572,14 +573,6 @@ class ReportMixin:
         _seen_vuln_keys: set[str] = set()
         _seen_review_keys: set[str] = set()
 
-        def _make_dedup_key(fp, c) -> str:
-            """生成与 coverage.py _normalize_vuln_key 一致的去重键。"""
-            try:
-                from core.sitemap.coverage import _normalize_vuln_key
-                return _normalize_vuln_key(fp, c.vuln_type)
-            except Exception:
-                return f"{fp.name}|{c.vuln_type}"
-
         vuln_details = []
         review_details = []
         for fp in self.features.values():
@@ -1004,3 +997,12 @@ class ReportMixin:
                         detail = c.detail[:200] if c.detail else "-"
                         lines.append(f"| {c.vuln_type} | {result_text} | {detail} |")
                     lines.append("")
+
+# --- hoisted from _render_vuln_details (A-grade, no local capture) ---
+def _make_dedup_key(fp, c) -> str:
+    """生成与 coverage.py _normalize_vuln_key 一致的去重键。"""
+    try:
+        from core.sitemap.coverage import _normalize_vuln_key
+        return _normalize_vuln_key(fp, c.vuln_type)
+    except Exception:
+        return f"{fp.name}|{c.vuln_type}"

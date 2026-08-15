@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-JUDGE_SYSTEM_PROMPT = load_prompt("xss_judge")
+JUDGE_SYSTEM_PROMPT = load_prompt("xss_judge", with_common=True)
 
 
 def _serialize_candidate_for_llm(cand: XssCandidate, max_resp_len: int = 4000,

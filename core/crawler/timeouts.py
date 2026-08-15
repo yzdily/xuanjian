@@ -91,7 +91,7 @@ class _NoiseDetector:
         key = self._path_key(url)
         if key in self._blacklist:
             return
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         bucket = self._window.setdefault(key, [])
         bucket.append(now)
         # 只保留窗口内的时间戳
@@ -135,7 +135,7 @@ async def _smart_wait_for_idle(
             pass
         return
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + max_wait_s
     # 先快速尝试一次 networkidle（quiet_threshold_s），让正常页面快速通过
     try:

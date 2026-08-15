@@ -38,6 +38,9 @@ def resolve_project_dir(force_production: bool = False) -> Path:
 # ============================================================
 
 WEB_PORT = int(os.getenv("WEB_PORT", "7788"))
+# ★ O1 安全收口：Web 默认绑 127.0.0.1（XJ-02 补偿），避免裸暴露 0.0.0.0。
+# 容器/需对外暴露时显式设 WEB_HOST=0.0.0.0（docker-compose 已设）。
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 PROXY_PORT = int(os.getenv("PROXY_PORT", "18080"))
 IS_WINDOWS = sys.platform == "win32"
 PROJECT_DIR = resolve_project_dir()
@@ -103,7 +106,16 @@ def check_dep(mod_name: str, pip_name: str):
         importlib.import_module(mod_name)
         ok(pip_name)
     except ImportError:
-        warn(f"{pip_name} — 未安装，正在安装...")
+        # ★ O10 禁运行时 pip install：生产环境（XUANJIAN_AUTO_INSTALL 未设或=0）
+        # 缺失依赖直接 fail，不静默 pip install（构建期应预装，运行时安装有供应链风险）。
+        # 开发态显式设 XUANJIAN_AUTO_INSTALL=1 保留自动安装行为。
+        if os.getenv("XUANJIAN_AUTO_INSTALL", "0") != "1":
+            fail(f"{pip_name} — 未安装（生产模式禁止运行时安装）")
+            print(f"    请在构建期预装: {CYAN}{sys.executable} -m pip install {pip_name}{NC}")
+            print(f"    开发态自动安装: 设环境变量 {CYAN}XUANJIAN_AUTO_INSTALL=1{NC}")
+            errors += 1
+            return
+        warn(f"{pip_name} — 未安装，正在安装（XUANJIAN_AUTO_INSTALL=1）...")
         ret = subprocess.run(
             [sys.executable, "-m", "pip", "install", pip_name, "-q"],
             capture_output=True, text=True
@@ -405,10 +417,24 @@ _mitm_stderr_lines: list[str] = []  # 收集 stderr 输出供降级日志使用
 def _drain_mitm_stderr(proc: subprocess.Popen):
     """后台线程持续读取 mitmproxy stderr，防止管道缓冲区满导致进程阻塞。
 
-    同时把前 20 行存入 _mitm_stderr_lines 供启动失败时诊断。
+    同时把前 50 行存入 _mitm_stderr_lines 供启动失败时诊断，
+    并**全量落盘**到 ``data/logs/mitm_stderr_<ts>.log`` 供下次扫描前复盘
+    （D17：原仅内存，进程退出即丢）。
     """
     global _mitm_stderr_lines
     collected = []
+    # D17: 落盘 stderr 到 data/logs/mitm_stderr_<ts>.log
+    logs_dir = PROJECT_DIR / "data" / "logs"
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    log_path = logs_dir / f"mitm_stderr_{int(time.time())}.log"
+    log_file = None
+    try:
+        log_file = open(log_path, "w", encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     try:
         for line in iter(proc.stderr.readline, b""):
             text = line.decode("utf-8", errors="replace").rstrip()
@@ -416,8 +442,20 @@ def _drain_mitm_stderr(proc: subprocess.Popen):
                 collected.append(text)
                 if len(collected) <= 50:
                     _mitm_stderr_lines.append(text)
+                if log_file:
+                    try:
+                        log_file.write(text + "\n")
+                        log_file.flush()
+                    except Exception:
+                        pass
     except Exception:
         pass
+    finally:
+        if log_file:
+            try:
+                log_file.close()
+            except Exception:
+                pass
 
 
 def cleanup(signum=None, frame=None):
@@ -510,6 +548,7 @@ def start_mitmproxy():
                 str(mitmdump_path),
                 "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
+                "--listen-host", "127.0.0.1",  # ★ XJ-02: 仅绑定本地，不暴露 0.0.0.0
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
                 "--quiet",
@@ -519,6 +558,7 @@ def start_mitmproxy():
                 "mitmdump",
                 "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
+                "--listen-host", "127.0.0.1",  # ★ XJ-02: 仅绑定本地
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
                 "--quiet",
@@ -537,6 +577,7 @@ def start_mitmproxy():
                 "from mitmproxy.tools.main import mitmdump; mitmdump()",
                 "-s", str(addon_path),
                 "-p", str(PROXY_PORT),
+                "--listen-host", "127.0.0.1",  # ★ XJ-02: 仅绑定本地
                 "--set", "stream_large_bodies=10m",
                 "--set", "connection_strategy=lazy",
                 "--quiet",
@@ -698,7 +739,7 @@ def start_web():
         # 占满 worker 导致服务无响应（之前 13 个连接卡死整个服务）
         uvicorn.run(
             "web.server:app",
-            host="0.0.0.0",
+            host=WEB_HOST,
             port=WEB_PORT,
             log_level="info",
             timeout_keep_alive=30,       # keep-alive 30 秒超时，避免僵尸连接

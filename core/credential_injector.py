@@ -604,7 +604,7 @@ class CredentialInjector:
 
         检测条件：验证码元素消失或页面发生变化。
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
         while loop.time() - start < timeout:
             if self._cancelled:
@@ -620,7 +620,7 @@ class CredentialInjector:
     ) -> bool:
         """轮询等待用户手动完成登录。"""
         pre_cookie_names = {c["name"] for c in pre_cookies}
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
 
         while loop.time() - start < timeout:
@@ -673,12 +673,6 @@ class CredentialInjector:
             "password incorrect", "invalid credentials", "login failed",
         ]
 
-        def _check_auth_cookies(cookies):
-            return [c for c in cookies if any(
-                k in c["name"].lower()
-                for k in ("session", "token", "auth", "jwt", "sid", "jsessionid", "phpsessid", "access_token")
-            )]
-
         for _attempt in range(max_wait):
             if self._cancelled:
                 return False
@@ -720,3 +714,10 @@ class CredentialInjector:
                 pass
 
         return False
+
+# --- hoisted from _wait_for_login_result (A-grade, no local capture) ---
+def _check_auth_cookies(cookies):
+    return [c for c in cookies if any(
+        k in c["name"].lower()
+        for k in ("session", "token", "auth", "jwt", "sid", "jsessionid", "phpsessid", "access_token")
+    )]

@@ -4,7 +4,6 @@ web/api/replay_api.py — Replay Theater HTTP API
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,9 +17,9 @@ from core.replay import (
     mine_lessons_from_script,
 )
 from core.replay.miner import write_back_to_memory
+from web._security import WEB_ROOT
 
 router = APIRouter()
-WEB_ROOT = Path(__file__).parent.parent
 
 
 @router.get("/replay-theater", response_class=HTMLResponse)

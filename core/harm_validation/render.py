@@ -354,57 +354,6 @@ def render_proven_only(
     accepted = [v for v in verdicts if v.get("verdict") == "accepted"]
     summary = hv_result.get("summary", "")
 
-    def _dedupe_verdicts(items: list[dict]) -> list[dict]:
-        from urllib.parse import urlparse
-        import re
-
-        def _canon_type(orig: dict) -> str:
-            vt = (orig.get("vuln_type", "") or "").lower()
-            blob = "\n".join([
-                vt,
-                (orig.get("detail", "") or "").lower(),
-                (orig.get("evidence_request", "") or "").lower(),
-                (orig.get("evidence_response", "") or "").lower(),
-            ])
-            if ("信息泄露" in orig.get("vuln_type", "") or "代码审计" in orig.get("vuln_type", "") or "key" in vt or "secret" in vt) and any(
-                marker in blob for marker in ("appsecret", "app_secret", "api_key", "apikey", "appkey", "硬编码密钥", "签名密钥")
-            ):
-                return "客户端硬编码密钥泄露"
-            return orig.get("vuln_type", "") or "未知"
-
-        def _key(vd: dict) -> str:
-            orig = vd.get("_original", {}) or {}
-            url = orig.get("url", "") or ""
-            req = orig.get("evidence_request", "") or ""
-            if not url and req:
-                m = re.search(r"\b(?:GET|POST|PUT|DELETE|PATCH)\s+(\S+)", req)
-                if m:
-                    url = m.group(1)
-            try:
-                pu = urlparse(url)
-                path = pu.path or url.split("?", 1)[0]
-                norm_parts = []
-                for part in [p for p in path.split("/") if p]:
-                    if part.isdigit() or re.fullmatch(r"[0-9a-fA-F]{16,}", part):
-                        norm_parts.append("*")
-                    else:
-                        norm_parts.append(part)
-                norm_path = "/" + "/".join(norm_parts) if norm_parts else path
-                host = pu.netloc.lower()
-            except Exception:
-                host, norm_path = "", url
-            return f"{host}{norm_path}|{_canon_type(orig)}"
-
-        seen: set[str] = set()
-        result: list[dict] = []
-        for item in items:
-            k = _key(item)
-            if k in seen:
-                continue
-            seen.add(k)
-            result.append(item)
-        return result
-
     accepted = _dedupe_verdicts(accepted)
 
     # ★ 优化.md 建议5/2/7：补 CWE + 四维定级，并合并同类项
@@ -787,3 +736,59 @@ def render_proven_only(
     lines.extend(_compliance_footer(target_label, scope_label))
 
     return "\n".join(lines)
+
+# --- hoisted from render_proven_only (A-grade, no local capture) ---
+# --- _canon_type / _key 进一步提升到模块级（B/C 复审 2026-08-14：symtable 判定纯函数，零捕获） ---
+def _canon_type(orig: dict) -> str:
+    """归一化漏洞类型：硬编码密钥类合并为「客户端硬编码密钥泄露」。"""
+    vt = (orig.get("vuln_type", "") or "").lower()
+    blob = "\n".join([
+        vt,
+        (orig.get("detail", "") or "").lower(),
+        (orig.get("evidence_request", "") or "").lower(),
+        (orig.get("evidence_response", "") or "").lower(),
+    ])
+    if ("信息泄露" in orig.get("vuln_type", "") or "代码审计" in orig.get("vuln_type", "") or "key" in vt or "secret" in vt) and any(
+        marker in blob for marker in ("appsecret", "app_secret", "api_key", "apikey", "appkey", "硬编码密钥", "签名密钥")
+    ):
+        return "客户端硬编码密钥泄露"
+    return orig.get("vuln_type", "") or "未知"
+
+
+def _key(vd: dict) -> str:
+    """去重键：host + 归一化路径 + 归一化漏洞类型。"""
+    from urllib.parse import urlparse
+
+    orig = vd.get("_original", {}) or {}
+    url = orig.get("url", "") or ""
+    req = orig.get("evidence_request", "") or ""
+    if not url and req:
+        m = re.search(r"\b(?:GET|POST|PUT|DELETE|PATCH)\s+(\S+)", req)
+        if m:
+            url = m.group(1)
+    try:
+        pu = urlparse(url)
+        path = pu.path or url.split("?", 1)[0]
+        norm_parts = []
+        for part in [p for p in path.split("/") if p]:
+            if part.isdigit() or re.fullmatch(r"[0-9a-fA-F]{16,}", part):
+                norm_parts.append("*")
+            else:
+                norm_parts.append(part)
+        norm_path = "/" + "/".join(norm_parts) if norm_parts else path
+        host = pu.netloc.lower()
+    except Exception:
+        host, norm_path = "", url
+    return f"{host}{norm_path}|{_canon_type(orig)}"
+
+
+def _dedupe_verdicts(items: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    result: list[dict] = []
+    for item in items:
+        k = _key(item)
+        if k in seen:
+            continue
+        seen.add(k)
+        result.append(item)
+    return result

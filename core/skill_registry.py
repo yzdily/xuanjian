@@ -314,23 +314,27 @@ def scan_skills(skills_dir: Path = SKILLS_DIR) -> SkillRegistry:
 # 全局单例 + 热重载
 # ============================================================
 
-_registry: SkillRegistry | None = None
+@dataclass
+class _SkillRegistryState:
+    registry: SkillRegistry | None = None
+    exploit_skill_map: dict[str, str] | None = None
+
+
+_state = _SkillRegistryState()
 
 
 def get_registry() -> SkillRegistry:
     """获取全局 SkillRegistry 单例（懒加载）。"""
-    global _registry
-    if _registry is None:
-        _registry = scan_skills()
-    return _registry
+    if _state.registry is None:
+        _state.registry = scan_skills()
+    return _state.registry
 
 
 def reload_registry() -> SkillRegistry:
     """强制重新扫描，刷新单例。返回新的 registry。"""
-    global _registry
-    _registry = scan_skills()
+    _state.registry = scan_skills()
     reset_exploit_skill_map()  # ★ 同步重置 exploit skill 映射缓存
-    return _registry
+    return _state.registry
 
 
 def reset_registry() -> None:
@@ -339,8 +343,7 @@ def reset_registry() -> None:
     与 reload_registry 的区别：不立即触发扫描，仅置空，供测试隔离使用
     （已通过 core.di.register_resetter 注册，可由 reset_singletons 统一调用）。
     """
-    global _registry
-    _registry = None
+    _state.registry = None
     reset_exploit_skill_map()
 
 
@@ -363,7 +366,7 @@ def find_skill_path(skill_name: str) -> Path | None:
 
 # 漏洞类型 → exploit skill 名称的映射（独立于 VULN_TO_SKILL）
 # 由 exploit skills 的 vuln_types 字段构建
-_EXPLOIT_SKILL_MAP: dict[str, str] | None = None
+# 已合并入 _SkillRegistryState.exploit_skill_map
 
 
 def _build_exploit_skill_map() -> dict[str, str]:
@@ -386,10 +389,9 @@ def _build_exploit_skill_map() -> dict[str, str]:
 
 def get_exploit_skill_map() -> dict[str, str]:
     """获取 exploit skill 映射（懒加载 + 缓存）。"""
-    global _EXPLOIT_SKILL_MAP
-    if _EXPLOIT_SKILL_MAP is None:
-        _EXPLOIT_SKILL_MAP = _build_exploit_skill_map()
-    return _EXPLOIT_SKILL_MAP
+    if _state.exploit_skill_map is None:
+        _state.exploit_skill_map = _build_exploit_skill_map()
+    return _state.exploit_skill_map
 
 
 def find_exploit_skills_for_vuln(vuln_type: str) -> list[tuple[str, str]]:
@@ -453,8 +455,7 @@ def find_exploit_skills_for_vuln(vuln_type: str) -> list[tuple[str, str]]:
 
 def reset_exploit_skill_map() -> None:
     """重置 exploit skill 映射缓存（热重载时调用）。"""
-    global _EXPLOIT_SKILL_MAP
-    _EXPLOIT_SKILL_MAP = None
+    _state.exploit_skill_map = None
 
 
 # ---- 注册到 core.di 统一单例重置注册表（测试隔离用）----

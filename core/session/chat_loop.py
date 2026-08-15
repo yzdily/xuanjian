@@ -4,6 +4,7 @@ ChatLoopMixin — chat() 主循环入口。
 chat() 是整个系统的核心调度入口，跨 Phase 运行，
 因此保留为完整方法（不再拆更细）。
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -88,13 +89,13 @@ class ChatLoopMixin:
         crawl_result = None
 
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = asyncio.get_running_loop().time()
             last_progress_tick = -1
             last_save_time = start_time
             last_progress_time = start_time
 
             while not crawl_task.done():
-                now = asyncio.get_event_loop().time()
+                now = asyncio.get_running_loop().time()
                 elapsed = now - start_time
 
                 # 硬超时
@@ -1072,7 +1073,7 @@ class ChatLoopMixin:
             if crawl_result is None:
                 yield self._event("system", "正在从 mitmproxy 补救已抓取的流量...")
                 try:
-                    from mcp_servers.proxy_mcp import _store, _load_new_flows
+                    from core.mcp_bridge import _store, _load_new_flows
                     from urllib.parse import urlparse as _urlparse
                     _load_new_flows()
                     target_host = _urlparse(url).netloc
@@ -1218,7 +1219,7 @@ class ChatLoopMixin:
 
                         doc_auth = {}
                         try:
-                            from mcp_servers.proxy_mcp import _store as _flow_store
+                            from core.mcp_bridge import _store as _flow_store
                             for fid in list(_flow_store._order):
                                 f = _flow_store.get(fid)
                                 if f and f.request_headers:
@@ -1239,7 +1240,7 @@ class ChatLoopMixin:
                                     continue
                                 seen_urls.add(hit_url)
                                 try:
-                                    from mcp_servers.proxy_mcp import _store as _flow_store2, _load_new_flows
+                                    from core.mcp_bridge import _store as _flow_store2, _load_new_flows
                                     _load_new_flows()
                                     resp_body = ""
                                     for fid in list(_flow_store2._order):

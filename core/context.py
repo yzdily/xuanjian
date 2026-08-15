@@ -154,6 +154,30 @@ class ContextManager:
         """仅检查 token 估算是否超过阈值。"""
         return self.estimate_tokens() >= CONTEXT_TOKEN_COMPRESS_THRESHOLD
 
+    def check_context_budget(self, context_window: int = 65536, safety: float = 0.6) -> float:
+        """★ P0-2/D14: 返回当前上下文使用率（0-1），并在超阈值时硬拦截。
+
+        - usage >= 1.0：已达安全预算上限，记录「拒绝继续注入样本」，
+          调用方应停止向上下文注入更多样本（D14 硬拦截）。
+        - usage >= 0.8：80% 预警，建议压缩。
+
+        注意：生产侧真正的硬拦截由 ``LLMClient.chat()`` 经
+        ``_CONTEXT_PRECHECK_SAFETY``（0.6）在发送前抛 ``ContextLimitError``
+        实现；本方法供调用方在注入样本前主动预检，避免被动超限。
+        """
+        tokens = self.estimate_tokens()
+        available = int(context_window * safety)
+        usage = tokens / available if available > 0 else 1.0
+        import logging
+        _log = logging.getLogger("context")
+        if usage >= 1.0:
+            _log.warning("⭐ 上下文预算硬拦截(D14): %d/%d tokens (%.0f%%) ≥ 安全预算，"
+                         "拒绝继续注入样本", tokens, available, usage * 100)
+        elif usage >= 0.8:
+            _log.warning("⚠️ 上下文预算 80%% 预警: %d/%d tokens (%.0f%%)，建议压缩",
+                         tokens, available, usage * 100)
+        return usage
+
     def should_compress(self) -> bool:
         """判断是否需要压缩。
 

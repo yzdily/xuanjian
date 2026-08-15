@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "method": "crawl_page_inner",
+  "sample_id": "crawl_page_inner_root_mockspa",
+  "recorded_at": "2026-08-14T23:40:42.233713+00:00",
+  "inputs": {
+    "url": "http://127.0.0.1:9876/"
+  },
+  "output": {
+    "url": "http://127.0.0.1:9876/",
+    "title": "Mock SPA Admin",
+    "elements": [],
+    "forms": [],
+    "links": [],
+    "requests_during_load": []
+  },
+  "events": [],
+  "meta": {
+    "progress": [
+      "  [http://127.0.0.1:9876/] 展开菜单...",
+      "  [http://127.0.0.1:9876/] 发现 0 个菜单项, 1 个按钮",
+      "  [http://127.0.0.1:9876/] 🔐 检测到登录页面，跳过菜单/按钮点击 (省略 0 菜单 + 1 按钮)，仅提取 API/表单",
+      "  [http://127.0.0.1:9876/] 菜单项点击完成: 0/0"
+    ],
+    "captured_count": 0
+  },
+  "recipe": {
+    "runtime": "mock_spa",
+    "target": "http://127.0.0.1:9876",
+    "port": 9876,
+    "fast_mode": true,
+    "url": "http://127.0.0.1:9876/"
+  }
+}

@@ -25,7 +25,7 @@ log = get_logger("vision")
 # 截图分析 Prompt
 # ============================================================
 
-_SCREENSHOT_ANALYSIS_PROMPT = load_prompt("screenshot_analysis")
+_SCREENSHOT_ANALYSIS_PROMPT = load_prompt("screenshot_analysis", with_common=True)
 
 
 # ============================================================

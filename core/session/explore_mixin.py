@@ -251,7 +251,7 @@ class ExplorePhaseMixin:
 
         # 2. 从 FlowStore 获取完整请求信息
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()
 
             for fid in flow_ids:
@@ -311,7 +311,7 @@ class ExplorePhaseMixin:
             target_host = parsed.netloc
 
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()  # 确保读取最新流量
 
             # 记录同步前的数量
@@ -555,7 +555,7 @@ class ExplorePhaseMixin:
 
         try:
             messages = [
-                Message(role="system", content=load_prompt("explore_domain_judge")),
+                Message(role="system", content=load_prompt("explore_domain_judge", with_common=True)),
                 Message(role="user", content=prompt),
             ]
             response = await asyncio.to_thread(self.llm.chat, messages, caller="domain_filter")

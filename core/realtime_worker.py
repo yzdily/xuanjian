@@ -476,7 +476,7 @@ class FlowWatcher:
             return []
 
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()
         except Exception:
             return []

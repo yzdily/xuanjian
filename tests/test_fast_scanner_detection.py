@@ -168,8 +168,9 @@ class TestPathTraversal:
 # ============================================================
 class TestUnauthorized:
     def test_medium_when_no_sensitive_data(self, fast_scanner, route_request, sample_target, make_response):
-        auth = make_response(200, text="AUTH RESPONSE page with token abcdef123456 content here")
-        noauth = make_response(200, text="NOAUTH RESPONSE page with other text xyz987 content here")
+        _ct = {"content-type": "application/json"}
+        auth = make_response(200, text="AUTH RESPONSE page with token abcdef123456 content here", headers=_ct)
+        noauth = make_response(200, text="NOAUTH RESPONSE page with other text xyz987 content here", headers=_ct)
         route_request(fast_scanner, {"": auth}, drop_auth_map={"": noauth})
         target = sample_target("http://t.com/api/profile", params={})
         findings = run_async(fast_scanner._check_unauthorized(target))
@@ -178,10 +179,11 @@ class TestUnauthorized:
         assert findings[0].severity == "medium"  # 仅状态码+长度证据
 
     def test_high_when_sensitive_data_leaked(self, fast_scanner, route_request, sample_target, make_response):
-        auth = make_response(200, text="AUTH RESPONSE normal page content abc")
+        _ct = {"content-type": "application/json"}
+        auth = make_response(200, text="AUTH RESPONSE normal page content abc", headers=_ct)
         # 去认证后泄露含 3 个邮箱的敏感数据 -> 强证据 high
         noauth_body = "user alice@corp.com bob@corp.com carol@corp.com list data here"
-        noauth = make_response(200, text=noauth_body)
+        noauth = make_response(200, text=noauth_body, headers=_ct)
         route_request(fast_scanner, {"": auth}, drop_auth_map={"": noauth})
         target = sample_target("http://t.com/api/users/me", params={})
         findings = run_async(fast_scanner._check_unauthorized(target))

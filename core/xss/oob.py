@@ -37,11 +37,13 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 
 import httpx
 
+from core.di import register_resetter
 from core.xss.models import (
     FindingStatus,
     InjectionPoint,
@@ -154,14 +156,18 @@ class LocalOobReceiver:
 
 
 # 全局单例（供 web/server.py 共享）
-_global_receiver: Optional[LocalOobReceiver] = None
+@dataclass
+class _OobState:
+    global_receiver: Optional[LocalOobReceiver] = None
+
+
+_state = _OobState()
 
 
 def get_global_oob_receiver() -> LocalOobReceiver:
-    global _global_receiver
-    if _global_receiver is None:
-        _global_receiver = LocalOobReceiver()
-    return _global_receiver
+    if _state.global_receiver is None:
+        _state.global_receiver = LocalOobReceiver()
+    return _state.global_receiver
 
 
 # ============================================================
@@ -458,7 +464,7 @@ class OOBCallback:
         Returns:
             是否收到回调
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
         self._callbacks[token] = future
         
@@ -531,3 +537,10 @@ class OOBCallback:
         """关闭数据库连接"""
         if self._conn:
             self._conn.close()
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_xss_oob__global_receiver() -> None:
+    _state.global_receiver = None
+
+register_resetter("core_xss_oob__global_receiver", _reset_core_xss_oob__global_receiver)

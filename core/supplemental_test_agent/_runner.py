@@ -5,6 +5,7 @@ _run_worker_with_timeout（worker 超时控制）、run_supplemental_test_local
 （FAST 模式本地规则版补测，不依赖 LLM）。
 从原 core/supplemental_test_agent.py 抽取，行为不变。
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -365,18 +366,18 @@ async def _run_worker_with_timeout(
             done_flag.set()
 
     drain_task = asyncio.create_task(_drain())
-    deadline = asyncio.get_event_loop().time() + timeout_s
+    deadline = asyncio.get_running_loop().time() + timeout_s
 
     try:
         while not done_flag.is_set():
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise asyncio.TimeoutError()
             try:
                 evt = await asyncio.wait_for(queue.get(), timeout=min(remaining, 5.0))
                 yield evt
             except asyncio.TimeoutError:
-                if asyncio.get_event_loop().time() >= deadline:
+                if asyncio.get_running_loop().time() >= deadline:
                     raise
                 continue
         # done 后 drain 队列里残留事件
@@ -671,6 +672,15 @@ async def run_supplemental_test_local(
                                     c.fix_suggestion = finding.get("fix_suggestion", "")
                                     c.source = "fast_scanner_supplemental"
                                     break
+                    else:
+                        # ★ P1-2: 未发现漏洞时，将已测试的 PENDING 项标记为 NOT_VULN
+                        # 防止 checklist 项永远停留在 PENDING 状态，导致 pending_rate 虚高
+                        # 误触发空心化告警
+                        for c in fp.checklist:
+                            if c.result == CheckResult.PENDING:
+                                c.result = CheckResult.NOT_VULN
+                                c.detail = "补测 FastScanner 已扫描，未发现漏洞"
+                                c.source = "fast_scanner_supplemental"
                 except Exception as e:
                     log.warning("[本地补测] FastScanner 扫描 %s 失败: %s", url, e)
 

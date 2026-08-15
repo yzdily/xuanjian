@@ -121,7 +121,7 @@ class LoginMixin:
             pre_url = ""
             pre_cookies = set()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
         last_remaining_tick = -1
 
@@ -395,12 +395,6 @@ class LoginMixin:
             "password incorrect", "invalid credentials", "login failed",
             "captcha", "verification code", "请输入验证码",
         ]
-
-        def _check_auth_cookies(cookies):
-            return [c for c in cookies if any(
-                k in c["name"].lower()
-                for k in ("session", "token", "auth", "jwt", "sid", "jsessionid", "phpsessid", "access_token")
-            )]
 
         url_changed = hash_changed = cookie_increased = False
         auth_cookies: list = []
@@ -689,3 +683,10 @@ class LoginMixin:
         _log.warning("  代理地址: %s", proxy_url)
         _log.warning("  降级影响: flows.jsonl 由 Playwright 拦截写入，可能缺失部分 XHR/WebSocket 流量")
         return False
+
+# --- hoisted from _attempt_login (A-grade, no local capture) ---
+def _check_auth_cookies(cookies):
+    return [c for c in cookies if any(
+        k in c["name"].lower()
+        for k in ("session", "token", "auth", "jwt", "sid", "jsessionid", "phpsessid", "access_token")
+    )]

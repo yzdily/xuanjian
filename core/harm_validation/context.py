@@ -19,6 +19,27 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _safe_str(val, max_len: int = 0) -> str:
+    """★ P0-3: 安全转字符串——防止非字符串值（list/dict/slice/int）导致 slice 操作或格式化异常。
+
+    如果 val 不是 str，先转 str 再截断。
+    """
+    if val is None:
+        return ""
+    if not isinstance(val, str):
+        val = str(val)
+    if max_len > 0 and len(val) > max_len:
+        val = val[:max_len]
+    return val
+
+
+def _safe_list(val) -> list:
+    """★ P0-3: 安全转列表——防止非列表值导致 slice 操作异常。"""
+    if isinstance(val, list):
+        return val
+    return []
+
+
 # ★ 预编译正则：从 evidence_request 提取真实接口 URL
 # 匹配以下格式：
 #   1. HTTP 请求行: "GET /api/users HTTP/1.1"  / "POST https://host/path HTTP/1.1"
@@ -245,7 +266,7 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
 
             # ★ 标题兜底：优先用 item/description，为空时从 evidence_request
             # 提取真实接口 URL 生成 "vuln_type - url" 标题，避免空标题或纯 "漏洞 @ "
-            title = getattr(c, "item", "") or getattr(c, "description", "")
+            title = _safe_str(getattr(c, "item", "")) or _safe_str(getattr(c, "description", ""))
             if not title:
                 title = _make_title(vt, fp_url, evidence_req_text)
 
@@ -253,16 +274,16 @@ def collect_vulnerabilities(sitemap: "Sitemap") -> list[dict]:
                 "vuln_id": vid,
                 "source": "checklist",
                 "title": title,
-                "vuln_type": getattr(c, "vuln_type", "") or getattr(c, "check_type", "") or "未知",
+                "vuln_type": _safe_str(getattr(c, "vuln_type", "")) or _safe_str(getattr(c, "check_type", "")) or "未知",
                 "feature": fp_name or "未知功能点",
                 "module": fp_module or "未知模块",
                 "url": fp_url,
                 "severity_original": sev_str,
-                "detail": (getattr(c, "detail", "") or "")[:1500],
-                "evidence_request": evidence_req_text[:2000],
-                "evidence_response": evidence_resp_clean[:2000],
-                "reproduce_steps": (getattr(c, "reproduce_steps", "") or "")[:1500],
-                "fix_suggestion": (getattr(c, "fix_suggestion", "") or "")[:800],
+                "detail": _safe_str(getattr(c, "detail", ""), 1500),
+                "evidence_request": _safe_str(evidence_req_text, 2000),
+                "evidence_response": _safe_str(evidence_resp_clean, 2000),
+                "reproduce_steps": _safe_str(getattr(c, "reproduce_steps", ""), 1500),
+                "fix_suggestion": _safe_str(getattr(c, "fix_suggestion", ""), 800),
                 "public_api_evidence": public_evidence,
                 "candidate_level": candidate_level,
                 # ★ 证据质量（header_only=仅响应头/状态码, body_confirmed=响应体已确认含敏感数据,
@@ -450,20 +471,27 @@ def build_context_for_llm(
         parts.append("")
 
     # === 漏洞清单 ===
+    # ★ P0-3: 防御 vulnerabilities 非列表或包含非字典项的边界情况
+    if not isinstance(vulnerabilities, list):
+        vulnerabilities = _safe_list(vulnerabilities)
     parts.append(f"# 待裁决漏洞清单 (共 {len(vulnerabilities)} 个)")
     parts.append("")
     for i, v in enumerate(vulnerabilities, 1):
+        if not isinstance(v, dict):
+            parts.append(f"## 漏洞 {i}: [数据格式异常]")
+            parts.append("")
+            continue
         # ★ vuln_id 兜底：避免显示为 "x" 或空值
-        vuln_id = v.get("vuln_id", "") or f"V-{i}"
-        title = v.get("title", "") or "未命名漏洞"
-        vuln_type = v.get("vuln_type", "") or "未知"
-        candidate_level = v.get("candidate_level", "") or "unknown"
+        vuln_id = _safe_str(v.get("vuln_id", "")) or f"V-{i}"
+        title = _safe_str(v.get("title", "")) or "未命名漏洞"
+        vuln_type = _safe_str(v.get("vuln_type", "")) or "未知"
+        candidate_level = _safe_str(v.get("candidate_level", "")) or "unknown"
         parts.append(f"## 漏洞 {i}: {vuln_id} [{candidate_level}]")
         parts.append("")
         parts.append(f"- **标题**: {title}")
         parts.append(f"- **类型**: {vuln_type}")
         parts.append(f"- **候选级别**: {candidate_level}（confirmed=已确认/suspected=疑似待验证）")
-        eq = v.get("evidence_quality", "") or ""
+        eq = _safe_str(v.get("evidence_quality", "")) or ""
         if eq:
             eq_desc = {
                 "header_only": "仅响应头/状态码证据（最易误报，必须实测复现才能 accepted）",
@@ -471,36 +499,36 @@ def build_context_for_llm(
                 "content_match": "敏感路径内容指纹已匹配",
             }.get(eq, eq)
             parts.append(f"- **证据质量**: {eq} — {eq_desc}")
-        parts.append(f"- **来源**: {v.get('source', '') or '未知'}")
-        parts.append(f"- **URL**: `{v.get('url', '') or '未知'}`")
-        parts.append(f"- **功能模块**: {v.get('module', '') or v.get('feature', '') or '未知'}")
-        parts.append(f"- **原始严重等级**: {v.get('severity_original', '') or 'medium'}")
+        parts.append(f"- **来源**: {_safe_str(v.get('source', '')) or '未知'}")
+        parts.append(f"- **URL**: `{_safe_str(v.get('url', '')) or '未知'}`")
+        parts.append(f"- **功能模块**: {_safe_str(v.get('module', '')) or _safe_str(v.get('feature', '')) or '未知'}")
+        parts.append(f"- **原始严重等级**: {_safe_str(v.get('severity_original', '')) or 'medium'}")
         if v.get("payload"):
-            parts.append(f"- **Payload**: `{str(v['payload'])[:200]}`")
+            parts.append(f"- **Payload**: `{_safe_str(v['payload'], 200)}`")
         if v.get("echo_contexts"):
             parts.append(f"- **回显上下文**: {v['echo_contexts']}")
         if v.get("browser_triggered") is not None:
             parts.append(f"- **浏览器实测触发**: {v.get('browser_triggered')}")
             if v.get("browser_evidence"):
-                parts.append(f"  证据: {v['browser_evidence'][:300]}")
+                parts.append(f"  证据: {_safe_str(v['browser_evidence'], 300)}")
         if v.get("detail"):
-            parts.append(f"- **详细说明**: {v['detail'][:800]}")
+            parts.append(f"- **详细说明**: {_safe_str(v['detail'], 800)}")
         if v.get("evidence_request"):
             parts.append(f"- **请求证据**:")
             parts.append("  ```")
-            parts.append(f"  {v['evidence_request'][:600]}")
+            parts.append(f"  {_safe_str(v['evidence_request'], 600)}")
             parts.append("  ```")
         if v.get("evidence_response"):
             parts.append(f"- **响应证据**:")
             parts.append("  ```")
-            parts.append(f"  {v['evidence_response'][:600]}")
+            parts.append(f"  {_safe_str(v['evidence_response'], 600)}")
             parts.append("  ```")
         if v.get("reproduce_steps"):
-            parts.append(f"- **复现步骤**: {v['reproduce_steps'][:400]}")
+            parts.append(f"- **复现步骤**: {_safe_str(v['reproduce_steps'], 400)}")
         if v.get("judge_reasoning"):
-            parts.append(f"- **此前研判**: {v['judge_reasoning'][:300]}")
+            parts.append(f"- **此前研判**: {_safe_str(v['judge_reasoning'], 300)}")
         if v.get("public_api_evidence"):
-            parts.append(f"- **⚠️ 公开API证据**: {v['public_api_evidence']}")
+            parts.append(f"- **⚠️ 公开API证据**: {_safe_str(v['public_api_evidence'])}")
             parts.append(f"  → 如果该接口返回的数据在前端页面已公开可见，这是公开接口不算漏洞，应判 rejected")
         parts.append("")
 

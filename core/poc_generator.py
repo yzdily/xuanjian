@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("poc_generator")
 
@@ -276,17 +277,28 @@ class POCGenerator:
 
 
 # 全局生成器实例
-_generator: POCGenerator | None = None
+@dataclass
+class _PocGeneratorState:
+    generator: POCGenerator | None = None
+
+
+_state = _PocGeneratorState()
 
 
 def get_poc_generator() -> POCGenerator:
     """获取 POC 生成器实例"""
-    global _generator
-    if _generator is None:
-        _generator = POCGenerator()
-    return _generator
+    if _state.generator is None:
+        _state.generator = POCGenerator()
+    return _state.generator
 
 
 def generate_poc(finding: dict) -> str:
     """便捷函数：从发现生成 POC"""
     return get_poc_generator().generate_from_finding(finding)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_poc_generator__generator() -> None:
+    _state.generator = None
+
+register_resetter("core_poc_generator__generator", _reset_core_poc_generator__generator)

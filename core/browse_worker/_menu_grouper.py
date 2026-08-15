@@ -41,7 +41,7 @@ def _get_auth_token(crawl_result: dict) -> str | None:
 
     # 2. 从 FlowStore 中找
     try:
-        from mcp_servers.proxy_mcp import _store, _load_new_flows
+        from core.mcp_bridge import _store, _load_new_flows
         _load_new_flows()
         for flow_id in reversed(list(_store._order)):
             flow = _store.get(flow_id)
@@ -55,7 +55,7 @@ def _get_auth_token(crawl_result: dict) -> str | None:
     # 3. 从浏览器 localStorage 中找
     try:
         import asyncio
-        from mcp_servers.browser_mcp import _ensure_browser
+        from core.mcp_bridge import _ensure_browser
         actual = getattr(_ensure_browser, "fn", _ensure_browser)
 
         async def _get_token():
@@ -72,11 +72,20 @@ def _get_auth_token(crawl_result: dict) -> str | None:
             }""")
             return token
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        # ★ D10：asyncio.get_event_loop() 在无运行循环时已弃用，改为优先取当前运行循环；
+        # 无运行循环时新建并显式关闭，避免事件循环泄漏与 DeprecationWarning。
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None and loop.is_running():
             # 如果在异步环境中，无法同步获取
             return None
-        return loop.run_until_complete(_get_token())
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_get_token())
+        finally:
+            loop.close()
     except Exception:
         pass
 
@@ -321,43 +330,6 @@ def build_group_checklist(menus: list[dict]) -> str:
     page_idx = 0
 
     # 按钮名称 → 操作类型映射
-    def _btn_action(btn_name: str) -> str:
-        """根据按钮名称推导具体操作步骤。"""
-        name = btn_name.lower()
-        if any(kw in name for kw in ("新增", "新建", "创建", "添加", "add", "create", "new")):
-            return ("点击此按钮 → 弹窗出现后**先 browser_get_content 拿到 form 字段的真实 selector** "
-                    "→ 按本页『表单字段填写表』逐个 browser_fill → 点提交按钮 → "
-                    "**等待 1.5 秒** → proxy_get_traffic → 关闭弹窗")
-        if any(kw in name for kw in ("编辑", "修改", "edit", "update", "配置", "设置")):
-            return ("点击表格第一行的此按钮（selector 里的 :nth-of-type 加上 1）→ 弹窗后修改一个字段 → "
-                    "提交 → 等 1.5 秒 → proxy_get_traffic → 关闭")
-        if any(kw in name for kw in ("删除", "移除", "remove", "delete")):
-            return ("⚠️ **跳过 UI 点击**（弹窗确认/取消都不会触发 DELETE 请求或者会真删）。"
-                    "这类接口由主 Agent 在后续阶段用 proxy_send_request 直接构造请求测试。"
-                    "本步直接打 ✅ 跳过即可。")
-        if any(kw in name for kw in ("查询", "搜索", "search")):
-            return ("**先 browser_fill 搜索框**（selector 一般是同区域的 input[placeholder*=搜索] 或 "
-                    "input[type=text]，值填 'test'）→ 再点击此按钮 → 等 1.5 秒 → proxy_get_traffic")
-        if any(kw in name for kw in ("查看", "详情", "view", "detail")):
-            return "点击表格第一行的此按钮 → 等 1.5 秒 → proxy_get_traffic → 关闭/返回"
-        if any(kw in name for kw in ("list", "刷新", "重置", "reset")):
-            return "点击 → 等 1.5 秒 → proxy_get_traffic"
-        if any(kw in name for kw in ("导出", "下载", "export", "download")):
-            return "点击 → 等 2 秒（导出可能慢）→ proxy_get_traffic"
-        if any(kw in name for kw in ("导入", "上传", "import", "upload")):
-            return ("⚠️ **不要选文件**（Playwright file chooser 跳过）。点击此按钮 → 弹窗弹出后 "
-                    "→ proxy_get_traffic（抓预签名/初始化接口）→ 关闭弹窗")
-        if any(kw in name for kw in ("启", "停", "禁用", "启用", "toggle", "enable", "disable", "switch")):
-            return "点击切换状态 → 等 1.5 秒 → proxy_get_traffic"
-        if any(kw in name for kw in ("执行", "运行", "生成", "同步", "推送", "重发", "重试")):
-            return "点击 → 等 1.5 秒 → proxy_get_traffic（观察触发的 API）"
-        if any(kw in name for kw in ("保存", "save", "提交", "submit", "确认", "确定", "ok")):
-            return "填写必要字段 → 点击 → 等 1.5 秒 → proxy_get_traffic"
-        if any(kw in name for kw in ("取消", "关闭", "cancel", "close", "返回", "back")):
-            return "**跳过**（这类按钮不会触发后端 API）。直接打 ✅"
-        # 默认：未知按钮，让 LLM 谨慎点
-        return "点击此按钮 → 等 1.5 秒 → proxy_get_traffic"
-
     def _suggest_fill_value(field_name: str) -> str:
         """根据字段名推断填写值（参考 FORM_FILL_RULES 的关键词匹配逻辑）。"""
         if not field_name:
@@ -534,3 +506,41 @@ def build_group_checklist(menus: list[dict]) -> str:
         "7. **删除/取消/关闭按钮**：上面已标 '跳过' 的就是不点，直接打 ✅。"
     )
     return "\n".join(lines)
+
+# --- hoisted from build_group_checklist (A-grade, no local capture) ---
+def _btn_action(btn_name: str) -> str:
+    """根据按钮名称推导具体操作步骤。"""
+    name = btn_name.lower()
+    if any(kw in name for kw in ("新增", "新建", "创建", "添加", "add", "create", "new")):
+        return ("点击此按钮 → 弹窗出现后**先 browser_get_content 拿到 form 字段的真实 selector** "
+                "→ 按本页『表单字段填写表』逐个 browser_fill → 点提交按钮 → "
+                "**等待 1.5 秒** → proxy_get_traffic → 关闭弹窗")
+    if any(kw in name for kw in ("编辑", "修改", "edit", "update", "配置", "设置")):
+        return ("点击表格第一行的此按钮（selector 里的 :nth-of-type 加上 1）→ 弹窗后修改一个字段 → "
+                "提交 → 等 1.5 秒 → proxy_get_traffic → 关闭")
+    if any(kw in name for kw in ("删除", "移除", "remove", "delete")):
+        return ("⚠️ **跳过 UI 点击**（弹窗确认/取消都不会触发 DELETE 请求或者会真删）。"
+                "这类接口由主 Agent 在后续阶段用 proxy_send_request 直接构造请求测试。"
+                "本步直接打 ✅ 跳过即可。")
+    if any(kw in name for kw in ("查询", "搜索", "search")):
+        return ("**先 browser_fill 搜索框**（selector 一般是同区域的 input[placeholder*=搜索] 或 "
+                "input[type=text]，值填 'test'）→ 再点击此按钮 → 等 1.5 秒 → proxy_get_traffic")
+    if any(kw in name for kw in ("查看", "详情", "view", "detail")):
+        return "点击表格第一行的此按钮 → 等 1.5 秒 → proxy_get_traffic → 关闭/返回"
+    if any(kw in name for kw in ("list", "刷新", "重置", "reset")):
+        return "点击 → 等 1.5 秒 → proxy_get_traffic"
+    if any(kw in name for kw in ("导出", "下载", "export", "download")):
+        return "点击 → 等 2 秒（导出可能慢）→ proxy_get_traffic"
+    if any(kw in name for kw in ("导入", "上传", "import", "upload")):
+        return ("⚠️ **不要选文件**（Playwright file chooser 跳过）。点击此按钮 → 弹窗弹出后 "
+                "→ proxy_get_traffic（抓预签名/初始化接口）→ 关闭弹窗")
+    if any(kw in name for kw in ("启", "停", "禁用", "启用", "toggle", "enable", "disable", "switch")):
+        return "点击切换状态 → 等 1.5 秒 → proxy_get_traffic"
+    if any(kw in name for kw in ("执行", "运行", "生成", "同步", "推送", "重发", "重试")):
+        return "点击 → 等 1.5 秒 → proxy_get_traffic（观察触发的 API）"
+    if any(kw in name for kw in ("保存", "save", "提交", "submit", "确认", "确定", "ok")):
+        return "填写必要字段 → 点击 → 等 1.5 秒 → proxy_get_traffic"
+    if any(kw in name for kw in ("取消", "关闭", "cancel", "close", "返回", "back")):
+        return "**跳过**（这类按钮不会触发后端 API）。直接打 ✅"
+    # 默认：未知按钮，让 LLM 谨慎点
+    return "点击此按钮 → 等 1.5 秒 → proxy_get_traffic"

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "method": "chat",
+  "sample_id": "chat_greeting_no_llm",
+  "recorded_at": "2026-08-14T11:16:14.206792+00:00",
+  "inputs": {
+    "user_message": "你好"
+  },
+  "output": null,
+  "events": [
+    {
+      "type": "system",
+      "data": "Agent 已启动 (模型: 未配置（fast/无 LLM 模式）)"
+    },
+    {
+      "type": "thinking",
+      "data": "正在理解您的需求..."
+    },
+    {
+      "type": "system",
+      "data": "当前 LLM 模型不可用，无法生成闲聊回复。请直接发送目标 URL 开始扫描，或在模型配置中切换到可用模型。"
+    }
+  ],
+  "meta": {
+    "progress": []
+  },
+  "recipe": {
+    "runtime": "fast_no_llm",
+    "scenario": "greeting_no_target",
+    "user_message": "你好"
+  }
+}

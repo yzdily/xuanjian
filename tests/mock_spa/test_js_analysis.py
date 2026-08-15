@@ -18,6 +18,11 @@ import os
 import sys
 import json
 
+import pytest
+
+# ★ 需要 mock_spa 环境与 JS 文件分析，标记为 integration（CI 中排除）
+pytestmark = pytest.mark.integration
+
 # 确保项目根目录在 path 中
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if PROJECT_ROOT not in sys.path:

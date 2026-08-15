@@ -19,9 +19,22 @@ from fastapi.responses import JSONResponse
 
 from core.log import get_logger
 from web._state import get_session
+from web._security import validate_task_id
 
 router = APIRouter()
 log = get_logger("web.system_api")
+
+
+@router.get("/api/metrics")
+async def metrics():
+    """★ A8 / O6：统一可观测性指标出口（JSON 形态，Prometheus 友好）。
+
+    聚合 LLM 成本（caller / task 级 token 与耗时）与扫描统计，供监控抓取。
+    设计为惰性导入 + 全防御，任一子源失败不影响整体返回。
+    """
+    from core.metrics import collect_metrics
+
+    return collect_metrics()
 
 
 @router.get("/api/health")
@@ -91,6 +104,9 @@ async def get_scan_stats():
 @router.get("/api/scans/{task_id}")
 async def get_scan_detail(task_id: str):
     """获取单条扫描详情（含漏洞列表）。"""
+    # ★ S1 扩展：task_id 校验，防止路径穿越（Sitemap 以 task_id 拼文件路径）。
+    if not validate_task_id(task_id):
+        return JSONResponse(status_code=400, content={"error": "非法的 task_id"})
     from core.scan_store import get_scan as _get, get_vulns as _vulns
     scan = _get(task_id)
     if not scan:
@@ -305,7 +321,7 @@ async def scan_all_targets(request: Request):
         url = t.get("url", "")
         if not url:
             continue
-        task_id = f"batch_{int(time.time())}_{hash(url) % 10000}"
+        task_id = f"batch_{uuid.uuid4().hex[:8]}"
         tasks.append({
             "task_id": task_id,
             "url": url,
@@ -667,6 +683,10 @@ async def compare_scans(task_a: str = "", task_b: str = ""):
 
     if not task_a or not task_b:
         return {"error": "需要提供 task_a 和 task_b 两个任务 ID"}
+
+    # ★ S1 扩展：task_a / task_b 校验，防止路径穿越（Sitemap 以 task_id 拼文件路径）。
+    if not validate_task_id(task_a) or not validate_task_id(task_b):
+        return JSONResponse(status_code=400, content={"error": "非法的 task_id"})
 
     def _get_vulns(task_id: str) -> list[dict]:
         sitemap = Sitemap(target="", task_id=task_id)

@@ -8,13 +8,12 @@
 - GET  /api/auth/me       获取当前登录用户信息（需带 token）
 
 中间件：
-- require_auth(request) — 从 Authorization 头或 query.token 提取 token 并校验，
+- require_auth(request) — 从 Authorization 头提取 token 并校验，
   返回 (payload, None) 或 (None, error_response)。
-  注：本系统其他业务 API 采用「可选认证」策略，未登录也允许访问，
-      因此 require_auth 仅在需要强制鉴权的接口（如 /me）使用。
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Request
@@ -27,27 +26,46 @@ log = get_logger("web.auth_api")
 
 router = APIRouter()
 
+# ★ S8 安全加固：注册接口 IP 级限流（每 IP 60 秒最多 3 次）
+_register_attempts: dict[str, list[float]] = {}
+_REGISTER_RATE_LIMIT = 3
+_REGISTER_RATE_WINDOW = 60.0
+
+
+def _check_register_rate_limit(client_ip: str) -> bool:
+    """检查注册限流，返回 True 表示允许。"""
+    now = time.time()
+    attempts = _register_attempts.get(client_ip, [])
+    # 清理过期记录
+    attempts = [t for t in attempts if now - t < _REGISTER_RATE_WINDOW]
+    if len(attempts) >= _REGISTER_RATE_LIMIT:
+        _register_attempts[client_ip] = attempts
+        return False
+    attempts.append(now)
+    _register_attempts[client_ip] = attempts
+    return True
+
+
+def _security_headers(response: JSONResponse) -> JSONResponse:
+    """★ S7: 为敏感 API 响应添加安全头和缓存控制。"""
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 
 # ============================================================
 # 中间件：require_auth
 # ============================================================
 
 def _extract_token(request: Request) -> str:
-    """从请求中提取 token，优先级：Authorization: Bearer <token> > query.token > cookie.token。"""
-    # 1. Authorization 头
+    """从请求中提取 token，仅从 Authorization 头提取。
+
+    ★ S3 安全加固：不再从 query.token 和 cookie.token 提取（URL/cookie 泄露风险）。
+    """
     auth_header = request.headers.get("Authorization", "") or ""
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
-    # 2. query 参数
-    token = (request.query_params.get("token") or "").strip()
-    if token:
-        return token
-    # 3. cookie
-    cookie_header = request.headers.get("cookie", "") or ""
-    for item in cookie_header.split(";"):
-        item = item.strip()
-        if item.startswith("token="):
-            return item[6:].strip()
     return ""
 
 
@@ -86,28 +104,35 @@ async def login(request: Request):
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "请求体必须是 JSON"})
+        return _security_headers(JSONResponse(status_code=400, content={"ok": False, "error": "请求体必须是 JSON"}))
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     result = auth.login(username, password)
     if result.get("ok"):
-        return result
-    return JSONResponse(status_code=401, content=result)
+        return _security_headers(JSONResponse(content=result))
+    return _security_headers(JSONResponse(status_code=401, content=result))
 
 
 @router.post("/api/auth/register")
 async def register(request: Request):
     """注册接口：接收 {username, password}，创建新用户并返回 token。"""
+    # ★ S8: 注册限流
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_register_rate_limit(client_ip):
+        return _security_headers(JSONResponse(
+            status_code=429,
+            content={"ok": False, "error": "注册请求过于频繁，请稍后再试", "code": "RATE_LIMITED"},
+        ))
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(status_code=400, content={"ok": False, "error": "请求体必须是 JSON"})
+        return _security_headers(JSONResponse(status_code=400, content={"ok": False, "error": "请求体必须是 JSON"}))
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     result = auth.register(username, password)
     if result.get("ok"):
-        return result
-    return JSONResponse(status_code=400, content=result)
+        return _security_headers(JSONResponse(content=result))
+    return _security_headers(JSONResponse(status_code=400, content=result))
 
 
 @router.post("/api/auth/logout")

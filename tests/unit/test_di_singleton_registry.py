@@ -102,11 +102,11 @@ class TestProductionSingletonsRegistered:
         import core.skill_registry as sr
 
         sr.get_registry()  # 确保已初始化
-        assert sr._registry is not None
+        assert sr._state.registry is not None
         try:
             reset_singletons(["skill_registry"])
-            assert sr._registry is None
-            assert sr._EXPLOIT_SKILL_MAP is None
+            assert sr._state.registry is None
+            assert sr._state.exploit_skill_map is None
         finally:
             # 还原：置空后下次 get_registry 会懒加载重建，无需手动恢复
             with contextlib.suppress(Exception):
@@ -115,9 +115,9 @@ class TestProductionSingletonsRegistered:
     def test_reset_fuzz_router_clears_singleton(self):
         import core.fuzz.registry as fr
 
-        fr._router = object()  # 桩一个非 None 值
+        fr._state.router = object()  # 桩一个非 None 值
         reset_singletons(["fuzz_router"])
-        assert fr._router is None
+        assert fr._state.router is None
 
 
 # ============================================================

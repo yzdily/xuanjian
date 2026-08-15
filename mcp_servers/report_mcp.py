@@ -14,6 +14,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from core.log import get_logger
+from core.session.hollowing import is_hollowed
 
 log = get_logger("mcp.report")
 
@@ -157,9 +158,22 @@ def _compute_real_completion_from_sitemap(task_id: str) -> dict | None:
 
         real_rate = round(real_done / total * 100, 1) if total > 0 else 0.0
         skip_rate = round(skipped / total * 100, 1) if total > 0 else 0.0
+        pending_rate = round(pending / total * 100, 1) if total > 0 else 0.0
 
         hollowing = None
-        if total > 0 and real_rate < 10.0 and skip_rate > 70.0 and vuln_count == 0:
+        # ★ P1-3: 同步 report_mixin.py 的双条件空心化检测
+        # 条件1（原始）: real_rate < 10% AND skip_rate > 70% AND vulns == 0
+        # 条件2（新增）: real_rate < 5% AND (skip_rate + pending_rate) > 80% AND vulns == 0
+        _uncovered_rate = skip_rate + pending_rate
+        # ★ A3: 空心化判定谓词单源化（core/session/hollowing.py），与 report_mixin 共享，杜绝漂移
+        _hollowed = is_hollowed(
+            real_rate=real_rate,
+            skip_rate=skip_rate,
+            pending_rate=pending_rate,
+            vuln_count=vuln_count,
+            total=total,
+        )
+        if _hollowed:
             reasons = []
             if skip_rate > 80.0:
                 reasons.append(f"跳过率极高（{skip_rate}%）— 大量检测项被跳过而非真实执行")
@@ -167,6 +181,8 @@ def _compute_real_completion_from_sitemap(task_id: str) -> dict | None:
                 reasons.append(f"跳过率偏高（{skip_rate}%）— 超过半数检测项被跳过")
             if real_rate < 5.0:
                 reasons.append(f"真实完成率极低（{real_rate}%）— 几乎无检测项被真正执行")
+            if _uncovered_rate > 80.0:
+                reasons.append(f"未覆盖率高（跳过+待测={_uncovered_rate}%）— 跳过 {skip_rate}% + 待测 {pending_rate}%")
             if pending > total * 0.3:
                 reasons.append(f"大量检查项仍处于待测状态（{pending}/{total}）")
             hollowing = {
@@ -185,6 +201,7 @@ def _compute_real_completion_from_sitemap(task_id: str) -> dict | None:
             "total": total,
             "real_rate": real_rate,
             "skip_rate": skip_rate,
+            "pending_rate": pending_rate,
             "vuln_count": vuln_count,
             "hollowing": hollowing,
         }

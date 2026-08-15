@@ -63,7 +63,7 @@ async def detect_from_browser() -> dict:
     4. 等待几秒后读取 hook 到的密钥
     """
     try:
-        from mcp_servers.browser_mcp import _ensure_browser
+        from core.mcp_bridge import _ensure_browser
         actual = getattr(_ensure_browser, "fn", _ensure_browser)
         page = await actual()
 
@@ -194,7 +194,7 @@ async def _detect_encryption_signs(page) -> bool:
         # 方法 2: 检查最近的 XHR/Fetch 请求中是否有非明文 body
         # （通过 mitmproxy 流量检查）
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()
             for flow_id in list(_store._order)[-20:]:
                 flow = _store.get(flow_id)

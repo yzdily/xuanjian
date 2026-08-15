@@ -23,24 +23,29 @@ from enum import Enum
 from typing import Any
 
 import httpx
+from core.di import register_resetter
 
 
 # ============================================================
 # 共享 HTTP 客户端（连接池复用）
 # ============================================================
-_http_client: httpx.AsyncClient | None = None
+@dataclass
+class _HttpClientState:
+    http_client: httpx.AsyncClient | None = None
+
+
+_state = _HttpClientState()
 
 
 async def get_http_client() -> httpx.AsyncClient:
     """获取共享的 HTTP 客户端（连接池复用）。"""
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
+    if _state.http_client is None or _state.http_client.is_closed:
+        _state.http_client = httpx.AsyncClient(
             verify=False,
             timeout=httpx.Timeout(30.0, connect=10.0),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
         )
-    return _http_client
+    return _state.http_client
 
 
 class FuzzResult(Enum):
@@ -339,3 +344,10 @@ class BaseFuzzer:
             fuzzer_name=self.NAME,
             error_message=error,
         )
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_fuzz_base__http_client() -> None:
+    _state.http_client = None
+
+register_resetter("core_fuzz_base__http_client", _reset_core_fuzz_base__http_client)

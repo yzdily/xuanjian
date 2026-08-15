@@ -6,13 +6,21 @@ Fuzz Registry — Fuzzer 注册与路由
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from core.log import get_logger
 from core.fuzz.base import BaseFuzzer, FuzzTask, FuzzEvidence, FuzzResult
 from core.di import register_resetter
 
 log = get_logger("fuzz.registry")
 
-_router: "FuzzRouter | None" = None
+
+@dataclass
+class _RouterState:
+    router: "FuzzRouter | None" = None
+
+
+_state = _RouterState()
 
 
 class FuzzRouter:
@@ -109,16 +117,14 @@ class FuzzRouter:
 
 def get_fuzz_router(proxy_url: str = "") -> FuzzRouter:
     """获取全局 FuzzRouter 单例（懒加载）。"""
-    global _router
-    if _router is None:
-        _router = FuzzRouter(proxy_url=proxy_url)
-    return _router
+    if _state.router is None:
+        _state.router = FuzzRouter(proxy_url=proxy_url)
+    return _state.router
 
 
 def reset_fuzz_router() -> None:
     """重置全局路由器（测试用）。"""
-    global _router
-    _router = None
+    _state.router = None
 
 
 # ---- 注册到 core.di 统一单例重置注册表（测试隔离用）----

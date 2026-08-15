@@ -11,6 +11,7 @@ packet_merger.py — 三路流量数据合并
   - 同一接口多次抓取：response_body 优先取最长的（flows 通常比 api_samples 更完整）
   - 保留所有来源的独有字段（js_context / evidence_flow_id 等）
 """
+# noqa: giant
 
 from __future__ import annotations
 

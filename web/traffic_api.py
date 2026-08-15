@@ -28,6 +28,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# ★ D9 S6：web 路径单源
+from web._paths import WEB_ROOT  # noqa: F401
+# ★ S1 单源：task_id / fp_id / flow_id 校验统一复用 web._security.validate_task_id，
+# 消除与 reports_api / system_api / sessions_api 各自实现正则的漂移（D9 S6 / D4 S1）。
+from web._security import validate_task_id
+
 from core.packet_merger import merge_packets, get_packets_for_feature, get_flow_by_id
 from core.log import get_logger
 
@@ -208,7 +214,7 @@ def _infer_module(related_apis: list[str]) -> str:
 @traffic_router.get("/traffic", response_class=HTMLResponse)
 async def traffic_page():
     """流量管理页面。"""
-    html_path = Path(__file__).parent / "traffic.html"
+    html_path = WEB_ROOT / "traffic.html"
     if not html_path.exists():
         return HTMLResponse("<h2>traffic.html not found</h2>", status_code=404)
     return HTMLResponse(
@@ -229,6 +235,9 @@ async def get_traffic_summary(task_id: str):
     汇总数据：功能点树 + 数据包统计 + 业务信息。
     不返回完整数据包内容（避免响应过大），前端需要再调 /packets 或 /feature/{fp_id}。
     """
+    # ★ S6: 校验 task_id 防止路径穿越
+    if not validate_task_id(task_id):
+        return JSONResponse({"error": "task_id 含非法字符"}, status_code=400)
     data = _load_sitemap_data(task_id)
     if not data:
         return JSONResponse({"error": f"任务 {task_id} 不存在"}, status_code=404)
@@ -270,6 +279,9 @@ async def get_packets(
     全量数据包列表，支持过滤、排序和分页。
     每条只返回摘要（不含完整 response_body），避免响应过大。
     """
+    # ★ S6: 校验 task_id 防止路径穿越
+    if not validate_task_id(task_id):
+        return JSONResponse({"error": "task_id 含非法字符"}, status_code=400)
     data = _load_sitemap_data(task_id)
     if not data:
         return JSONResponse({"error": f"任务 {task_id} 不存在"}, status_code=404)
@@ -323,6 +335,9 @@ async def get_feature_detail(task_id: str, fp_id: str):
     - 完整 checklist（含漏洞证据）
     - 关联数据包（完整 response_body）
     """
+    # ★ S6: 校验 task_id / fp_id 防止路径穿越
+    if not validate_task_id(task_id) or not validate_task_id(fp_id):
+        return JSONResponse({"error": "task_id 或 fp_id 含非法字符"}, status_code=400)
     data = _load_sitemap_data(task_id)
     if not data:
         return JSONResponse({"error": f"任务 {task_id} 不存在"}, status_code=404)
@@ -356,6 +371,9 @@ async def get_feature_detail(task_id: str, fp_id: str):
 @traffic_router.get("/api/traffic/{task_id}/flow/{flow_id}")
 async def get_flow_detail(task_id: str, flow_id: str):
     """按 flow_id 查询完整原始流量（用于漏洞证据详情）。"""
+    # ★ S6: 校验 task_id / flow_id 防止路径穿越
+    if not validate_task_id(task_id) or not validate_task_id(flow_id):
+        return JSONResponse({"error": "task_id 或 flow_id 含非法字符"}, status_code=400)
     # ★ v3: get_flow_by_id 也要扫 flows 文件，扔线程池
     flow = await asyncio.to_thread(get_flow_by_id, flow_id)
     if not flow:
@@ -366,6 +384,9 @@ async def get_flow_detail(task_id: str, flow_id: str):
 @traffic_router.get("/api/traffic/{task_id}/evidence")
 async def get_evidence_packets(task_id: str):
     """所有漏洞 PoC 证据包列表。"""
+    # ★ S6: 校验 task_id 防止路径穿越
+    if not validate_task_id(task_id):
+        return JSONResponse({"error": "task_id 含非法字符"}, status_code=400)
     data = _load_sitemap_data(task_id)
     if not data:
         return JSONResponse({"error": f"任务 {task_id} 不存在"}, status_code=404)

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("compliance_report")
 
@@ -221,15 +222,19 @@ class ComplianceReportGenerator:
 
 
 # Global instance
-_generator: ComplianceReportGenerator | None = None
+@dataclass
+class _ComplianceState:
+    generator: ComplianceReportGenerator | None = None
+
+
+_state = _ComplianceState()
 
 
 def get_report_generator() -> ComplianceReportGenerator:
     """获取报告生成器"""
-    global _generator
-    if _generator is None:
-        _generator = ComplianceReportGenerator()
-    return _generator
+    if _state.generator is None:
+        _state.generator = ComplianceReportGenerator()
+    return _state.generator
 
 
 def generate_compliance_report(findings: list[dict], scan_info: dict) -> str:
@@ -237,3 +242,10 @@ def generate_compliance_report(findings: list[dict], scan_info: dict) -> str:
     generator = get_report_generator()
     report = generator.generate(findings, scan_info)
     return generator.to_markdown(report)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_compliance_report__generator() -> None:
+    _state.generator = None
+
+register_resetter("core_compliance_report__generator", _reset_core_compliance_report__generator)

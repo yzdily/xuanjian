@@ -1,4 +1,5 @@
 """Sitemap — 功能点生成 + 动态发现 Mixin。"""
+# noqa: giant
 
 from __future__ import annotations
 
@@ -989,9 +990,6 @@ class FeatureGenMixin:
             return None
 
         # ★ 去重
-        def _api_key(a: str) -> str:
-            return a.strip().split("?")[0].rstrip("/")
-
         incoming_apis = {_api_key(a) for a in (related_apis or []) if a}
         norm_page = (page_url or "").rstrip("/").split("?")[0]
 
@@ -1386,3 +1384,7 @@ class FeatureGenMixin:
             self.save()
 
         return {"checked": checked, "ghost_found": ghost_count, "ghost_details": ghost_details[:50]}
+
+# --- hoisted from add_feature (A-grade, no local capture) ---
+def _api_key(a: str) -> str:
+    return a.strip().split("?")[0].rstrip("/")

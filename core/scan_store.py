@@ -15,8 +15,10 @@ import json
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from core.di import register_resetter
 
 # ★ 安全加固：使用基于项目根目录的绝对路径，避免工作目录依赖
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -36,15 +38,19 @@ def _get_conn() -> sqlite3.Connection:
 
 
 # 模块级单例（延迟创建）
-_conn: Optional[sqlite3.Connection] = None
+@dataclass
+class _ScanStoreState:
+    conn: Optional[sqlite3.Connection] = None
+
+
+_state = _ScanStoreState()
 
 
 def _ensure_conn() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        _conn = _get_conn()
-        _init_db(_conn)
-    return _conn
+    if _state.conn is None:
+        _state.conn = _get_conn()
+        _init_db(_state.conn)
+    return _state.conn
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -310,3 +316,10 @@ def get_stats() -> dict:
         "total_vulns": total_vulns,
         "by_severity": by_severity,
     }
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_scan_store__conn() -> None:
+    _state.conn = None
+
+register_resetter("core_scan_store__conn", _reset_core_scan_store__conn)

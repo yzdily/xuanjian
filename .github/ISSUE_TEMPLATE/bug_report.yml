@@ -1,0 +1,76 @@
+name: Bug 报告
+description: 报告玄鉴 XuanJian 的 Bug
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告 Bug！请先搜索 [已有 Issue](https://github.com/yzdily/xuanjian/issues?q=is%3Aissue)
+        避免重复。安全漏洞请勿公开 Issue，见 [DISCLAIMER.md](../DISCLAIMER.md)。
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: `git rev-parse --short HEAD` 或镜像 tag
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scan-mode
+    attributes:
+      label: 扫描模式
+      options:
+        - FAST（纯本地规则，无 LLM）
+        - STANDARD
+        - DEEP
+        - SMART
+        - 不适用
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: 部署方式
+      options:
+        - 源码 (python start.py)
+        - Docker
+        - 打包 exe
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 具体、可独立复现的步骤
+      placeholder: |
+        1. 启动：python start.py
+        2. 在 WebUI 输入目标 http://example.com
+        3. 选择 DEEP × Batch
+        4. 点击开始
+        5. 报错：...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 错误堆栈
+      description: 相关日志片段（`data/logs/` 下）。敏感信息（API Key/Cookie/Token）请脱敏。
+      render: shell

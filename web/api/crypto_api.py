@@ -4,7 +4,6 @@ web/api/crypto_api.py — 加密接口模板管理 HTTP API
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -22,9 +21,9 @@ from core.crypto_replay import (
     load_template,
     save_template,
 )
+from web._security import WEB_ROOT
 
 router = APIRouter()
-WEB_ROOT = Path(__file__).parent.parent
 
 
 @router.get("/crypto-templates", response_class=HTMLResponse)

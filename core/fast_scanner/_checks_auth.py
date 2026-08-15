@@ -659,12 +659,6 @@ class _ChecksAuth:
             except Exception:
                 return None
 
-        def _extract_jwt(s: str) -> str | None:
-            """从字符串中提取 JWT（匹配 eyJ... 格式）"""
-            # JWT 格式: header.payload.signature，三段 base64url
-            m = re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*', s)
-            return m.group(0) if m else None
-
         # 收集所有可能的 JWT 来源
         jwt_candidates: list[str] = []
         # 1. 认证头
@@ -767,3 +761,10 @@ class _ChecksAuth:
                     break
 
         return findings
+
+# --- hoisted from _check_jwt (A-grade, no local capture) ---
+def _extract_jwt(s: str) -> str | None:
+    """从字符串中提取 JWT（匹配 eyJ... 格式）"""
+    # JWT 格式: header.payload.signature，三段 base64url
+    m = re.search(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*', s)
+    return m.group(0) if m else None

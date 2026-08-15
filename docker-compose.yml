@@ -14,10 +14,25 @@ services:
       dockerfile: Dockerfile
     container_name: xuanjian
     restart: unless-stopped
+    # ★ O1 安全收口：Web 端口默认仅绑 127.0.0.1（与 mitmproxy 一致）。
+    # 需远程访问请改 "7788:7788" 并前置反向代理 + TLS，勿裸暴露。
     ports:
-      - "7788:7788"     # Web UI
-      - "18080:18080"   # mitmproxy 代理（浏览器/抓包用）
-      - "18081:18081"   # mitmproxy web 界面
+      - "127.0.0.1:7788:7788"     # Web UI（★ XJ-02: 仅本地访问）
+      - "127.0.0.1:18080:18080"   # mitmproxy 代理（★ XJ-02: 仅本地访问）
+      - "127.0.0.1:18081:18081"   # mitmproxy web 界面（★ XJ-02: 仅本地访问）
+    # ★ O4 容器加固：去特权 + 禁提权 + 资源限制。
+    # cap_drop ALL 后 Playwright no-sandbox 模式仍可运行（无需特权）。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          memory: 1G
     volumes:
       # 持久化数据（扫描结果/报告/日志/流量/用户配置）
       - xuanjian-data:/app/data
@@ -25,6 +40,8 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - WEB_PORT=7788
+      # ★ O1：容器内显式绑 0.0.0.0（端口映射由 ports 段控制对外暴露面）
+      - WEB_HOST=0.0.0.0
       - PROXY_PORT=18080
       - PROXY_WEB_PORT=18081
       - BROWSER_HEADLESS=true

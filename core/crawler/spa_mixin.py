@@ -309,7 +309,7 @@ class SPAMixin:
             }
         """
         import time as _time
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = loop.time()
 
         # 录制期间的请求/响应

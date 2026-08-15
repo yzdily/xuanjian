@@ -31,8 +31,12 @@ def _get_encryption_key() -> bytes:
     """从 auth secret 派生 32 字节加密密钥（PBKDF2-SHA256）。"""
     try:
         # 复用 core/auth.py 持久化在 data/.auth_secret 的密钥
+        # ★ D7 holderization 后 _SECRET_KEY → _state.secret_key，兼容两者
         from core import auth as _auth
-        secret = _auth._SECRET_KEY or ""
+        secret = getattr(_auth, "_SECRET_KEY", "") or ""
+        if not secret:
+            # holderized 路径：从 _state.secret_key 读取
+            secret = getattr(_auth._state, "secret_key", "") or ""
         if not secret:
             # 极端情况：auth 尚未初始化（不应发生，但兜底）
             secret = _auth._load_or_generate_secret()
@@ -68,25 +72,46 @@ def _encrypt_api_key(plaintext: str) -> str:
 
 
 def _decrypt_api_key(stored: str) -> str:
-    """解密 api_key。非加密格式（明文）原样返回，保证向后兼容。"""
+    """解密 api_key。非加密格式（明文）原样返回，保证向后兼容。
+
+    ★ D7 兼容：holderization 后 _SECRET_KEY → _state.secret_key，部分 key 可能
+    是用旧默认 secret 加密的。主 key 解密失败时，尝试默认 key 兜底解密。
+    """
     if not stored or not stored.startswith(_ENC_PREFIX):
         return stored
     payload = stored[len(_ENC_PREFIX):]
-    try:
-        # AES-GCM 路径
-        if not payload.startswith("xor$"):
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            key = _get_encryption_key()
-            raw = base64.b64decode(payload)
-            nonce, ct = raw[:12], raw[12:]
-            return AESGCM(key).decrypt(nonce, ct, None).decode("utf-8")
-        # XOR 兜底路径
-        raw = base64.b64decode(payload[4:])
-        nonce, ct = raw[:16], raw[16:]
-        return _xor_stream(ct, _get_encryption_key(), nonce).decode("utf-8")
-    except Exception as e:
-        log.warning("API Key 解密失败，按明文返回: %s", e)
-        return stored
+
+    def _try_decrypt(secret_key: bytes) -> str | None:
+        """用指定 key 尝试解密，失败返回 None。"""
+        try:
+            if not payload.startswith("xor$"):
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                raw = base64.b64decode(payload)
+                nonce, ct = raw[:12], raw[12:]
+                return AESGCM(secret_key).decrypt(nonce, ct, None).decode("utf-8")
+            raw = base64.b64decode(payload[4:])
+            nonce, ct = raw[:16], raw[16:]
+            return _xor_stream(ct, secret_key, nonce).decode("utf-8")
+        except Exception:
+            return None
+
+    # 1) 主 key（从 .auth_secret 派生）
+    primary_key = _get_encryption_key()
+    result = _try_decrypt(primary_key)
+    if result is not None:
+        return result
+
+    # 2) 兜底：尝试默认 secret（D7 holderization 前的旧加密 key）
+    fallback_secret = os.getenv("AUTH_SECRET_KEY", "xuanjian-default-llm-secret")
+    fallback_key = hashlib.pbkdf2_hmac("sha256", fallback_secret.encode("utf-8"),
+                                        _ENC_KEY_INFO, 100000)[:32]
+    result = _try_decrypt(fallback_key)
+    if result is not None:
+        log.info("API Key 主密钥解密失败，用默认 secret 兜底成功（建议重新保存以更新加密）")
+        return result
+
+    log.warning("API Key 解密失败（主+兜底均失败），按明文返回")
+    return stored
 
 
 def _xor_stream(data: bytes, key: bytes, nonce: bytes) -> bytes:

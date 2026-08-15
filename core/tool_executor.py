@@ -4,6 +4,7 @@ ToolExecutor — 统一的工具执行路由
 替代原 server.py 中的 _execute_tool 和 _verify_vuln，
 以及 WorkerAgent 中的 _execute_tool。
 """
+# noqa: giant
 
 from __future__ import annotations
 
@@ -75,7 +76,7 @@ class ToolExecutor:
         # 其他工具走 ToolRouter（proxy/knowledge/note 等）
         from core.tool_router import ToolRouter
         # ★ 2026-05-29: 设置 task_id 上下文，让 proxy_mcp 持久化流量时能标记归属任务
-        from mcp_servers.proxy_mcp import _current_task_id
+        from core.mcp_bridge import _current_task_id
         _current_task_id.set(self.task_id)
         router = ToolRouter()
         return await asyncio.to_thread(router.execute, name, args)
@@ -262,7 +263,7 @@ class ToolExecutor:
 
         # HTTP/knowledge/note 工具
         from core.tool_router import ToolRouter
-        from mcp_servers.proxy_mcp import _current_task_id
+        from core.mcp_bridge import _current_task_id
         _current_task_id.set(self.task_id)
         router = ToolRouter()
         return await asyncio.to_thread(router.execute, name, args), False, done_reject_count
@@ -658,7 +659,7 @@ class ToolExecutor:
             (evidence_request, evidence_response) 格式化的 HTTP 数据包文本
         """
         try:
-            from mcp_servers.proxy_mcp import _store, _load_new_flows
+            from core.mcp_bridge import _store, _load_new_flows
             _load_new_flows()
 
             # 支持多个 flow_id（逗号分隔）
@@ -762,7 +763,7 @@ class ToolExecutor:
         result_lines = [f"## 漏洞验证: {vuln_type}\n", f"描述: {description}\n"]
 
         from core.tool_router import ToolRouter
-        from mcp_servers.proxy_mcp import _current_task_id
+        from core.mcp_bridge import _current_task_id
         _current_task_id.set(self.task_id)
         router = ToolRouter()
 

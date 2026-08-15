@@ -36,6 +36,7 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
     "coverage>=7.0.0",
+    "diff-cover>=8.0.0",
     "ruff>=0.5.0",
 ]
 report-templates = [
@@ -68,6 +69,9 @@ pythonpath = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# asyncio_mode="auto" 让所有 async def test_* 自动套事件循环，
+# 无需逐个加 @pytest.mark.asyncio（且 --strict-markers 下 asyncio 标记由插件自动注册）。
+asyncio_mode = "auto"
 addopts = [
     "-ra",
     "--strict-markers",
@@ -82,6 +86,8 @@ markers = [
     "integration: 集成测试，涉及本地 HTTP/文件 I/O",
     "e2e: 端到端测试，需要真实目标或浏览器",
     "llm: 需要真实 LLM Provider 的测试",
+    "regression: 回归 pin 测试，锁定已修缺陷防止退化",
+    "golden: 怪物方法 golden 录制→回放闸门；样本缺失或运行时不可用时自动 skip",
 ]
 
 [tool.coverage.run]
@@ -95,9 +101,10 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-# 真实门禁在 CI 中通过 `pytest --cov-fail-under=70` 施加，
-# 本地默认可低于该值以便开发期快速反馈。
-fail_under = 0
+# ★ 分层门禁 Layer 1: 全局 ratchet（8→20→40→70）
+# 阈值存储在 .coverage-ratchet 文件中，只升不降
+# CI 通过 scripts/ci_gate.py 读取并执行；本地默认使用此值
+fail_under = 20
 
 [tool.coverage.html]
 directory = "htmlcov"

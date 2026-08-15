@@ -16,7 +16,9 @@ PER_API_TIMEOUT_S = 60.0
 TOTAL_BUDGET_S = 30 * 60.0
 
 # 单个 worker 同时测多少个新 feature
-FEATURES_PER_WORKER = 5
+# ★ P0-2: 从5降至3——日志(814/14.txt)显示 supp1(51885) 和 supp3(51955) 均在 5 个 feature 时
+#   上下文超限(>65536 tokens)，supp2 勉强通过。降至3 留出足够余量给 SKILL 加载和多次检测对话。
+FEATURES_PER_WORKER = 3
 
 # 已知第三方 SDK / 监控 / 基础设施域黑名单（绝不补测）
 _THIRD_PARTY_BLACKLIST = {

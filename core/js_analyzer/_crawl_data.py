@@ -143,9 +143,6 @@ def js_result_to_crawl_data(result: JSAnalysisResult, base_url: str = "") -> dic
             js_host = _up(api.source_file).netloc.lower() if api.source_file.startswith("http") else ""
             target_host = _up(base_url).netloc.lower() if base_url else ""
             # 取主域比较（最后两段）
-            def _main_domain(h):
-                parts = h.split(".")
-                return ".".join(parts[-2:]) if len(parts) >= 2 else h
             same_main_domain = (_main_domain(js_host) == _main_domain(target_host))
             is_static_cdn = _is_static_cdn_host(js_host)
             if not js_host or same_main_domain or is_static_cdn:
@@ -211,3 +208,8 @@ def js_result_to_crawl_data(result: JSAnalysisResult, base_url: str = "") -> dic
     data["js_stats"]["base_urls"] = len(result.base_urls)
 
     return data
+
+# --- hoisted from js_result_to_crawl_data (A-grade, no local capture) ---
+def _main_domain(h):
+    parts = h.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else h

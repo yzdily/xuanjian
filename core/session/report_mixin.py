@@ -10,6 +10,7 @@ ReportMixin — 报告增量更新相关方法。
 from __future__ import annotations
 
 from core.log import get_logger
+from core.session.hollowing import is_hollowed
 
 log = get_logger("session.report")
 
@@ -208,12 +209,14 @@ class ReportMixin:
             vulns = 0
 
         _pending_rate = rc.get("pending_rate", 0.0)
-        _uncovered_rate = rc["skip_rate"] + _pending_rate
 
-        # 空心化判定（两条路径，满足任一即触发）
-        _hollowed = (
-            (rc["real_rate"] < 10.0 and rc["skip_rate"] > 70.0 and vulns == 0)
-            or (rc["real_rate"] < 5.0 and _uncovered_rate > 80.0 and vulns == 0)
+        # ★ A3: 空心化判定谓词单源化（core/session/hollowing.py），与 report_mcp 共享，杜绝漂移
+        _hollowed = is_hollowed(
+            real_rate=rc["real_rate"],
+            skip_rate=rc["skip_rate"],
+            pending_rate=_pending_rate,
+            vuln_count=vulns,
+            total=rc["total"],
         )
 
         if _hollowed:

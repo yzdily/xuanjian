@@ -87,7 +87,7 @@ class ApprovalMixin:
         log.info("请求审批: %s (%s)", request.id, action.value)
 
         # 创建等待 Future
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future[ApprovalResponse] = loop.create_future()
         self._approval_callbacks[request.id] = future
 

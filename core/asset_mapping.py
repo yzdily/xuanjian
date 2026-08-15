@@ -18,6 +18,7 @@ from urllib.parse import quote
 import httpx
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("asset_mapping")
 
@@ -287,16 +288,19 @@ class AssetMappingClient:
         return targets
 
 
-# 全局客户端实例
-_client: AssetMappingClient | None = None
+# 全局客户端实例（D7 holder 化：global → _state 属性，零行为变更）
+@dataclass
+class _AssetMappingState:
+    client: AssetMappingClient | None = None
+
+_state = _AssetMappingState()
 
 
 def get_mapping_client() -> AssetMappingClient:
     """获取测绘客户端实例"""
-    global _client
-    if _client is None:
-        _client = AssetMappingClient()
-    return _client
+    if _state.client is None:
+        _state.client = AssetMappingClient()
+    return _state.client
 
 
 async def query_assets(service: str, query: str) -> MappingResult:
@@ -304,3 +308,10 @@ async def query_assets(service: str, query: str) -> MappingResult:
     client = get_mapping_client()
     service_enum = MappingService(service.lower())
     return await client.query(service_enum, query)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_asset_mapping__client() -> None:
+    _state.client = None
+
+register_resetter("core_asset_mapping__client", _reset_core_asset_mapping__client)

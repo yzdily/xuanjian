@@ -16,39 +16,47 @@ import asyncio
 import json
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from core.llm import LLMPool
 from core.log import get_logger
 from core.scan_store import upsert_scan, finish_scan, upsert_vuln
+from core.di import register_resetter
 
 log = get_logger("task_queue")
 
-_pool: Optional[LLMPool] = None
 _tasks: dict[str, dict] = {}
+
+
+# D7 holder 化：global → _state 属性，零行为变更。
 # ★ #17 修复：所有 asyncio 原语改为懒构造，避免在模块导入/同步启动阶段
 # 绑定到"幽灵事件循环"导致后续 "Event loop is closed" / 跨循环访问错误。
-_queue: Optional[asyncio.Queue] = None
-_concurrent = 3
-_worker_task: Optional[asyncio.Task] = None
-_semaphore: Optional[asyncio.Semaphore] = None
+@dataclass
+class _TaskQueueState:
+    pool: Optional[LLMPool] = None
+    queue: Optional[asyncio.Queue] = None
+    concurrent: int = 3
+    worker_task: Optional[asyncio.Task] = None
+    semaphore: Optional[asyncio.Semaphore] = None
+
+
+_state = _TaskQueueState()
 
 
 def _get_queue() -> asyncio.Queue:
     """懒构造 asyncio.Queue，确保绑定到当前运行的事件循环。"""
-    global _queue
-    if _queue is None:
-        _queue = asyncio.Queue()
-    return _queue
+    if _state.queue is None:
+        _state.queue = asyncio.Queue()
+    return _state.queue
 
 
 def _get_semaphore() -> asyncio.Semaphore:
     """懒构造 asyncio.Semaphore，确保绑定到当前运行的事件循环。"""
-    global _semaphore
-    if _semaphore is None:
-        _semaphore = asyncio.Semaphore(_concurrent)
-    return _semaphore
+    if _state.semaphore is None:
+        _state.semaphore = asyncio.Semaphore(_state.concurrent)
+    return _state.semaphore
 
 
 def init(pool: LLMPool, max_concurrent: int = 3):
@@ -58,9 +66,8 @@ def init(pool: LLMPool, max_concurrent: int = 3):
     被调用时（见 _get_queue / _get_semaphore），避免模块导入阶段绑定到
     不存在的"幽灵事件循环"。
     """
-    global _pool, _concurrent
-    _pool = pool
-    _concurrent = max_concurrent
+    _state.pool = pool
+    _state.concurrent = max_concurrent
     # ★ 不在此创建 Semaphore —— 推迟到首次 _execute_task 调用时
 
 
@@ -71,8 +78,7 @@ def start_worker():
     若在无运行循环的同步上下文调用，会显式关闭未消费的 coroutine 并记录警告，
     避免 "coroutine '_worker_loop' was never awaited" 警告。
     """
-    global _worker_task
-    if _worker_task is not None and not _worker_task.done():
+    if _state.worker_task is not None and not _state.worker_task.done():
         return
     # 必须先确认有运行中的事件循环，否则 create_task 会抛 RuntimeError
     try:
@@ -83,8 +89,8 @@ def start_worker():
         return
     coro = _worker_loop()
     try:
-        _worker_task = loop.create_task(coro)
-        log.debug("任务队列 worker 已启动 (concurrent=%d)", _concurrent)
+        _state.worker_task = loop.create_task(coro)
+        log.debug("任务队列 worker 已启动 (concurrent=%d)", _state.concurrent)
     except RuntimeError:
         # 显式关闭未消费的 coroutine，避免 "coroutine was never awaited" 警告
         coro.close()
@@ -130,10 +136,10 @@ async def _do_scan(task_id: str, task_info: dict):
     target_url = task_info.get("url", "")
     scan_mode = task_info.get("scan_mode", "standard")
 
-    if not _pool:
+    if not _state.pool:
         raise RuntimeError("LLMPool 未初始化")
 
-    session = AgentSession(llm=_pool.primary, skip_recover=True)
+    session = AgentSession(llm=_state.pool.primary, skip_recover=True)
     session.task_id = task_id
     session.set_scan_mode("batch")
 
@@ -230,3 +236,38 @@ def submit_batch_targets(targets: list[dict]) -> list[dict]:
         )
         results.append({"task_id": tid, "url": t.get("url", ""), "status": "queued"})
     return results
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_task_queue__queue() -> None:
+    _state.queue = None
+
+register_resetter("core_task_queue__queue", _reset_core_task_queue__queue)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_task_queue__semaphore() -> None:
+    _state.semaphore = None
+
+register_resetter("core_task_queue__semaphore", _reset_core_task_queue__semaphore)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_task_queue__pool() -> None:
+    _state.pool = None
+
+register_resetter("core_task_queue__pool", _reset_core_task_queue__pool)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_task_queue__concurrent() -> None:
+    _state.concurrent = 3
+
+register_resetter("core_task_queue__concurrent", _reset_core_task_queue__concurrent)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_task_queue__worker_task() -> None:
+    _state.worker_task = None
+
+register_resetter("core_task_queue__worker_task", _reset_core_task_queue__worker_task)

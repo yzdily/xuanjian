@@ -53,8 +53,7 @@ targets.csv
 test1.txt
 # 优化方案（本地文档，不入仓库）
 hollowing-optimization-plan/
-# 本地文档目录（不入仓库）
-docs/
+# 本地文档目录（按用户要求入库，不再忽略）
 # 本地分析报告（不入仓库）
 coverage-report/
 fast-scanner-rule-review/

@@ -26,7 +26,9 @@ import io
 import logging
 import random
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from core.di import register_resetter
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -35,21 +37,26 @@ log = logging.getLogger(__name__)
 
 # ── OCR 引擎懒加载 ──────────────────────────────────────────
 
-_ddddocr_cls = None  # ddddocr.DdddOcr 实例（验证码专用）
-_ddddocr_slide = None  # ddddocr.DdddOcr slide 模式实例
-_rapidocr_inst = None  # RapidOCR 实例（降级）
+
+@dataclass
+class _CaptchaState:
+    ddddocr_cls: object | None = None  # ddddocr.DdddOcr 实例（验证码专用）
+    ddddocr_slide: object | None = None  # ddddocr.DdddOcr slide 模式实例
+    rapidocr_inst: object | None = None  # RapidOCR 实例（降级）
+
+
+_state = _CaptchaState()
 
 
 def _get_ddddocr():
     """懒加载 ddddocr（验证码识别）。"""
-    global _ddddocr_cls
-    if _ddddocr_cls is not None:
-        return _ddddocr_cls
+    if _state.ddddocr_cls is not None:
+        return _state.ddddocr_cls
     try:
         import ddddocr
-        _ddddocr_cls = ddddocr.DdddOcr(show_ad=False)
+        _state.ddddocr_cls = ddddocr.DdddOcr(show_ad=False)
         log.info("ddddocr 加载成功（验证码识别模式）")
-        return _ddddocr_cls
+        return _state.ddddocr_cls
     except ImportError:
         log.debug("ddddocr 未安装，验证码自动识别不可用")
         return None
@@ -60,14 +67,13 @@ def _get_ddddocr():
 
 def _get_ddddocr_slide():
     """懒加载 ddddocr 滑块模式。"""
-    global _ddddocr_slide
-    if _ddddocr_slide is not None:
-        return _ddddocr_slide
+    if _state.ddddocr_slide is not None:
+        return _state.ddddocr_slide
     try:
         import ddddocr
-        _ddddocr_slide = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
+        _state.ddddocr_slide = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
         log.info("ddddocr 滑块模式加载成功")
-        return _ddddocr_slide
+        return _state.ddddocr_slide
     except ImportError:
         return None
     except Exception as e:
@@ -77,14 +83,13 @@ def _get_ddddocr_slide():
 
 def _get_rapidocr():
     """懒加载 RapidOCR（降级方案）。"""
-    global _rapidocr_inst
-    if _rapidocr_inst is not None:
-        return _rapidocr_inst
+    if _state.rapidocr_inst is not None:
+        return _state.rapidocr_inst
     try:
         from rapidocr_onnxruntime import RapidOCR
-        _rapidocr_inst = RapidOCR()
+        _state.rapidocr_inst = RapidOCR()
         log.info("RapidOCR 加载成功（验证码降级方案）")
-        return _rapidocr_inst
+        return _state.rapidocr_inst
     except ImportError:
         return None
     except Exception as e:
@@ -302,28 +307,6 @@ def _maybe_eval_arithmetic(text: str) -> str:
         tokens = re.findall(r'\d+|[+\-*/()]', text)
         
         # 转换为后缀表达式（Shunting-yard 算法简化版）
-        def to_postfix(tokens):
-            prec = {'+': 1, '-': 1, '*': 2, '/': 2}
-            output = []
-            ops = []
-            for t in tokens:
-                if t.isdigit():
-                    output.append(int(t))
-                elif t in prec:
-                    while ops and ops[-1] != '(' and prec.get(ops[-1], 0) >= prec[t]:
-                        output.append(ops.pop())
-                    ops.append(t)
-                elif t == '(':
-                    ops.append(t)
-                elif t == ')':
-                    while ops and ops[-1] != '(':
-                        output.append(ops.pop())
-                    if ops:
-                        ops.pop()  # pop '('
-            while ops:
-                output.append(ops.pop())
-            return output
-        
         def eval_postfix(postfix):
             stack = []
             for t in postfix:
@@ -639,3 +622,47 @@ async def auto_solve(page: Page, captcha_kind: str) -> bool:
     # 不支持的类型：third_party_captcha / sms_code / text_hint
     log.info("验证码类型 '%s' 不支持自动识别，需手动完成", captcha_kind)
     return False
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_captcha_solver__ddddocr_cls() -> None:
+    _state.ddddocr_cls = None
+
+register_resetter("core_captcha_solver__ddddocr_cls", _reset_core_captcha_solver__ddddocr_cls)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_captcha_solver__ddddocr_slide() -> None:
+    _state.ddddocr_slide = None
+
+register_resetter("core_captcha_solver__ddddocr_slide", _reset_core_captcha_solver__ddddocr_slide)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_captcha_solver__rapidocr_inst() -> None:
+    _state.rapidocr_inst = None
+
+register_resetter("core_captcha_solver__rapidocr_inst", _reset_core_captcha_solver__rapidocr_inst)
+
+# --- hoisted from _maybe_eval_arithmetic (A-grade, no local capture) ---
+def to_postfix(tokens):
+    prec = {'+': 1, '-': 1, '*': 2, '/': 2}
+    output = []
+    ops = []
+    for t in tokens:
+        if t.isdigit():
+            output.append(int(t))
+        elif t in prec:
+            while ops and ops[-1] != '(' and prec.get(ops[-1], 0) >= prec[t]:
+                output.append(ops.pop())
+            ops.append(t)
+        elif t == '(':
+            ops.append(t)
+        elif t == ')':
+            while ops and ops[-1] != '(':
+                output.append(ops.pop())
+            if ops:
+                ops.pop()  # pop '('
+    while ops:
+        output.append(ops.pop())
+    return output

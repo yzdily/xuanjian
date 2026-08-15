@@ -22,21 +22,16 @@ log = get_logger("web.reports_api")
 
 router = APIRouter()
 
-# ★ 安全加固：使用基于项目根目录的绝对路径
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# ★ 安全加固：项目根目录统一从 web._security 单源取（D9 S6），
+# 消除各 api 文件各自 Path(__file__) 解析的漂移。
+from web._security import PROJECT_ROOT as _PROJECT_ROOT
 REPORTS_DIR = Path(os.getenv("REPORT_PATH", str(_PROJECT_ROOT / "data" / "reports")))
 TASKS_DIR = _PROJECT_ROOT / "data" / "tasks"
 
 
-# ★ 安全加固：task_id 正则校验，防止路径穿越和通配符注入
-_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-]+$")
-
-
-def _validate_task_id(task_id: str) -> bool:
-    """校验 task_id 是否安全（仅允许字母、数字、下划线、连字符）。"""
-    if not task_id or not isinstance(task_id, str):
-        return False
-    return bool(_TASK_ID_PATTERN.match(task_id))
+# ★ S1 扩展：task_id 校验统一复用 web._security.validate_task_id（单源）。
+# 保留 _validate_task_id 别名以兼容既有测试 import。
+from web._security import validate_task_id as _validate_task_id
 
 
 REALTIME_PATTERN = re.compile(r"^(.+)-realtime-report\.md$")
@@ -401,6 +396,12 @@ async def save_report(request: Request):
         content = body.get("content", "")
         if not content:
             return {"ok": False, "error": "内容为空"}
+        # ★ S1 安全加固：校验 task_id 防止路径穿越
+        if not _validate_task_id(task_id):
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "error": "task_id 含非法字符"},
+            )
         ext = "md"
         if kind == "html":
             ext = "html"
@@ -604,6 +605,9 @@ def _md_to_html(md_text: str, task_id: str) -> str:
     lines = md_text.split("\n")
     html_lines = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+        # ★ F2: 报告正文来自 LLM 输出（不可信），导出 HTML 加 CSP 限制执行
+        # （default-src 'none' 阻断脚本/外链；img data: 允许内联图；已用 _html.escape 转义正文）
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\">",
         f"<title>安全扫描报告 - {task_id}</title>",
         "<style>",
         "body{font-family:-apple-system,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#333;line-height:1.6}",

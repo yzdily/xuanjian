@@ -38,18 +38,27 @@ import os
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any
 from urllib.parse import urlparse
 
 from core.log import get_logger
+from core.di import register_resetter
 
 log = get_logger("memory")
 
 _LESSONS_FILE = Path("data/memory/lessons.jsonl")
 _LOCK = Lock()
-_CACHE: list[dict] | None = None  # 内存缓存
+
+
+@dataclass
+class _MemoryState:
+    cache: list[dict] | None = None  # 内存缓存
+
+
+_state = _MemoryState()
 
 
 # ============================================================
@@ -62,9 +71,8 @@ def _ensure_dir() -> None:
 
 def _load() -> list[dict]:
     """加载所有教训到内存。文件不存在则返回空列表。"""
-    global _CACHE
-    if _CACHE is not None:
-        return _CACHE
+    if _state.cache is not None:
+        return _state.cache
     _ensure_dir()
     items: list[dict] = []
     if _LESSONS_FILE.exists():
@@ -79,8 +87,8 @@ def _load() -> list[dict]:
                     log.warning("跳过损坏行: %s — %s", line[:80], e)
         except Exception as e:
             log.error("读取 lessons.jsonl 失败: %s", e)
-    _CACHE = items
-    return _CACHE
+    _state.cache = items
+    return _state.cache
 
 
 def _flush() -> None:
@@ -270,17 +278,6 @@ def _vt_match(sv: str, vt: str) -> bool:
         return True
 
     # 找出 sv / vt 各自落入的语义簇
-    def _clusters_of(token: str) -> set[str]:
-        clusters: set[str] = set()
-        for cluster_key, aliases in _VT_ALIASES.items():
-            # 归一化每个别名后比对
-            normalized_aliases = {_vt_normalize(a) for a in aliases} | {cluster_key}
-            for a in normalized_aliases:
-                if a and (a == token or a in token or token in a):
-                    clusters.add(cluster_key)
-                    break
-        return clusters
-
     sv_clusters = _clusters_of(sv_n)
     vt_clusters = _clusters_of(vt_n)
     if sv_clusters & vt_clusters:
@@ -465,8 +462,26 @@ def stats() -> dict:
 
 def reload() -> int:
     """强制重读文件（外部修改了 jsonl 后调用）。返回总数。"""
-    global _CACHE
     with _LOCK:
-        _CACHE = None
+        _state.cache = None
         items = _load()
     return len(items)
+
+
+# ★ DI 收敛（D7/A4）：注册单例重置钩子，供 reset_singletons() 在测试间统一重置
+def _reset_core_memory__CACHE() -> None:
+    _state.cache = None
+
+register_resetter("core_memory__CACHE", _reset_core_memory__CACHE)
+
+# --- hoisted from _vt_match (A-grade, no local capture) ---
+def _clusters_of(token: str) -> set[str]:
+    clusters: set[str] = set()
+    for cluster_key, aliases in _VT_ALIASES.items():
+        # 归一化每个别名后比对
+        normalized_aliases = {_vt_normalize(a) for a in aliases} | {cluster_key}
+        for a in normalized_aliases:
+            if a and (a == token or a in token or token in a):
+                clusters.add(cluster_key)
+                break
+    return clusters

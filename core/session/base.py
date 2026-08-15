@@ -171,11 +171,21 @@ class AgentSessionBase:
         if self._strategy is not None:
             try:
                 import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
+                # ★ D10：get_event_loop() 在无运行循环时已弃用；优先取运行循环，
+                # 否则新建并在 finally 中关闭，避免事件循环泄漏。
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop_running = True
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    loop_running = False
+                if loop_running:
                     asyncio.ensure_future(self._strategy.on_task_done(self))
                 else:
-                    loop.run_until_complete(self._strategy.on_task_done(self))
+                    try:
+                        loop.run_until_complete(self._strategy.on_task_done(self))
+                    finally:
+                        loop.close()
             except Exception as e:
                 log.warning("策略清理失败 (非致命): %s", e)
         if self.sitemap:
