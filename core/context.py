@@ -178,6 +178,18 @@ class ContextManager:
                          tokens, available, usage * 100)
         return usage
 
+    def budget_allows_injection(self, context_window: int = 65536, safety: float = 0.6) -> bool:
+        """★ D14 (P0-2)：注入样本前的预算闸门。
+
+        返回 ``True`` 表示当前上下文仍在安全预算内，可继续注入样本；
+        返回 ``False`` 表示已超 60% 安全预算（``check_context_budget`` 返回
+        usage >= 1.0），调用方应**拒绝继续注入样本**（D14 硬拦截）。
+
+        与 ``LLMClient.chat()`` 发送前的 ``ContextLimitError`` 形成双层防护：
+        本方法在「注入样本」阶段主动拒绝，从源头避免上下文被 API 流量样本撑爆。
+        """
+        return self.check_context_budget(context_window, safety) < 1.0
+
     def should_compress(self) -> bool:
         """判断是否需要压缩。
 

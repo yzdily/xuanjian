@@ -135,6 +135,21 @@ class TestContextBudgetGuard:
         assert usage >= 1.0
         assert any("硬拦截" in r.message for r in caplog.records)
 
+    def test_d14_budget_allows_injection_gate(self):
+        """D14：budget_allows_injection() 在超预算时返回 False（硬拦截判定）。
+
+        配合 worker_agent._build_group_task_message 中的预检：超 60% 预算即
+        拒绝注入样本，从源头避免上下文被 API 流量样本撑爆。
+        """
+        from core.context import ContextManager
+        cm = ContextManager(llm=None)
+        cm.add_user("中" * 42000)  # ≈42000 tokens > 65536*0.6=39321
+        assert cm.check_context_budget(context_window=65536) >= 1.0
+        assert cm.budget_allows_injection(context_window=65536) is False
+        # 未超限时应允许注入
+        fresh = ContextManager(llm=None)
+        assert fresh.budget_allows_injection(context_window=65536) is True
+
 
 # ============================================================
 # T12 — P0-2 语义分组上限常量锁

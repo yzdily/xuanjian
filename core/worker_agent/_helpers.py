@@ -111,12 +111,23 @@ class _WorkerAgentHelpers:
             lines.append(f"- 优先级: {fp.priority.value}")
             lines.append(f"- 关联 API: {', '.join(fp.related_apis) if fp.related_apis else '待发现'}")
 
+            # ★ D14 (P0-2)：上下文预算硬拦截 —— 注入样本前的预检闸门。
+            # 若当前上下文已超 60% 安全预算（check_context_budget 返回 usage>=1.0），
+            # 跳过 API 流量样本注入，避免上下文被样本进一步撑爆；
+            # 与 LLMClient.chat() 发送前的 ContextLimitError 形成双层防护。
+            _d14_budget_ok = True
+            _d14_ctx = getattr(self, "context", None)
+            if _d14_ctx is not None and not _d14_ctx.budget_allows_injection():
+                _d14_budget_ok = False
+                log.warning("[%s] D14 上下文预算硬拦截：跳过功能点「%s」的流量样本注入",
+                            self.worker_id, fp.name)
+
             # ★ 注入 API 请求样本（从独立文件读取，区分真实流量和推测接口）
             # ★ 限制每个功能点的样本大小，防止上下文爆炸
             # ★ 2026-08-05：从 8K 降至 4K，6 功能点组从 48K 降至 24K，显著减少 token 消耗
             MAX_SAMPLE_PER_FP = 4000  # 每个功能点最多 4K 字符的样本
             sample_file = self.sitemap.get_sample_file_path(fp.id)
-            if sample_file:
+            if _d14_budget_ok and sample_file:
                 try:
                     from pathlib import Path
                     sample_content = Path(sample_file).read_text(encoding="utf-8")
@@ -137,7 +148,7 @@ class _WorkerAgentHelpers:
                              self.worker_id, sample_file, len(sample_content), MAX_SAMPLE_PER_FP)
                 except Exception as e:
                     log.warning("[%s] 读取流量样本失败: %s", self.worker_id, e)
-            else:
+            elif _d14_budget_ok:
                 # fallback: 从内存中取（兼容没有写文件的场景）
                 api_samples = self.sitemap.get_samples_for_feature(fp.id)
                 if api_samples:
@@ -164,6 +175,8 @@ class _WorkerAgentHelpers:
                         for line in block:
                             lines.append(f"  {line}")
                         sample_size += len(block_text)
+            else:
+                lines.append("- （D14 上下文预算硬拦截：已达安全预算上限，已跳过流量样本注入）")
             lines.append(f"- feature_id: {fp.id}")
 
             if http_checks:
