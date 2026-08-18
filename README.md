@@ -2,6 +2,10 @@
 
 **一个会操作浏览器、会抓包改包、会按照方法论执行、会自己验证漏洞的自动化渗透测试 Agent**
 
+> **v2.0 封板版** — 本仓库已冻结为稳定引擎基座，功能不再新增，仅接纳 bugfix 与安全补丁。
+> AI-native 安全测试平台（LLM/Agent/RAG 安全）已迁移至 [**鉴微 JianWei**](https://github.com/yzdily/jianwei)，由玄鉴引擎驱动。
+> 详见 [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md)
+
 <p>
   <a href="#快速开始">快速开始</a> •
   <a href="#特性">特性</a> •
