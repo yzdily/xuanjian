@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<title>Sitemap 版本对比 — 增量回归</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #ffffff;
+    color: #1a1a2e;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  /* Topbar */
+  .topbar {
+    height: 56px;
+    padding: 0 24px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 {
+    margin: 0;
+    color: #1565c0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .topbar .subtitle {
+    color: #757575; font-size: 13px;
+  }
+  .topbar .spacer { flex: 1; }
+  .topbar .badge {
+    background: #e3f2fd; color: #1565c0;
+    border-radius: 4px; padding: 4px 10px; font-size: 12px;
+  }
+
+  /* Layout */
+  .container {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 0;
+    height: calc(100vh - 56px);
+  }
+  .sidebar {
+    background: #f8f9fa;
+    border-right: 1px solid #e2e5e9;
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .sidebar h3 {
+    margin: 0 0 12px;
+    font-size: 14px; color: #424242;
+    border-bottom: 1px solid #e2e5e9; padding-bottom: 8px;
+  }
+
+  /* Snapshot list */
+  .snapshot-card {
+    background: #fff;
+    border: 1px solid #e2e5e9;
+    border-radius: 6px;
+    padding: 12px; margin-bottom: 8px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .snapshot-card:hover {
+    border-color: #1565c0;
+    background: #f0f4ff;
+  }
+  .snapshot-card.selected-a {
+    border-color: #e65100; background: #fff3e0;
+  }
+  .snapshot-card.selected-b {
+    border-color: #4caf50; background: #e8f5e9;
+  }
+  .snapshot-card .tag {
+    font-weight: 600; color: #1565c0; font-size: 14px;
+  }
+  .snapshot-card .meta {
+    color: #757575; font-size: 11px; margin-top: 4px;
+  }
+  .snapshot-card .stats {
+    display: flex; gap: 8px; margin-top: 6px;
+    font-size: 11px;
+  }
+  .snapshot-card .stats span {
+    background: #f0f1f3; color: #4a4a5a;
+    border-radius: 3px; padding: 1px 6px;
+  }
+  .snapshot-card .role-tag {
+    position: absolute; top: 8px; right: 8px;
+    font-size: 10px; padding: 2px 6px; border-radius: 3px;
+    font-weight: 600;
+  }
+  .snapshot-card { position: relative; }
+
+  /* Compare bar */
+  .compare-bar {
+    background: #fff;
+    border-bottom: 1px solid #e2e5e9;
+    padding: 16px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .compare-bar .selector {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px;
+  }
+  .compare-bar .selector b {
+    padding: 4px 10px;
+    background: #f0f1f3;
+    border-radius: 4px;
+    font-weight: 500;
+    min-width: 80px;
+    text-align: center;
+  }
+  .compare-bar .selector b.set-a { background: #fff3e0; color: #e65100; }
+  .compare-bar .selector b.set-b { background: #e8f5e9; color: #2e7d32; }
+  .compare-bar button {
+    background: #1565c0; color: #fff; border: 0;
+    padding: 8px 20px; border-radius: 4px;
+    font-size: 13px; cursor: pointer;
+  }
+  .compare-bar button:hover { background: #0d47a1; }
+  .compare-bar button:disabled { background: #bdbdbd; cursor: not-allowed; }
+  .compare-bar button.regression-btn {
+    background: #4caf50;
+  }
+  .compare-bar button.regression-btn:hover { background: #2e7d32; }
+
+  /* Main area */
+  .main {
+    overflow-y: auto;
+  }
+  .summary-bar {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 8px;
+    padding: 16px 24px;
+    background: #fafbfc;
+    border-bottom: 1px solid #e2e5e9;
+  }
+  .summary-cell {
+    background: #fff;
+    border: 1px solid #e2e5e9;
+    border-radius: 4px;
+    padding: 10px;
+    text-align: center;
+  }
+  .summary-cell .num {
+    font-size: 18px; font-weight: 600;
+  }
+  .summary-cell .lbl {
+    font-size: 11px; color: #757575; margin-top: 2px;
+  }
+  .summary-cell.added .num { color: #2e7d32; }
+  .summary-cell.removed .num { color: #c62828; }
+  .summary-cell.modified .num { color: #e65100; }
+
+  .results { padding: 16px 24px; }
+  .section { margin-bottom: 24px; }
+  .section h3 {
+    margin: 0 0 12px; font-size: 15px; color: #1565c0;
+    border-bottom: 1px solid #e2e5e9; padding-bottom: 8px;
+  }
+
+  .change-row {
+    background: #fff;
+    border: 1px solid #e2e5e9;
+    border-left-width: 4px;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .change-row.added { border-left-color: #4caf50; }
+  .change-row.removed { border-left-color: #c62828; opacity: .85; }
+  .change-row.modified { border-left-color: #e65100; }
+  .kind-tag {
+    flex-shrink: 0;
+    width: 60px; text-align: center;
+    font-size: 11px; font-weight: 600;
+    padding: 2px 6px; border-radius: 3px;
+  }
+  .kind-tag.added { background: #e8f5e9; color: #2e7d32; }
+  .kind-tag.removed { background: #ffebee; color: #c62828; }
+  .kind-tag.modified { background: #fff3e0; color: #e65100; }
+  .change-row .key {
+    font-family: ui-monospace, "SF Mono", Monaco, monospace;
+    font-size: 13px; color: #212121;
+    flex: 1; word-break: break-all;
+  }
+  .change-row .meta {
+    font-size: 11px; color: #757575;
+  }
+  .param-chip {
+    display: inline-block;
+    background: #e3f2fd; color: #1565c0;
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 11px; margin: 2px;
+    font-family: ui-monospace, monospace;
+  }
+  .param-chip.removed {
+    background: #ffebee; color: #c62828;
+    text-decoration: line-through;
+  }
+
+  .empty-msg {
+    color: #9e9e9e; padding: 24px; text-align: center; font-size: 13px;
+  }
+
+  /* Modal */
+  .modal-bg {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.4);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal-bg.show { display: flex; }
+  .modal {
+    background: #fff;
+    border-radius: 8px;
+    width: 720px;
+    max-height: 80vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,.2);
+  }
+  .modal-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid #e2e5e9;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { margin: 0; color: #1565c0; }
+  .modal-head .close {
+    background: none; border: 0; font-size: 24px; color: #757575;
+    cursor: pointer;
+  }
+  .modal-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .plan-item {
+    border-left: 3px solid #1565c0;
+    background: #fafbfc;
+    padding: 8px 12px; margin-bottom: 6px;
+    border-radius: 3px;
+  }
+  .plan-item.high { border-left-color: #e65100; background: #fff3e0; }
+  .plan-item.medium { border-left-color: #1565c0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>📊 Sitemap 版本对比</h1>
+  <span class="subtitle">增量回归扫描 · 只测变化的功能点，不再全量重扫</span>
+  <div class="spacer"></div>
+  <button id="takeBtn" onclick="openTakeModal()" style="background:#4caf50;color:#fff;border:0;padding:6px 14px;border-radius:4px;font-size:13px;cursor:pointer;margin-right:8px;">📷 拍当前快照</button>
+  <span class="badge" id="snapshotCount">加载中...</span>
+  <a href="/" style="color: #1565c0; text-decoration: none; font-size: 13px;margin-left:12px;">← 返回</a>
+</div>
+
+<div class="container">
+
+  <aside class="sidebar">
+    <h3>所有快照</h3>
+    <div id="hostFilter" style="margin-bottom: 12px;">
+      <select id="hostSelect" style="width: 100%; padding: 6px; border: 1px solid #e2e5e9; border-radius: 4px;">
+        <option value="">全部 host</option>
+      </select>
+    </div>
+    <div id="snapshotList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="compare-bar">
+      <div class="selector">
+        旧版本（A）：<b class="set-a" id="tagA">未选择</b>
+        <span style="color: #999;">→</span>
+        新版本（B）：<b class="set-b" id="tagB">未选择</b>
+      </div>
+      <button id="compareBtn" disabled>开始对比</button>
+      <button id="planBtn" class="regression-btn" disabled>生成回归方案</button>
+    </div>
+
+    <div class="summary-bar" id="summaryBar" style="display:none;">
+      <div class="summary-cell added"><div class="num" id="sumPagesAdded">0</div><div class="lbl">页面新增</div></div>
+      <div class="summary-cell modified"><div class="num" id="sumPagesModified">0</div><div class="lbl">页面改动</div></div>
+      <div class="summary-cell removed"><div class="num" id="sumPagesRemoved">0</div><div class="lbl">页面删除</div></div>
+      <div class="summary-cell added"><div class="num" id="sumEpAdded">0</div><div class="lbl">API 新增</div></div>
+      <div class="summary-cell modified"><div class="num" id="sumEpModified">0</div><div class="lbl">API 改动</div></div>
+      <div class="summary-cell removed"><div class="num" id="sumEpRemoved">0</div><div class="lbl">API 删除</div></div>
+      <div class="summary-cell added"><div class="num" id="sumFAdded">0</div><div class="lbl">功能点新增</div></div>
+      <div class="summary-cell modified"><div class="num" id="sumFModified">0</div><div class="lbl">功能点改动</div></div>
+      <div class="summary-cell removed"><div class="num" id="sumFRemoved">0</div><div class="lbl">功能点删除</div></div>
+    </div>
+
+    <div class="results" id="results">
+      <div class="empty-msg">在左侧选择两个快照后点击"开始对比"</div>
+    </div>
+  </main>
+
+</div>
+
+<!-- 回归方案 Modal -->
+<div class="modal-bg" id="planModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>📋 回归测试方案</h3>
+      <button class="close" onclick="document.getElementById('planModal').classList.remove('show')">×</button>
+    </div>
+    <div class="modal-body" id="planModalBody"></div>
+  </div>
+</div>
+
+<!-- 拍快照 Modal -->
+<div class="modal-bg" id="takeModal">
+  <div class="modal" style="width:480px;">
+    <div class="modal-head">
+      <h3>📷 拍当前快照</h3>
+      <button class="close" onclick="document.getElementById('takeModal').classList.remove('show')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:#757575;margin-bottom:4px;">选择任务（来源 sitemap）</label>
+        <select id="takeTaskId" style="width:100%;padding:7px 10px;border:1px solid #e2e5e9;border-radius:4px;font-size:13px;">
+          <option value="">加载中...</option>
+        </select>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:#757575;margin-bottom:4px;">版本标签 tag <span style="color:#999;">（留空自动用时间戳）</span></label>
+        <input id="takeTag" placeholder="例如 v1.0、2026-05-31-baseline" style="width:100%;padding:7px 10px;border:1px solid #e2e5e9;border-radius:4px;font-size:13px;" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:12px;color:#757575;margin-bottom:4px;">备注 <span style="color:#999;">（可选）</span></label>
+        <input id="takeNote" placeholder="例如：上线前基线 / 客户v2.3迭代后" style="width:100%;padding:7px 10px;border:1px solid #e2e5e9;border-radius:4px;font-size:13px;" />
+      </div>
+      <div id="takeMsg" style="font-size:12px;margin-top:8px;"></div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid #e2e5e9;display:flex;justify-content:flex-end;gap:8px;">
+      <button onclick="document.getElementById('takeModal').classList.remove('show')" style="background:#f0f1f3;color:#424242;border:0;padding:8px 16px;border-radius:4px;cursor:pointer;">取消</button>
+      <button onclick="submitTake()" style="background:#4caf50;color:#fff;border:0;padding:8px 16px;border-radius:4px;cursor:pointer;">📷 立即拍快照</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let allSnapshots = [];
+let selectedA = null;
+let selectedB = null;
+
+async function loadSnapshots() {
+  const r = await fetch('/api/diff/snapshots');
+  const data = await r.json();
+  allSnapshots = data.snapshots || [];
+  document.getElementById('snapshotCount').textContent = `共 ${allSnapshots.length} 个快照`;
+
+  // host 选项
+  const hosts = [...new Set(allSnapshots.map(s => s.host))];
+  const sel = document.getElementById('hostSelect');
+  sel.innerHTML = '<option value="">全部 host</option>' +
+    hosts.map(h => `<option value="${h}">${h}</option>`).join('');
+  sel.onchange = () => renderSnapshotList();
+
+  renderSnapshotList();
+}
+
+function renderSnapshotList() {
+  const host = document.getElementById('hostSelect').value;
+  const list = host ? allSnapshots.filter(s => s.host === host) : allSnapshots;
+  const box = document.getElementById('snapshotList');
+  if (!list.length) {
+    box.innerHTML = '<div class="empty-msg" style="padding:12px;line-height:1.7;">暂无快照<br><small style="color:#9e9e9e;">点击右上角 <b style="color:#4caf50;">📷 拍当前快照</b><br>把当前 sitemap 保存为基线版本</small></div>';
+    return;
+  }
+  box.innerHTML = list.map(s => {
+    const cls = (selectedA && selectedA.host === s.host && selectedA.tag === s.tag) ? 'selected-a' :
+                (selectedB && selectedB.host === s.host && selectedB.tag === s.tag) ? 'selected-b' : '';
+    const role = (selectedA && selectedA.host === s.host && selectedA.tag === s.tag) ? '<span class="role-tag" style="background:#fff3e0;color:#e65100;">A</span>' :
+                 (selectedB && selectedB.host === s.host && selectedB.tag === s.tag) ? '<span class="role-tag" style="background:#e8f5e9;color:#2e7d32;">B</span>' : '';
+    const sJson = JSON.stringify(s).replace(/'/g, '&#39;');
+    return `
+      <div class="snapshot-card ${cls}" onclick='selectSnapshot(${JSON.stringify(s)})' style="position:relative;">
+        ${role}
+        <button class="snap-del" title="删除快照"
+          onclick='event.stopPropagation(); deleteSnapshot(${sJson})'
+          style="position:absolute;top:6px;right:6px;background:#fff;border:1px solid #e2e5e9;color:#c62828;width:20px;height:20px;border-radius:4px;cursor:pointer;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;">×</button>
+        <div class="tag">${escapeHtml(s.tag)}</div>
+        <div class="meta">${escapeHtml(s.host)} · ${escapeHtml(s.created_at_human || '')}</div>
+        <div class="stats">
+          <span>📄 ${s.pages_count}</span>
+          <span>🔌 ${s.apis_count}</span>
+          <span>⚙️ ${s.features_count}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function deleteSnapshot(s) {
+  if (!confirm(`确定要删除快照 「${s.tag}」（${s.host}）吗？\n此操作不可恢复。`)) return;
+  try {
+    const url = `/api/diff/snapshots/delete?host=${encodeURIComponent(s.host)}&tag=${encodeURIComponent(s.tag)}`;
+    const r = await fetch(url, { method: 'POST' });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert('删除失败：' + (e.detail || r.status));
+      return;
+    }
+    // 如果被删除的是已选中的，清空选择
+    if (selectedA && selectedA.host === s.host && selectedA.tag === s.tag) selectedA = null;
+    if (selectedB && selectedB.host === s.host && selectedB.tag === s.tag) selectedB = null;
+    await loadSnapshots();
+    // 同步顶部 A/B 标签 + 按钮可用状态（替代原来已废弃的 updateSelectedDisplay 调用）
+    const tagAEl = document.getElementById('tagA');
+    const tagBEl = document.getElementById('tagB');
+    if (tagAEl) tagAEl.textContent = selectedA ? selectedA.tag : '未选择';
+    if (tagBEl) tagBEl.textContent = selectedB ? selectedB.tag : '未选择';
+    const ready = !!(selectedA && selectedB);
+    const cmpBtn = document.getElementById('compareBtn');
+    const planBtn = document.getElementById('planBtn');
+    if (cmpBtn) cmpBtn.disabled = !ready;
+    if (planBtn) planBtn.disabled = !ready;
+  } catch (err) {
+    alert('删除异常：' + err.message);
+  }
+}
+
+function selectSnapshot(s) {
+  // 第一次点击 → A；第二次点击不同的 → B；点击已选的 → 取消
+  if (selectedA && selectedA.host === s.host && selectedA.tag === s.tag) {
+    selectedA = null;
+  } else if (selectedB && selectedB.host === s.host && selectedB.tag === s.tag) {
+    selectedB = null;
+  } else if (!selectedA) {
+    selectedA = s;
+  } else if (!selectedB) {
+    if (selectedA.host !== s.host) {
+      alert('两个快照必须属于同一个 host');
+      return;
+    }
+    selectedB = s;
+  } else {
+    // 都已选 → 替换 B
+    selectedB = s;
+  }
+  document.getElementById('tagA').textContent = selectedA ? selectedA.tag : '未选择';
+  document.getElementById('tagB').textContent = selectedB ? selectedB.tag : '未选择';
+  const ready = !!(selectedA && selectedB);
+  document.getElementById('compareBtn').disabled = !ready;
+  document.getElementById('planBtn').disabled = !ready;
+  renderSnapshotList();
+}
+
+async function compare() {
+  if (!selectedA || !selectedB) return;
+  const url = `/api/diff/compare?host=${encodeURIComponent(selectedA.host)}&tag_a=${encodeURIComponent(selectedA.tag)}&tag_b=${encodeURIComponent(selectedB.tag)}`;
+  const r = await fetch(url);
+  if (!r.ok) {
+    alert('对比失败: ' + (await r.text()));
+    return;
+  }
+  const data = await r.json();
+  renderResults(data);
+}
+
+function renderResults(data) {
+  // summary
+  document.getElementById('summaryBar').style.display = 'grid';
+  const s = data.summary || {};
+  document.getElementById('sumPagesAdded').textContent = s.pages_added || 0;
+  document.getElementById('sumPagesModified').textContent = s.pages_modified || 0;
+  document.getElementById('sumPagesRemoved').textContent = s.pages_removed || 0;
+  document.getElementById('sumEpAdded').textContent = s.endpoints_added || 0;
+  document.getElementById('sumEpModified').textContent = s.endpoints_modified || 0;
+  document.getElementById('sumEpRemoved').textContent = s.endpoints_removed || 0;
+  document.getElementById('sumFAdded').textContent = s.features_added || 0;
+  document.getElementById('sumFModified').textContent = s.features_modified || 0;
+  document.getElementById('sumFRemoved').textContent = s.features_removed || 0;
+
+  const out = [];
+  out.push(renderSection('🌐 页面变化', data.pages, c => `
+      <span class="key">${escapeHtml(c.url)}</span>
+      <span class="meta">${escapeHtml(c.title || '')}</span>
+      ${c.added_forms ? `<span class="meta">+${c.added_forms} 表单</span>` : ''}
+    `));
+  out.push(renderSection('🔌 API 端点变化', data.endpoints, c => {
+    const params = (c.added_params || []).map(p => `<span class="param-chip">+${escapeHtml(p)}</span>`).join('') +
+                   (c.removed_params || []).map(p => `<span class="param-chip removed">${escapeHtml(p)}</span>`).join('');
+    const fields = c.diff_fields && Object.keys(c.diff_fields).length
+      ? `<span class="meta">字段变化: ${Object.keys(c.diff_fields).join(', ')}</span>` : '';
+    return `<span class="key">${escapeHtml(c.key)}</span> ${params} ${fields}`;
+  }));
+  out.push(renderSection('⚙️ 功能点变化', data.features, c => {
+    const apis = (c.added_apis || []).map(a => `<span class="param-chip">+${escapeHtml(a)}</span>`).join('') +
+                 (c.removed_apis || []).map(a => `<span class="param-chip removed">${escapeHtml(a)}</span>`).join('');
+    return `<span class="key">${escapeHtml(c.name || c.feature_id)}</span> ${apis}`;
+  }));
+  document.getElementById('results').innerHTML = out.join('');
+}
+
+function renderSection(title, items, rowFn) {
+  if (!items || !items.length) {
+    return `<div class="section"><h3>${title}</h3><div class="empty-msg">无变化</div></div>`;
+  }
+  const rows = items.map(c => `
+    <div class="change-row ${c.kind}">
+      <span class="kind-tag ${c.kind}">${kindLabel(c.kind)}</span>
+      ${rowFn(c)}
+    </div>
+  `).join('');
+  return `<div class="section"><h3>${title} <span style="color:#757575;font-size:12px;">(${items.length})</span></h3>${rows}</div>`;
+}
+
+function kindLabel(k) {
+  return ({added: '新增', removed: '删除', modified: '改动'})[k] || k;
+}
+
+async function buildPlan() {
+  if (!selectedA || !selectedB) return;
+  const url = `/api/diff/regression/plan?host=${encodeURIComponent(selectedA.host)}&tag_a=${encodeURIComponent(selectedA.tag)}&tag_b=${encodeURIComponent(selectedB.tag)}&save=true`;
+  const r = await fetch(url, {method: 'POST'});
+  if (!r.ok) { alert('生成方案失败'); return; }
+  const data = await r.json();
+  showPlan(data.plan, data.saved_to);
+}
+
+function showPlan(plan, savedTo) {
+  const summary = plan.summary || {};
+  const items = plan.items || [];
+  const html = `
+    <div style="background:#e3f2fd;border-radius:6px;padding:12px;margin-bottom:16px;">
+      <strong>📊 方案概览</strong><br>
+      共 <b>${summary.total}</b> 项需要回归测试 ·
+      其中高优先级 <b style="color:#e65100;">${summary.high_priority}</b> 项<br>
+      <small style="color:#757575;">API ${summary.endpoints} · 功能点 ${summary.features} · 页面 ${summary.pages}</small>
+      ${savedTo ? `<div style="margin-top:8px;font-size:12px;color:#2e7d32;">✅ 已保存到: <code>${escapeHtml(savedTo)}</code></div>` : ''}
+    </div>
+    ${items.map(it => `
+      <div class="plan-item ${it.priority}">
+        <strong>[${it.kind}]</strong> ${escapeHtml(it.target_id)}
+        <span style="float:right;font-size:11px;color:#757575;">优先级: ${it.priority} · 原因: ${escapeHtml(it.reason)}</span>
+      </div>
+    `).join('')}
+  `;
+  document.getElementById('planModalBody').innerHTML = html;
+  document.getElementById('planModal').classList.add('show');
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[<>&"']/g, c =>
+    ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'})[c]);
+}
+
+document.getElementById('compareBtn').onclick = compare;
+document.getElementById('planBtn').onclick = buildPlan;
+
+// ===== 📷 拍当前快照 =====
+async function openTakeModal() {
+  document.getElementById('takeMsg').innerHTML = '';
+  document.getElementById('takeTag').value = '';
+  document.getElementById('takeNote').value = '';
+  // 加载可用任务
+  const sel = document.getElementById('takeTaskId');
+  sel.innerHTML = '<option value="">加载中...</option>';
+  document.getElementById('takeModal').classList.add('show');
+  try {
+    const r = await fetch('/api/traffic/tasks');
+    const data = await r.json();
+    const tasks = data.tasks || [];
+    if (!tasks.length) {
+      sel.innerHTML = '<option value="">⚠️ 暂无任务（请先做一次爬取）</option>';
+      return;
+    }
+    sel.innerHTML = tasks.map(t => {
+      const label = `${t.task_id} — ${t.target || '(无目标)'} · ${t.apis_count||0} API / ${t.features_count||0} 功能点${t.active ? ' 🟢运行中' : ''}`;
+      return `<option value="${t.task_id}">${escapeHtml(label)}</option>`;
+    }).join('');
+  } catch (e) {
+    sel.innerHTML = '<option value="">⚠️ 加载任务失败</option>';
+  }
+}
+
+async function submitTake() {
+  const task_id = document.getElementById('takeTaskId').value;
+  const tag = document.getElementById('takeTag').value.trim();
+  const note = document.getElementById('takeNote').value.trim();
+  const msg = document.getElementById('takeMsg');
+  if (!task_id) { msg.innerHTML = '<span style="color:#c62828;">请选择一个任务</span>'; return; }
+  msg.innerHTML = '<span style="color:#1565c0;">📸 拍摄中...</span>';
+  try {
+    const r = await fetch('/api/diff/snapshots/take', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ task_id, tag, note }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = `<span style="color:#c62828;">❌ ${escapeHtml(data.detail || '失败')}</span>`;
+      return;
+    }
+    const s = data.snapshot || {};
+    msg.innerHTML = `<span style="color:#2e7d32;">✅ 已拍摄：${escapeHtml(s.host)}/${escapeHtml(s.tag)}（${s.apis_count} API / ${s.features_count} 功能点）</span>`;
+    setTimeout(() => {
+      document.getElementById('takeModal').classList.remove('show');
+      loadSnapshots(); // 刷新列表
+    }, 800);
+  } catch (e) {
+    msg.innerHTML = `<span style="color:#c62828;">❌ 网络错误：${escapeHtml(String(e))}</span>`;
+  }
+}
+
+loadSnapshots();
+</script>
+</body>
+</html>

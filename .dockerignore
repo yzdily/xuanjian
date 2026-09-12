@@ -1,0 +1,54 @@
+# 构建产物 / 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# 数据（运行时生成，不入镜像）
+data/
+*.log
+*.jsonl
+*.db
+*.db-shm
+*.db-wal
+
+# 本地配置（镜像内用 .env.example 生成）
+.env
+
+# 原始 zip 包
+*.zip
+
+# 版本控制
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 打包产物（PyInstaller）
+ms-playwright/
+*.spec
+
+# 文档源文件
+_refs/
+.backups/
+*.backup
+.backup_skills_*/
+
+# Burp 插件构建产物
+burp-plugin/.gradle/
+burp-plugin/bin/
+burp-plugin/build/
+burp-plugin/*.jar
+
+# 不需要的目录（减少镜像体积）
+tests/
+skills_my/wooyun-legacy-main/

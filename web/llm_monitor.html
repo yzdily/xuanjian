@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" style="background:#ffffff;">
+<head>
+<meta charset="UTF-8">
+<title>LLM 用量监控 - 游刃AISec</title>
+<script>
+  // 同步主页面的主题设置
+  (function(){
+    var t = localStorage.getItem('pentest-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.documentElement.style.background = t === 'light' ? '#ffffff' : '#1e1e2e';
+  })();
+</script>
+<style>
+  /* 明亮模式全局覆盖 */
+  [data-theme="light"] { background: #ffffff !important; }
+  [data-theme="light"] body { background: #ffffff !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar { background: #f8f9fa !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar h1 { color: #1565c0 !important; }
+  [data-theme="light"] .topbar .back-btn { background: #f0f1f3 !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .topbar .back-btn:hover { background: #e2e5e9 !important; color: #1a1a2e !important; }
+  [data-theme="light"] .topbar .refresh-btn { background: #4caf50 !important; color: #fff !important; }
+  [data-theme="light"] .topbar .updated { color: #9e9e9e !important; }
+  [data-theme="light"] .container { color: #1a1a2e !important; }
+  [data-theme="light"] .stat-card { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .stat-card:hover { border-color: #c8ccd0 !important; }
+  [data-theme="light"] .stat-card .num { color: #1565c0 !important; }
+  [data-theme="light"] .stat-card .num.success { color: #2e7d32 !important; }
+  [data-theme="light"] .stat-card .num.danger { color: #c62828 !important; }
+  [data-theme="light"] .stat-card .num.warn { color: #e65100 !important; }
+  [data-theme="light"] .stat-card .label { color: #616161 !important; }
+  [data-theme="light"] .filters { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .filters label { color: #616161 !important; }
+  [data-theme="light"] .filters select,
+  [data-theme="light"] .filters input { background: #fff !important; color: #1a1a2e !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .filters select:hover,
+  [data-theme="light"] .filters input:focus { border-color: #1565c0 !important; }
+  [data-theme="light"] .filters .clear-btn { color: #757575 !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .filters .clear-btn:hover { color: #c62828 !important; border-color: #c62828 !important; }
+  [data-theme="light"] .table-wrap { background: #fff !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] table { color: #1a1a2e !important; }
+  [data-theme="light"] thead { background: #f8f9fa !important; }
+  [data-theme="light"] th { color: #616161 !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] td { color: #212121 !important; border-bottom-color: #f0f1f3 !important; }
+  [data-theme="light"] tbody tr:hover td { background: #f5f8ff !important; }
+  [data-theme="light"] tbody tr.is-error td { background: #fff5f5 !important; }
+  [data-theme="light"] tbody tr.is-error:hover td { background: #ffe8e8 !important; }
+  [data-theme="light"] .cell-id { color: #1565c0 !important; }
+  [data-theme="light"] .cell-id.muted { color: #9e9e9e !important; }
+  [data-theme="light"] .cell-status.ok { background: #e8f5e9 !important; color: #2e7d32 !important; }
+  [data-theme="light"] .cell-status.error { background: #fce4ec !important; color: #c62828 !important; }
+  [data-theme="light"] .cell-elapsed.slow { color: #e65100 !important; }
+  [data-theme="light"] .cell-elapsed.fast { color: #2e7d32 !important; }
+  [data-theme="light"] .cell-question { color: #424242 !important; }
+  [data-theme="light"] .cell-time { color: #757575 !important; }
+  [data-theme="light"] .cell-tokens { color: #00695c !important; }
+  [data-theme="light"] .cell-action { color: #1565c0 !important; }
+  [data-theme="light"] .cell-action:hover { color: #7b1fa2 !important; }
+  [data-theme="light"] .pagination { background: #f8f9fa !important; border-top-color: #e2e5e9 !important; }
+  [data-theme="light"] .pagination .page-info { color: #757575 !important; }
+  [data-theme="light"] .pagination button { background: #fff !important; color: #4a4a5a !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .pagination button:hover:not(:disabled) { background: #f0f1f3 !important; }
+  [data-theme="light"] .pagination button:disabled { opacity: 0.4 !important; }
+  [data-theme="light"] .diag-overlay { background: rgba(0,0,0,0.3) !important; }
+  [data-theme="light"] .diag-panel { background: #fff !important; border-color: #e2e5e9 !important; box-shadow: 0 20px 60px rgba(0,0,0,0.15) !important; }
+  [data-theme="light"] .diag-header { background: #fff !important; border-bottom-color: #e2e5e9 !important; }
+  [data-theme="light"] .diag-header h3 { color: #1565c0 !important; }
+  [data-theme="light"] .diag-header .close-btn { color: #9e9e9e !important; }
+  [data-theme="light"] .diag-header .close-btn:hover { color: #c62828 !important; }
+  [data-theme="light"] .diag-grid .lbl { color: #757575 !important; }
+  [data-theme="light"] .diag-grid .val { color: #212121 !important; }
+  [data-theme="light"] .diag-section { background: #f8f9fa !important; border-color: #e2e5e9 !important; }
+  [data-theme="light"] .diag-section .sec-title { color: #616161 !important; }
+  [data-theme="light"] .diag-section .sec-content { color: #37474f !important; }
+  [data-theme="light"] .diag-section.error { border-color: #ffcdd2 !important; background: #fff5f5 !important; }
+  [data-theme="light"] .diag-section.error .sec-content { color: #c62828 !important; }
+  [data-theme="light"] .empty-row td { color: #9e9e9e !important; }
+  [data-theme="light"] ::-webkit-scrollbar-thumb { background: #c8ccd0 !important; }
+  [data-theme="light"] ::-webkit-scrollbar-track { background: #f5f5f5 !important; }
+</style>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1e1e2e; color: #cdd6f4; min-height: 100vh;
+  }
+
+  /* 顶部 */
+  .topbar {
+    background: #181825; border-bottom: 1px solid #313244;
+    padding: 10px 20px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .topbar h1 { font-size: 15px; color: #89b4fa; font-weight: 600; }
+  .topbar .back-btn {
+    background: #313244; color: #bac2de; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    text-decoration: none;
+  }
+  .topbar .back-btn:hover { background: #45475a; color: #cdd6f4; }
+  .topbar .refresh-btn {
+    margin-left: auto;
+    background: #a6e3a1; color: #1e1e2e; border: none;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .topbar .refresh-btn:hover { background: #b8f0b4; }
+  .topbar .updated { color: #6c7086; font-size: 11px; margin-left: 12px; }
+
+  /* 内容区 */
+  .container { padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+
+  /* 统计卡片行 */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 12px;
+  }
+  .stat-card {
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    padding: 16px; transition: border-color .2s; position: relative;
+  }
+  .stat-card .num.cost { color: #f9e2af; }
+  [data-theme="light"] .stat-card .num.cost { color: #e65100 !important; }
+  .stat-card .sub {
+    font-size: 10.5px; color: #6c7086; margin-top: 4px; line-height: 1.4;
+    font-family: 'SF Mono', Monaco, monospace;
+  }
+  [data-theme="light"] .stat-card .sub { color: #9e9e9e !important; }
+
+  /* 范围徽标 */
+  .scope-banner {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 12px; font-size: 12px; color: #9399b2;
+  }
+  [data-theme="light"] .scope-banner { background: #f8f9fa !important; border-color: #e2e5e9 !important; color: #616161 !important; }
+  .scope-banner .scope-tag {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    background: #1e3a5e; color: #89b4fa; font-weight: 600; font-size: 11px;
+  }
+  .scope-banner .scope-tag.task { background: #3a2a1e; color: #f9e2af; }
+  [data-theme="light"] .scope-banner .scope-tag { background: #e3f2fd !important; color: #1565c0 !important; }
+  [data-theme="light"] .scope-banner .scope-tag.task { background: #fff3e0 !important; color: #e65100 !important; }
+  .scope-banner .model-breakdown {
+    margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .scope-banner .model-chip {
+    background: #181825; border: 1px solid #313244; border-radius: 6px;
+    padding: 3px 8px; font-size: 11px; color: #bac2de;
+    font-family: 'SF Mono', Monaco, monospace;
+  }
+  [data-theme="light"] .scope-banner .model-chip { background: #fff !important; border-color: #e2e5e9 !important; color: #424242 !important; }
+  .scope-banner .model-chip .price { color: #94e2d5; }
+  [data-theme="light"] .scope-banner .model-chip .price { color: #00695c !important; }
+
+  .stat-card:hover { border-color: #4a4a8a; }
+  .stat-card .num {
+    font-size: 24px; font-weight: 800; color: #89b4fa; line-height: 1.2;
+  }
+  .stat-card .num.success { color: #a6e3a1; }
+  .stat-card .num.danger { color: #f38ba8; }
+  .stat-card .num.warn { color: #f9e2af; }
+  .stat-card .label { font-size: 11px; color: #6c7086; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.8px; }
+
+  /* 筛选条 */
+  .filters {
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    padding: 14px; margin-bottom: 16px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .filters label {
+    font-size: 11px; color: #6c7086; margin-right: 4px;
+  }
+  .filters select, .filters input {
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    padding: 6px 10px; border-radius: 6px; font-size: 12px;
+    outline: none; min-width: 110px;
+  }
+  .filters select:hover, .filters input:focus { border-color: #89b4fa; }
+  .filters input { min-width: 200px; }
+  .filters .clear-btn {
+    background: transparent; color: #6c7086; border: 1px solid #45475a;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .filters .clear-btn:hover { color: #f38ba8; border-color: #f38ba8; }
+
+  /* 表格 */
+  .table-wrap {
+    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead { background: #181825; position: sticky; top: 0; z-index: 5; }
+  th {
+    text-align: left; padding: 10px 12px; color: #9399b2; font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    border-bottom: 1px solid #313244;
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 12px; color: #cdd6f4; border-bottom: 1px solid #262637;
+    white-space: nowrap; max-width: 280px; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tbody tr:hover td { background: #1f1f3a; cursor: pointer; }
+  tbody tr.is-error td { background: #2a1a1f; }
+  tbody tr.is-error:hover td { background: #3a1a25; }
+
+  /* 单元格特殊样式 */
+  .cell-id {
+    font-family: 'SF Mono', Monaco, monospace; font-size: 11px; color: #89b4fa;
+  }
+  .cell-id.muted { color: #6c7086; }
+  .cell-status {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 600;
+  }
+  .cell-status.ok { background: #1e3a1e; color: #a6e3a1; }
+  .cell-status.error { background: #3a1e1e; color: #f38ba8; }
+  .cell-elapsed { font-family: 'SF Mono', Monaco, monospace; }
+  .cell-elapsed.slow { color: #f9e2af; }
+  .cell-elapsed.fast { color: #a6e3a1; }
+  .cell-question {
+    color: #bac2de; font-size: 11.5px; max-width: 320px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cell-time {
+    color: #9399b2; font-family: 'SF Mono', Monaco, monospace; font-size: 11px;
+  }
+  .cell-tokens { color: #94e2d5; font-family: 'SF Mono', Monaco, monospace; }
+  .cell-action {
+    color: #89b4fa; font-size: 11px; cursor: pointer;
+  }
+  .cell-action:hover { color: #cba6f7; text-decoration: underline; }
+
+  /* 分页 */
+  .pagination {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-top: 1px solid #313244;
+    background: #181825;
+  }
+  .pagination .page-info { color: #6c7086; font-size: 12px; }
+  .pagination .page-controls { display: flex; gap: 6px; }
+  .pagination button {
+    background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  }
+  .pagination button:hover:not(:disabled) { background: #45475a; }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* 诊断弹窗 */
+  .diag-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6); z-index: 999; padding: 30px;
+  }
+  .diag-overlay.show { display: flex; align-items: center; justify-content: center; }
+  .diag-panel {
+    background: #1e1e2e; border: 1px solid #313244; border-radius: 14px;
+    width: 100%; max-width: 900px; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .diag-header {
+    padding: 16px 22px; border-bottom: 1px solid #313244;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; background: #1e1e2e; z-index: 1;
+  }
+  .diag-header h3 { color: #89b4fa; font-size: 15px; margin: 0; }
+  .diag-header .close-btn {
+    background: none; border: none; color: #6c7086; font-size: 22px; cursor: pointer;
+  }
+  .diag-header .close-btn:hover { color: #f38ba8; }
+  .diag-body { padding: 18px 22px; }
+  .diag-grid {
+    display: grid; grid-template-columns: 100px 1fr; gap: 8px 16px;
+    margin-bottom: 16px;
+  }
+  .diag-grid .lbl { color: #6c7086; font-size: 11px; padding-top: 3px; }
+  .diag-grid .val {
+    color: #cdd6f4; font-size: 12.5px; word-break: break-all;
+    font-family: 'SF Mono', Monaco, monospace;
+  }
+  .diag-section {
+    background: #181825; border: 1px solid #313244; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 14px;
+  }
+  .diag-section .sec-title {
+    font-size: 11px; color: #9399b2; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;
+  }
+  .diag-section .sec-content {
+    color: #cdd6f4; font-size: 12.5px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-word;
+    font-family: 'SF Mono', Monaco, monospace;
+    max-height: 400px; overflow-y: auto;
+  }
+  .diag-section.error { border-color: #5e1a1a; background: #2a1818; }
+  .diag-section.error .sec-content { color: #f38ba8; }
+
+  .empty-row td {
+    text-align: center; padding: 50px 20px; color: #6c7086;
+  }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: #181825; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+<a class="back-btn" href="/">← 返回</a>
+  <h1>📊 LLM 用量详细监控</h1>
+  <span class="updated" id="updatedTs">从未刷新</span>
+  <button class="refresh-btn" onclick="loadAll()">⟳ 刷新</button>
+</div>
+
+<div class="container">
+  <!-- 统计卡片 -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-card">
+      <div class="num" id="s-total">-</div>
+      <div class="label">调用次数</div>
+      <div class="sub" id="s-total-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="s-tokens">-</div>
+      <div class="label">总 Token</div>
+      <div class="sub" id="s-tokens-sub"></div>
+    </div>
+    <div class="stat-card"><div class="num warn" id="s-elapsed">-</div><div class="label">总耗时</div></div>
+    <div class="stat-card"><div class="num danger" id="s-errors">-</div><div class="label">异常调用</div></div>
+    <div class="stat-card">
+      <div class="num cost" id="s-cost">-</div>
+      <div class="label" id="s-cost-label">预估费用 (USD)</div>
+      <div class="sub" id="s-cost-sub"></div>
+    </div>
+    <div class="stat-card"><div class="num success" id="s-tasks">-</div><div class="label" id="s-tasks-label">活跃会话</div></div>
+  </div>
+
+  <!-- 范围徽标 + 模型明细 -->
+  <div class="scope-banner" id="scopeBanner">
+    <span>统计范围:</span>
+    <span class="scope-tag" id="scopeTag">全局</span>
+    <span id="scopeDesc">所有任务汇总</span>
+    <div class="model-breakdown" id="modelBreakdown"></div>
+  </div>
+
+  <!-- 筛选条 -->
+  <div class="filters">
+    <label>会话:</label>
+    <select id="f-task"><option value="">全部</option></select>
+    <label>模型:</label>
+    <select id="f-model"><option value="">全部</option></select>
+    <label>调用方:</label>
+    <select id="f-caller"><option value="">全部</option></select>
+    <label>状态:</label>
+    <select id="f-error">
+      <option value="">全部</option>
+      <option value="false">仅正常</option>
+      <option value="true">仅异常</option>
+    </select>
+    <input id="f-keyword" placeholder="关键字搜索（请求/响应/错误）"/>
+    <button class="clear-btn" onclick="clearFilters()">清除</button>
+  </div>
+
+  <!-- 表格 -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>对话 ID</th>
+          <th>会话 ID</th>
+          <th>模型</th>
+          <th>调用方</th>
+          <th>状态</th>
+          <th>耗时</th>
+          <th>Token</th>
+          <th>请求摘要</th>
+          <th>发起时间</th>
+          <th>诊断</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr class="empty-row"><td colspan="10">加载中...</td></tr>
+      </tbody>
+    </table>
+    <div class="pagination">
+      <span class="page-info" id="pageInfo">-</span>
+      <div class="page-controls">
+        <button id="prevBtn" onclick="changePage(-1)">‹ 上一页</button>
+        <button id="nextBtn" onclick="changePage(1)">下一页 ›</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 诊断弹窗 -->
+<div class="diag-overlay" id="diagOverlay" onclick="if(event.target===this)closeDiag()">
+  <div class="diag-panel">
+    <div class="diag-header">
+      <h3>🔍 调用详情诊断</h3>
+      <button class="close-btn" onclick="closeDiag()">×</button>
+    </div>
+    <div class="diag-body" id="diagBody"></div>
+  </div>
+</div>
+
+<script>
+const PAGE_SIZE = 50;
+let _offset = 0;
+let _filtered = 0;
+let _taskMeta = {};  // task_id → {target, started_at}，loadFilters 时缓存
+
+// ★ 模型公开价格表（单位：USD per 1M tokens）
+// 数据来源：各厂商官网公开定价（2026 年初参考价）；未匹配模型按 0 计算并标记
+// 匹配规则：把模型名转 lowercase 后做 "包含" 匹配，越具体的别名放越前面
+const MODEL_PRICING = [
+  // DeepSeek（官方仅 deepseek-chat 与 deepseek-reasoner，历史 v3/v4 名作为别名兜底）
+  { match: 'deepseek-reasoner',     input: 0.55,  output: 2.19 },
+  { match: 'deepseek-r1',           input: 0.55,  output: 2.19 },
+  { match: 'deepseek-v4-flash',     input: 0.07,  output: 1.10 },  // 历史别名，按早期定价
+  { match: 'deepseek-v3',           input: 0.27,  output: 1.10 },  // 历史别名
+  { match: 'deepseek-v4-pro',       input: 0.27,  output: 1.10 },  // 历史别名（自动纠正为 deepseek-chat）
+  { match: 'deepseek-chat',         input: 0.27,  output: 1.10 },
+  { match: 'deepseek',              input: 0.27,  output: 1.10 },
+  // OpenAI
+  { match: 'gpt-4o-mini',           input: 0.15,  output: 0.60 },
+  { match: 'gpt-4o',                input: 2.50,  output: 10.00 },
+  { match: 'gpt-4-turbo',           input: 10.00, output: 30.00 },
+  { match: 'gpt-4',                 input: 30.00, output: 60.00 },
+  { match: 'gpt-3.5-turbo',         input: 0.50,  output: 1.50 },
+  { match: 'o1-mini',               input: 3.00,  output: 12.00 },
+  { match: 'o1',                    input: 15.00, output: 60.00 },
+  // Anthropic Claude
+  { match: 'claude-opus-4',         input: 15.00, output: 75.00 },
+  { match: 'claude-4-opus',         input: 15.00, output: 75.00 },
+  { match: 'claude-sonnet-4',       input: 3.00,  output: 15.00 },
+  { match: 'claude-4-sonnet',       input: 3.00,  output: 15.00 },
+  { match: 'claude-4.7-opus',       input: 15.00, output: 75.00 },
+  { match: 'claude-3-5-sonnet',     input: 3.00,  output: 15.00 },
+  { match: 'claude-3.5-sonnet',     input: 3.00,  output: 15.00 },
+  { match: 'claude-3-5-haiku',      input: 0.80,  output: 4.00 },
+  { match: 'claude-3.5-haiku',      input: 0.80,  output: 4.00 },
+  { match: 'claude-3-opus',         input: 15.00, output: 75.00 },
+  { match: 'claude-3-sonnet',       input: 3.00,  output: 15.00 },
+  { match: 'claude-3-haiku',        input: 0.25,  output: 1.25 },
+  // 通义千问
+  { match: 'qwen-max',              input: 1.60,  output: 6.40 },
+  { match: 'qwen-plus',             input: 0.40,  output: 1.20 },
+  { match: 'qwen-turbo',            input: 0.05,  output: 0.20 },
+  { match: 'qwen',                  input: 0.40,  output: 1.20 },
+  // Google Gemini
+  { match: 'gemini-2.5-pro',        input: 1.25,  output: 10.00 },
+  { match: 'gemini-2.5-flash',      input: 0.075, output: 0.30 },
+  { match: 'gemini-1.5-pro',        input: 1.25,  output: 5.00 },
+  { match: 'gemini-1.5-flash',      input: 0.075, output: 0.30 },
+  { match: 'gemini',                input: 0.075, output: 0.30 },
+  // Moonshot / Kimi
+  { match: 'moonshot-v1-128k',      input: 8.30,  output: 8.30 },
+  { match: 'moonshot-v1-32k',       input: 3.30,  output: 3.30 },
+  { match: 'moonshot-v1-8k',        input: 1.65,  output: 1.65 },
+  { match: 'moonshot',              input: 3.30,  output: 3.30 },
+  { match: 'kimi',                  input: 3.30,  output: 3.30 },
+  // 智谱 GLM
+  { match: 'glm-4-plus',            input: 0.70,  output: 0.70 },
+  { match: 'glm-4',                 input: 0.14,  output: 0.14 },
+  // 兜底
+];
+const USD_TO_CNY = 7.2;
+
+// 查模型单价（USD per 1M tokens），返回 {input, output, matched, hint}
+function lookupPrice(modelName) {
+  if (!modelName) return { input: 0, output: 0, matched: false, hint: '未知模型' };
+  const lower = String(modelName).toLowerCase();
+  for (const p of MODEL_PRICING) {
+    if (lower.includes(p.match)) return { input: p.input, output: p.output, matched: true, hint: p.match };
+  }
+  return { input: 0, output: 0, matched: false, hint: '价格未配置' };
+}
+
+// 计算费用：byModel = {modelName: {input_tokens, output_tokens, calls}}
+// 返回 {totalUsd, totalCny, breakdown: [{model, usd, inputTokens, outputTokens, matched}], unknown: [model...]}
+function calcCost(byModel) {
+  const breakdown = [];
+  const unknown = [];
+  let totalUsd = 0;
+  for (const [m, stat] of Object.entries(byModel || {})) {
+    const p = lookupPrice(m);
+    const usd = (stat.input_tokens || 0) / 1e6 * p.input + (stat.output_tokens || 0) / 1e6 * p.output;
+    totalUsd += usd;
+    if (!p.matched) unknown.push(m);
+    breakdown.push({
+      model: m, usd,
+      inputTokens: stat.input_tokens || 0,
+      outputTokens: stat.output_tokens || 0,
+      calls: stat.calls || 0,
+      matched: p.matched,
+      unitInput: p.input, unitOutput: p.output,
+    });
+  }
+  breakdown.sort((a, b) => b.usd - a.usd);
+  return { totalUsd, totalCny: totalUsd * USD_TO_CNY, breakdown, unknown };
+}
+
+function fmtUsd(v) {
+  if (v >= 100) return '$' + v.toFixed(2);
+  if (v >= 1) return '$' + v.toFixed(3);
+  if (v >= 0.01) return '$' + v.toFixed(4);
+  if (v > 0) return '$' + v.toFixed(5);
+  return '$0';
+}
+function fmtCny(v) {
+  if (v >= 100) return '¥' + v.toFixed(2);
+  if (v >= 1) return '¥' + v.toFixed(3);
+  if (v >= 0.01) return '¥' + v.toFixed(4);
+  if (v > 0) return '¥' + v.toFixed(5);
+  return '¥0';
+}
+function fmtTokens(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n || 0);
+}
+
+const elTask = document.getElementById('f-task');
+const elModel = document.getElementById('f-model');
+const elCaller = document.getElementById('f-caller');
+const elError = document.getElementById('f-error');
+const elKeyword = document.getElementById('f-keyword');
+const tbody = document.getElementById('tbody');
+
+// 会话下拉 → 联动刷新统计卡、异常计数、列表；其他筛选 → 只刷列表
+elTask.addEventListener('change', () => { _offset = 0; loadStats(); refreshErrorCount(); loadList(); });
+[elModel, elCaller, elError].forEach(e => e.addEventListener('change', () => { _offset = 0; loadList(); }));
+let _kwTimer = null;
+elKeyword.addEventListener('input', () => {
+  clearTimeout(_kwTimer);
+  _kwTimer = setTimeout(() => { _offset = 0; loadList(); }, 350);
+});
+
+function clearFilters() {
+  elTask.value = ''; elModel.value = ''; elCaller.value = ''; elError.value = ''; elKeyword.value = '';
+  _offset = 0;
+  loadStats();
+  refreshErrorCount();
+  loadList();
+}
+
+function changePage(delta) {
+  const newOffset = _offset + delta * PAGE_SIZE;
+  if (newOffset < 0) return;
+  if (newOffset >= _filtered) return;
+  _offset = newOffset;
+  loadList();
+}
+
+async function loadAll() {
+  await Promise.all([loadStats(), loadFilters(), loadList()]);
+  document.getElementById('updatedTs').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN');
+}
+
+// 静默刷新：用户正在操作 / 诊断弹窗打开 / 表格内已聚焦时跳过
+// 只更新统计数字 + 增量插入新记录，不重置筛选下拉、不动表格滚动
+function _isUserBusy() {
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA')) return true;
+  const diag = document.getElementById('diagModal');
+  if (diag && diag.classList.contains('show')) return true;
+  return false;
+}
+
+async function silentRefresh() {
+  if (_isUserBusy()) return;
+  try {
+    await loadStats();
+    await refreshErrorCount();
+    await silentRefreshList();
+    document.getElementById('updatedTs').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN');
+  } catch (e) {
+    // 静默刷新失败不打扰用户
+  }
+}
+
+async function silentRefreshList() {
+  // 只在第一页时增量更新（翻页中不打扰）
+  if (_offset !== 0) return;
+  const params = new URLSearchParams({
+    limit: PAGE_SIZE,
+    offset: 0,
+    ...(elTask.value && { task_id: elTask.value }),
+    ...(elModel.value && { model: elModel.value }),
+    ...(elCaller.value && { caller: elCaller.value }),
+    ...(elError.value && { is_error: elError.value }),
+    ...(elKeyword.value.trim() && { keyword: elKeyword.value.trim() }),
+  });
+  const resp = await fetch('/api/llm/usage/detail?' + params);
+  const data = await resp.json();
+  _filtered = data.filtered || 0;
+  if (!data.records) return;
+
+  // 比对当前表格已有的 call_id，只追加新的
+  const existing = new Set(Array.from(tbody.querySelectorAll('tr[data-call-id]'))
+    .map(tr => tr.getAttribute('data-call-id')));
+  const newOnes = data.records.filter(r => r.call_id && !existing.has(r.call_id));
+
+  // 整体替换内容（前提：用户不在操作；DOM 没有焦点丢失风险）
+  if (newOnes.length > 0 || data.records.length !== existing.size) {
+    tbody.innerHTML = data.records.map(renderRow).join('');
+  }
+
+  const start = _offset + 1;
+  const end = Math.min(_offset + PAGE_SIZE, _filtered);
+  document.getElementById('pageInfo').textContent =
+    _filtered > 0 ? `第 ${start}-${end} 条 / 共 ${_filtered} 条` : '无记录';
+  document.getElementById('prevBtn').disabled = _offset <= 0;
+  document.getElementById('nextBtn').disabled = _offset + PAGE_SIZE >= _filtered;
+}
+
+async function loadStats() {
+  try {
+    // ★ 关键改造：根据当前会话筛选透传 task_id，让统计卡显示「该目标」消耗
+    const tid = elTask.value;
+    const url = tid ? ('/api/llm/usage?task_id=' + encodeURIComponent(tid)) : '/api/llm/usage';
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const isTaskScope = data.scope === 'task';
+
+    const totalInput = data.total_input_tokens || 0;
+    const totalOutput = data.total_output_tokens || 0;
+    const totalTokens = totalInput + totalOutput;
+    const totalSeconds = data.total_seconds || 0;
+
+    document.getElementById('s-total').textContent = (data.total_calls || 0).toLocaleString();
+    document.getElementById('s-total-sub').textContent = isTaskScope
+      ? `In ${fmtTokens(totalInput)} · Out ${fmtTokens(totalOutput)}`
+      : '';
+    document.getElementById('s-tokens').textContent = fmtTokens(totalTokens);
+    document.getElementById('s-tokens-sub').textContent = totalTokens > 0
+      ? `In ${((totalInput/totalTokens)*100).toFixed(0)}% · Out ${((totalOutput/totalTokens)*100).toFixed(0)}%`
+      : '';
+    document.getElementById('s-elapsed').textContent = totalSeconds > 3600
+      ? (totalSeconds/3600).toFixed(1) + 'h'
+      : totalSeconds > 60
+      ? (totalSeconds/60).toFixed(1) + 'min'
+      : totalSeconds.toFixed(0) + 's';
+
+    // 费用估算
+    const cost = calcCost(data.by_model || {});
+    document.getElementById('s-cost').textContent = fmtUsd(cost.totalUsd);
+    document.getElementById('s-cost-sub').textContent =
+      `≈ ${fmtCny(cost.totalCny)} (汇率 ${USD_TO_CNY})` +
+      (cost.unknown.length ? ` · ${cost.unknown.length} 个模型未配置价格` : '');
+
+    // 活跃会话卡 → 选定会话时换义为耗时窗口
+    const tasksEl = document.getElementById('s-tasks');
+    const tasksLabel = document.getElementById('s-tasks-label');
+    if (isTaskScope) {
+      // 显示该会话的活跃时间窗
+      const startedAt = data.started_at || 0;
+      const lastAt = data.last_at || 0;
+      if (startedAt && lastAt && lastAt > startedAt) {
+        const span = lastAt - startedAt;
+        tasksEl.textContent = span > 3600 ? (span/3600).toFixed(1) + 'h'
+          : span > 60 ? (span/60).toFixed(1) + 'min'
+          : span.toFixed(0) + 's';
+      } else {
+        tasksEl.textContent = '-';
+      }
+      tasksLabel.textContent = '会话时长';
+    } else {
+      tasksEl.textContent = Object.keys(data.by_task || {}).length;
+      tasksLabel.textContent = '活跃会话';
+    }
+
+    // 范围徽标
+    const tag = document.getElementById('scopeTag');
+    const desc = document.getElementById('scopeDesc');
+    if (isTaskScope) {
+      tag.textContent = '当前会话';
+      tag.className = 'scope-tag task';
+      const meta = _taskMeta[tid] || {};
+      const target = meta.target || '';
+      desc.textContent = target ? `目标: ${target}` : `task_id: ${tid}`;
+    } else {
+      tag.textContent = '全局';
+      tag.className = 'scope-tag';
+      desc.textContent = '所有任务汇总';
+    }
+
+    // 模型分项明细芯片（按 USD 降序，最多 5 个）
+    const breakdownEl = document.getElementById('modelBreakdown');
+    if (cost.breakdown.length === 0) {
+      breakdownEl.innerHTML = '';
+    } else {
+      breakdownEl.innerHTML = cost.breakdown.slice(0, 5).map(b => {
+        const tk = (b.inputTokens + b.outputTokens);
+        const priceTip = b.matched
+          ? `单价 In $${b.unitInput}/M · Out $${b.unitOutput}/M`
+          : '⚠ 价格未配置（按 0 计算）';
+        return `<span class="model-chip" title="${priceTip}\n输入 ${b.inputTokens.toLocaleString()} tok\n输出 ${b.outputTokens.toLocaleString()} tok\n${b.calls} 次调用">
+          ${b.model} · ${fmtTokens(tk)} · <span class="price">${fmtUsd(b.usd)}</span>${b.matched ? '' : ' ⚠'}
+        </span>`;
+      }).join('');
+    }
+  } catch (e) {
+    console.error('loadStats failed', e);
+  }
+}
+
+async function loadFilters() {
+  // 拉一次空筛选（拿到全集统计）
+  try {
+    const resp = await fetch('/api/llm/usage/detail?limit=1');
+    const data = await resp.json();
+    // 模型 / 调用方下拉
+    const fillSelect = (el, items, currentVal) => {
+      const cur = currentVal || el.value;
+      el.innerHTML = '<option value="">全部</option>' +
+        items.map(v => `<option value="${v}" ${v===cur?'selected':''}>${v}</option>`).join('');
+    };
+    fillSelect(elModel, data.models || []);
+    fillSelect(elCaller, data.callers || []);
+  } catch (e) { console.error('loadFilters', e); }
+  // 会话下拉单独从 by_task 拉
+  try {
+    const resp = await fetch('/api/llm/usage');
+    const data = await resp.json();
+    const byTask = data.by_task || {};
+    _taskMeta = byTask;  // 缓存供 renderRow 使用
+    // 按 last_at 倒序，最近的会话排在前面
+    const tasks = Object.entries(byTask)
+      .sort((a, b) => (b[1].last_at || 0) - (a[1].last_at || 0));
+    const cur = elTask.value;
+    elTask.innerHTML = '<option value="">全部</option>' +
+      tasks.map(([tid, info]) => {
+        const target = info.target || '';
+        const startedAt = info.started_at || 0;
+        let label;
+        if (target) {
+          // 去掉协议头，截断过长 URL
+          const cleanUrl = target.replace(/^https?:\/\//, '');
+          label = cleanUrl.length > 32 ? cleanUrl.slice(0, 30) + '...' : cleanUrl;
+          if (startedAt) {
+            const d = new Date(startedAt * 1000);
+            label += ` · ${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          }
+        } else if (startedAt) {
+          const d = new Date(startedAt * 1000);
+          label = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} · ${tid.split('_').slice(-1)[0]}`;
+        } else {
+          label = tid.slice(0, 28) + '...';
+        }
+        return `<option value="${tid}" ${tid===cur?'selected':''} title="${tid}">${label}</option>`;
+      }).join('');
+  } catch (e) { console.error(e); }
+
+  // 异常计数（抽离为独立函数，方便会话切换时单独刷新）
+  await refreshErrorCount();
+}
+
+// ★ 异常计数：跟随当前会话过滤；选了 task 就只算该会话的异常
+async function refreshErrorCount() {
+  try {
+    const tid = elTask.value;
+    const params = new URLSearchParams({ limit: 1, is_error: 'true' });
+    if (tid) params.set('task_id', tid);
+    const resp = await fetch('/api/llm/usage/detail?' + params);
+    const data = await resp.json();
+    document.getElementById('s-errors').textContent = data.filtered || 0;
+  } catch (e) { console.error('refreshErrorCount', e); }
+}
+
+async function loadList() {
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="10">加载中...</td></tr>';
+  const params = new URLSearchParams({
+    limit: PAGE_SIZE,
+    offset: _offset,
+    ...(elTask.value && { task_id: elTask.value }),
+    ...(elModel.value && { model: elModel.value }),
+    ...(elCaller.value && { caller: elCaller.value }),
+    ...(elError.value && { is_error: elError.value }),
+    ...(elKeyword.value.trim() && { keyword: elKeyword.value.trim() }),
+  });
+  try {
+    const resp = await fetch('/api/llm/usage/detail?' + params);
+    const data = await resp.json();
+    _filtered = data.filtered || 0;
+
+    if (!data.records || data.records.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="10">没有匹配的记录</td></tr>';
+    } else {
+      tbody.innerHTML = data.records.map(renderRow).join('');
+    }
+    // 分页信息
+    const start = _offset + 1;
+    const end = Math.min(_offset + PAGE_SIZE, _filtered);
+    document.getElementById('pageInfo').textContent =
+      _filtered > 0 ? `第 ${start}-${end} 条 / 共 ${_filtered} 条` : '无记录';
+    document.getElementById('prevBtn').disabled = _offset <= 0;
+    document.getElementById('nextBtn').disabled = _offset + PAGE_SIZE >= _filtered;
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10" style="color:#f38ba8">加载失败: ${e.message}</td></tr>`;
+  }
+}
+
+function renderRow(r) {
+  const escape = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const isErr = !!r.is_error;
+  const tokens = (r.input_tokens || 0) + (r.output_tokens || 0);
+  const elapsed = r.elapsed_s || 0;
+  const elapsedClass = elapsed > 30 ? 'slow' : elapsed < 5 ? 'fast' : '';
+  const callId = r.call_id || '-';
+  const callIdShort = callId.slice(0, 8);
+  const taskId = r.task_id || '';
+  // 显示可读的会话标识：目标 URL（去协议、截断）；没有则退回 task_id 末段
+  let taskDisplay = '-';
+  if (taskId) {
+    const meta = _taskMeta[taskId] || {};
+    if (meta.target) {
+      const clean = meta.target.replace(/^https?:\/\//, '');
+      taskDisplay = clean.length > 22 ? clean.slice(0, 20) + '…' : clean;
+    } else {
+      taskDisplay = taskId.split('_').slice(-1)[0];
+    }
+  }
+  const reqSummary = r.req_summary || (isErr ? '(异常调用)' : '-');
+  const time = r.time || '-';
+
+  return `
+    <tr class="${isErr ? 'is-error' : ''}" onclick="showDiag('${callId}')">
+      <td><span class="cell-id">${callIdShort}</span></td>
+      <td><span class="cell-id muted" title="${escape(taskId)}">${escape(taskDisplay)}</span></td>
+      <td>${escape(r.model || '-')}</td>
+      <td>${escape(r.caller || 'main')}</td>
+      <td>${isErr ? '<span class="cell-status error">异常</span>' : '<span class="cell-status ok">正常</span>'}</td>
+      <td><span class="cell-elapsed ${elapsedClass}">${elapsed.toFixed(1)}s</span></td>
+      <td><span class="cell-tokens">${tokens.toLocaleString()}</span></td>
+      <td><span class="cell-question" title="${escape(reqSummary)}">${escape(reqSummary)}</span></td>
+      <td><span class="cell-time">${escape(time)}</span></td>
+      <td><span class="cell-action">诊断 →</span></td>
+    </tr>
+  `;
+}
+
+async function showDiag(callId) {
+  if (!callId || callId === '-') return;
+  document.getElementById('diagOverlay').classList.add('show');
+  const body = document.getElementById('diagBody');
+  body.innerHTML = '<div style="text-align:center;color:#6c7086;padding:30px;">加载中...</div>';
+  try {
+    const resp = await fetch('/api/llm/usage/call/' + encodeURIComponent(callId));
+    const r = await resp.json();
+    if (r.error) {
+      body.innerHTML = `<div style="color:#f38ba8;padding:20px;">${r.error}</div>`;
+      return;
+    }
+    const escape = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const tokens = (r.input_tokens || 0) + (r.output_tokens || 0);
+    body.innerHTML = `
+      <div class="diag-grid">
+        <div class="lbl">对话 ID</div><div class="val">${escape(r.call_id || '-')}</div>
+        <div class="lbl">会话 ID</div><div class="val">${escape(r.task_id || '-')}</div>
+        <div class="lbl">模型</div><div class="val">${escape(r.model || '-')}</div>
+        <div class="lbl">调用方</div><div class="val">${escape(r.caller || 'main')}</div>
+        <div class="lbl">状态</div><div class="val">${r.is_error ? '<span style="color:#f38ba8">异常</span>' : '<span style="color:#a6e3a1">正常</span>'}</div>
+        <div class="lbl">输入 Token</div><div class="val">${(r.input_tokens||0).toLocaleString()}</div>
+        <div class="lbl">输出 Token</div><div class="val">${(r.output_tokens||0).toLocaleString()}</div>
+        <div class="lbl">总 Token</div><div class="val">${tokens.toLocaleString()}</div>
+        <div class="lbl">耗时</div><div class="val">${(r.elapsed_s||0).toFixed(2)}s</div>
+        <div class="lbl">含工具</div><div class="val">${r.has_tools ? '是' : '否'}</div>
+        <div class="lbl">发起时间</div><div class="val">${escape(r.time || '-')}</div>
+      </div>
+      ${r.is_error && r.error ? `
+        <div class="diag-section error">
+          <div class="sec-title">⚠ 错误信息</div>
+          <div class="sec-content">${escape(r.error)}</div>
+        </div>
+      ` : ''}
+      ${r.req_summary ? `
+        <div class="diag-section">
+          <div class="sec-title">📤 请求摘要 (最后一条 user/system)</div>
+          <div class="sec-content">${escape(r.req_summary)}</div>
+        </div>
+      ` : ''}
+      ${r.resp_summary ? `
+        <div class="diag-section">
+          <div class="sec-title">📥 响应摘要</div>
+          <div class="sec-content">${escape(r.resp_summary)}</div>
+        </div>
+      ` : ''}
+      <div style="text-align:center;color:#6c7086;font-size:11px;padding-top:8px;">
+        提示：完整请求/响应内容因隐私和容量原因仅记录前 300 字
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div style="color:#f38ba8;padding:20px;">加载失败: ${e.message}</div>`;
+  }
+}
+function closeDiag() { document.getElementById('diagOverlay').classList.remove('show'); }
+
+// ESC 关闭
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDiag(); });
+
+// 自动刷新（每 10 秒，静默——不打断用户操作）
+loadAll();
+setInterval(silentRefresh, 10000);
+</script>
+</body>
+</html>

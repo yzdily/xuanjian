@@ -1,0 +1,1431 @@
+{
+  "schema_version": 1,
+  "method": "crawl_round",
+  "sample_id": "crawl_round_anonymous_mockspa",
+  "recorded_at": "2026-08-14T23:39:59.780461+00:00",
+  "inputs": {
+    "role": "anonymous",
+    "login_info": null
+  },
+  "output": {
+    "role": "anonymous",
+    "pages": {
+      "http://127.0.0.1:9876": {
+        "url": "http://127.0.0.1:9876",
+        "title": "Mock SPA Admin",
+        "elements": [],
+        "forms": [],
+        "links": [],
+        "requests_during_load": [
+          {
+            "method": "GET",
+            "url": "http://127.0.0.1:9876/",
+            "resource_type": "document",
+            "post_data": "",
+            "headers": {
+              "upgrade-insecure-requests": "1",
+              "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+              "sec-ch-ua-mobile": "?0",
+              "sec-ch-ua-platform": "\"macOS\""
+            },
+            "status_code": 200,
+            "response_headers": {
+              "content-length": "3211",
+              "content-type": "text/html",
+              "date": "Fri, 14 Aug 2026 <TS> GMT",
+              "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+              "server": "SimpleHTTP/0.6 Python/3.10.11"
+            },
+            "response_body": ""
+          }
+        ]
+      }
+    },
+    "api_endpoints": {
+      "GET http://127.0.0.1:9876/": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/",
+        "resource_type": "document",
+        "post_data": "",
+        "headers": {
+          "upgrade-insecure-requests": "1",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": "\"macOS\""
+        },
+        "status_code": 200,
+        "response_headers": {
+          "content-length": "3211",
+          "content-type": "text/html",
+          "date": "Fri, 14 Aug 2026 <TS> GMT",
+          "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+          "server": "SimpleHTTP/0.6 Python/3.10.11"
+        },
+        "response_body": ""
+      },
+      "GET http://127.0.0.1:9876/js/api.js": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/js/api.js",
+        "resource_type": "fetch",
+        "post_data": "",
+        "headers": {
+          "sec-ch-ua-platform": "\"macOS\"",
+          "referer": "http://127.0.0.1:9876/login",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+          "sec-ch-ua-mobile": "?0"
+        },
+        "status_code": 200,
+        "response_headers": {
+          "content-length": "3675",
+          "date": "Fri, 14 Aug 2026 <TS> GMT",
+          "content-type": "application/javascript",
+          "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+          "server": "SimpleHTTP/0.6 Python/3.10.11"
+        },
+        "response_body": ""
+      },
+      "GET http://127.0.0.1:9876/js/auth.js": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/js/auth.js",
+        "resource_type": "fetch",
+        "post_data": "",
+        "headers": {
+          "sec-ch-ua-platform": "\"macOS\"",
+          "referer": "http://127.0.0.1:9876/login",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+          "sec-ch-ua-mobile": "?0"
+        },
+        "status_code": 200,
+        "response_headers": {
+          "content-length": "3184",
+          "date": "Fri, 14 Aug 2026 <TS> GMT",
+          "content-type": "application/javascript",
+          "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+          "server": "SimpleHTTP/0.6 Python/3.10.11"
+        },
+        "response_body": ""
+      },
+      "GET http://127.0.0.1:9876/js/realtime.js": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/js/realtime.js",
+        "resource_type": "fetch",
+        "post_data": "",
+        "headers": {
+          "sec-ch-ua-platform": "\"macOS\"",
+          "referer": "http://127.0.0.1:9876/login",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+          "sec-ch-ua-mobile": "?0"
+        },
+        "status_code": 200,
+        "response_headers": {
+          "content-length": "3010",
+          "date": "Fri, 14 Aug 2026 <TS> GMT",
+          "content-type": "application/javascript",
+          "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+          "server": "SimpleHTTP/0.6 Python/3.10.11"
+        },
+        "response_body": ""
+      },
+      "GET http://127.0.0.1:9876/js/app.js": {
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/js/app.js",
+        "resource_type": "fetch",
+        "post_data": "",
+        "headers": {
+          "sec-ch-ua-platform": "\"macOS\"",
+          "referer": "http://127.0.0.1:9876/login",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "sec-ch-ua": "\"HeadlessChrome\";v=\"149\", \"Chromium\";v=\"149\", \"Not)A;Brand\";v=\"24\"",
+          "sec-ch-ua-mobile": "?0"
+        },
+        "status_code": 200,
+        "response_headers": {
+          "content-length": "7195",
+          "date": "Fri, 14 Aug 2026 <TS> GMT",
+          "content-type": "application/javascript",
+          "last-modified": "Thu, 13 Aug 2026 <TS> GMT",
+          "server": "SimpleHTTP/0.6 Python/3.10.11"
+        },
+        "response_body": ""
+      }
+    },
+    "realtime_channels": [
+      {
+        "protocol": "websocket",
+        "channel_type": "websocket",
+        "method": "WEBSOCKET",
+        "url": "ws://127.0.0.1:9876/ws/chat",
+        "path": "/ws/chat",
+        "page_url": "http://127.0.0.1:9876/login",
+        "status_code": 0,
+        "discovered_by": "crawler_websocket",
+        "message_samples": [],
+        "test_strategy": "websocket_replay_or_browser"
+      },
+      {
+        "protocol": "websocket",
+        "channel_type": "websocket",
+        "method": "WEBSOCKET",
+        "url": "ws://127.0.0.1:9876/ws/status",
+        "path": "/ws/status",
+        "page_url": "http://127.0.0.1:9876/login",
+        "status_code": 0,
+        "discovered_by": "crawler_websocket",
+        "message_samples": [],
+        "test_strategy": "websocket_replay_or_browser"
+      },
+      {
+        "protocol": "sse",
+        "channel_type": "sse",
+        "method": "GET",
+        "url": "http://127.0.0.1:9876/api/sse/notifications",
+        "path": "/api/sse/notifications",
+        "status_code": 200,
+        "discovered_by": "crawler_response",
+        "event_names": [],
+        "response_sample": "",
+        "test_strategy": "sse_auth_and_leakage"
+      },
+      {
+        "protocol": "websocket",
+        "channel_type": "websocket",
+        "method": "WEBSOCKET",
+        "url": "wss://127.0.0.1:9876/ws/notifications",
+        "path": "/ws/notifications",
+        "page_url": "http://127.0.0.1:9876/login",
+        "status_code": 0,
+        "discovered_by": "crawler_websocket",
+        "message_samples": [],
+        "test_strategy": "websocket_replay_or_browser"
+      }
+    ],
+    "js_endpoints": [
+      "/users",
+      "/users/detail",
+      "/system/config",
+      "/export/data",
+      "/login",
+      "/api/...",
+      "/api/v1/dashboard",
+      "/api/public/health",
+      "/auth/login",
+      "/auth/userinfo",
+      "/auth/logout",
+      "/users/list",
+      "/users/detail",
+      "/users/create",
+      "/users/update",
+      "/users/delete",
+      "/system/config",
+      "/system/config",
+      "/graphql",
+      "/admin/logs",
+      "/gateway/",
+      "/api/v2",
+      "/import/data",
+      "/gateway/",
+      "/api/v1",
+      "/auth/login",
+      "/auth/userinfo",
+      "/auth/logout",
+      "/users/list",
+      "/users/create",
+      "/users/update",
+      "/users/delete",
+      "/api/v1/dashboard",
+      "/api/public/health",
+      "/admin/logs",
+      "/api/auth/login",
+      "/api/auth/login",
+      "/api/sse/notifications",
+      "/api/v1/dashboard/stream",
+      "/ws/status",
+      ".../users",
+      ".../users/detail",
+      ".../system/config",
+      ".../export/data",
+      ".../login",
+      ".../api/...",
+      ".../api/v1/dashboard",
+      ".../api/public/health",
+      ".../auth/login",
+      ".../auth/userinfo",
+      ".../auth/logout",
+      ".../users/list",
+      ".../users/create",
+      ".../users/update",
+      ".../users/delete",
+      ".../graphql",
+      ".../admin/logs",
+      ".../gateway/",
+      ".../api/v2",
+      ".../import/data",
+      ".../api/v1",
+      ".../api/auth/login",
+      ".../api/sse/notifications",
+      ".../api/v1/dashboard/stream",
+      ".../ws/status",
+      "/api/v1/users",
+      "/api/v1/users/detail",
+      "/api/v1/system/config",
+      "/api/v1/export/data",
+      "/api/v1/login",
+      "/api/v1/api/...",
+      "/api/v1/api/public/health",
+      "/api/v1/auth/login",
+      "/api/v1/auth/userinfo",
+      "/api/v1/auth/logout",
+      "/api/v1/users/list",
+      "/api/v1/users/create",
+      "/api/v1/users/update",
+      "/api/v1/users/delete",
+      "/api/v1/graphql",
+      "/api/v1/admin/logs",
+      "/api/v1/gateway/",
+      "/api/v1/api/v2",
+      "/api/v1/import/data",
+      "/api/v1/api/auth/login",
+      "/api/v1/api/sse/notifications",
+      "/api/v1/ws/status",
+      "/api/v2/users",
+      "/api/v2/users/detail",
+      "/api/v2/system/config",
+      "/api/v2/export/data",
+      "/api/v2/login",
+      "/api/v2/api/...",
+      "/api/v2/api/v1/dashboard",
+      "/api/v2/api/public/health",
+      "/api/v2/auth/login",
+      "/api/v2/auth/userinfo",
+      "/api/v2/auth/logout",
+      "/api/v2/users/list",
+      "/api/v2/users/create",
+      "/api/v2/users/update",
+      "/api/v2/users/delete",
+      "/api/v2/graphql",
+      "/api/v2/admin/logs",
+      "/api/v2/gateway/",
+      "/api/v2/import/data",
+      "/api/v2/api/v1",
+      "/api/v2/api/auth/login",
+      "/api/v2/api/sse/notifications",
+      "/api/v2/api/v1/dashboard/stream",
+      "/api/v2/ws/status"
+    ],
+    "js_analysis": {
+      "api_calls": [
+        {
+          "method": "UNKNOWN",
+          "path": "/users",
+          "source_file": "inline_script_0",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/users/detail",
+          "source_file": "inline_script_0",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/system/config",
+          "source_file": "inline_script_0",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/export/data",
+          "source_file": "inline_script_0",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/login",
+          "source_file": "inline_script_0",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": "/api/...",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "L_PATTERN\r  * - const BASE_URL = \"...\"          → _BASEURL_ASSIGN_PATTERN\r  * - fetch(\"/api/...\")               → _PATH_PATTERNS / API call extraction\r  * - axios.get(\"/api/...",
+          "params": [
+            "baseURL"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/dashboard",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "ta);\r }\r \r // 使用 fetch 的 API 调用（另一类模式）\r function fetchDashboard() {\r     return fetch(\"/api/v1/dashboard\", {\r         headers: {\r             \"Authorization\": \"Bearer \" + localStorage.g",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": "/api/public/health",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "turn res.json(); });\r }\r \r // 公开接口（不需要认证）\r function checkHealth() {\r     return fetch(\"/api/public/health\").then(function(res) { return res.json(); });\r }\r \r // GraphQL 端点\r function grap",
+          "params": [
+            "query"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "TH_PATTERNS） =====\r \r // 认证相关\r function login(username, password) {\r     return http.post(\"/auth/login\", { username: username, password: password });\r }\r \r function getUserInfo() {",
+          "params": [
+            "username",
+            "password",
+            "params"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/auth/userinfo",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "me: username, password: password });\r }\r \r function getUserInfo() {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/auth/logout",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "{\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/li",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/users/list",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/list\", { params: params });\r }\r \r function getUserDetail(id) {\r     return http.get(\"",
+          "params": [
+            "params",
+            "params",
+            "id",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/users/detail",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "sers/list\", { params: params });\r }\r \r function getUserDetail(id) {\r     return http.get(\"/users/detail\", { params: { id: id } });\r }\r \r function createUser(data) {\r     return http.po",
+          "params": [
+            "params",
+            "id",
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/users/create",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "detail\", { params: { id: id } });\r }\r \r function createUser(data) {\r     return http.post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/upda",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/users/update",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": ".post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/users/delete",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "sers/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(\"/users/delete\", { params: { id: id } });\r }\r \r // V2 版本 API（使用 httpV2 实例）\r function exportData",
+          "params": [
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/system/config",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "(\"/import/data\", file);\r }\r \r // 系统配置\r function getSystemConfig() {\r     return http.get(\"/system/config\");\r }\r \r function updateSystemConfig(data) {\r     return http.post(\"/system/conf",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": "/system/config",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "tp.get(\"/system/config\");\r }\r \r function updateSystemConfig(data) {\r     return http.post(\"/system/config\", data);\r }\r \r // 使用 fetch 的 API 调用（另一类模式）\r function fetchDashboard() {\r     ret",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": "/graphql",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "res.json(); });\r }\r \r // GraphQL 端点\r function graphqlQuery(query) {\r     return http.post(\"/graphql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http",
+          "params": [
+            "query",
+            "action"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/admin/logs",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "hql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http.get(\"/admin/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.pos",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/gateway/",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "in/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.post(\"/gateway/\" + service, { action: action });\r }",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/import/data",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/gateway/",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/auth/userinfo",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/auth/logout",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/users/list",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/users/create",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/users/update",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/users/delete",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/dashboard",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/public/health",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/admin/logs",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "context": "// ===== 登录/登出逻辑 =====\r \r function doLogin(username, password) {\r     return axios.post(\"/api/auth/login\", {\r         username: username,\r         password: password,\r     }).then(funct",
+          "params": [
+            "username",
+            "password"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/sse/notifications",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/dashboard/stream",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/ws/status",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../users",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../users/detail",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../system/config",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../export/data",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../login",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": ".../api/...",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] L_PATTERN\r  * - const BASE_URL = \"...\"          → _BASEURL_ASSIGN_PATTERN\r  * - fetch(\"/api/...\")               → _PATH_PATTERNS / API call extraction\r  * - axios.get(\"/api/...",
+          "params": [
+            "baseURL"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": ".../api/v1/dashboard",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ta);\r }\r \r // 使用 fetch 的 API 调用（另一类模式）\r function fetchDashboard() {\r     return fetch(\"/api/v1/dashboard\", {\r         headers: {\r             \"Authorization\": \"Bearer \" + localStorage.g",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": ".../api/public/health",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] turn res.json(); });\r }\r \r // 公开接口（不需要认证）\r function checkHealth() {\r     return fetch(\"/api/public/health\").then(function(res) { return res.json(); });\r }\r \r // GraphQL 端点\r function grap",
+          "params": [
+            "query"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": ".../auth/login",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] TH_PATTERNS） =====\r \r // 认证相关\r function login(username, password) {\r     return http.post(\"/auth/login\", { username: username, password: password });\r }\r \r function getUserInfo() {",
+          "params": [
+            "username",
+            "password",
+            "params"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": ".../auth/userinfo",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] me: username, password: password });\r }\r \r function getUserInfo() {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": ".../auth/logout",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/li",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": ".../users/list",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/list\", { params: params });\r }\r \r function getUserDetail(id) {\r     return http.get(\"",
+          "params": [
+            "params",
+            "params",
+            "id",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": ".../users/create",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] detail\", { params: { id: id } });\r }\r \r function createUser(data) {\r     return http.post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/upda",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": ".../users/update",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] .post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": ".../users/delete",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] sers/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(\"/users/delete\", { params: { id: id } });\r }\r \r // V2 版本 API（使用 httpV2 实例）\r function exportData",
+          "params": [
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": ".../graphql",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] res.json(); });\r }\r \r // GraphQL 端点\r function graphqlQuery(query) {\r     return http.post(\"/graphql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http",
+          "params": [
+            "query",
+            "action"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": ".../admin/logs",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] hql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http.get(\"/admin/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.pos",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": ".../gateway/",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] in/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.post(\"/gateway/\" + service, { action: action });\r }",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../api/v2",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../import/data",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../api/v1",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": ".../api/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "context": "[baseURL拼接] // ===== 登录/登出逻辑 =====\r \r function doLogin(username, password) {\r     return axios.post(\"/api/auth/login\", {\r         username: username,\r         password: password,\r     }).then(funct",
+          "params": [
+            "username",
+            "password"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../api/sse/notifications",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../api/v1/dashboard/stream",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": ".../ws/status",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/users",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/users/detail",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/system/config",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/export/data",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/login",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/api/...",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] L_PATTERN\r  * - const BASE_URL = \"...\"          → _BASEURL_ASSIGN_PATTERN\r  * - fetch(\"/api/...\")               → _PATH_PATTERNS / API call extraction\r  * - axios.get(\"/api/...",
+          "params": [
+            "baseURL"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/api/public/health",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] turn res.json(); });\r }\r \r // 公开接口（不需要认证）\r function checkHealth() {\r     return fetch(\"/api/public/health\").then(function(res) { return res.json(); });\r }\r \r // GraphQL 端点\r function grap",
+          "params": [
+            "query"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] TH_PATTERNS） =====\r \r // 认证相关\r function login(username, password) {\r     return http.post(\"/auth/login\", { username: username, password: password });\r }\r \r function getUserInfo() {",
+          "params": [
+            "username",
+            "password",
+            "params"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/auth/userinfo",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] me: username, password: password });\r }\r \r function getUserInfo() {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/auth/logout",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/li",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/users/list",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/list\", { params: params });\r }\r \r function getUserDetail(id) {\r     return http.get(\"",
+          "params": [
+            "params",
+            "params",
+            "id",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/users/create",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] detail\", { params: { id: id } });\r }\r \r function createUser(data) {\r     return http.post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/upda",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v1/users/update",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] .post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v1/users/delete",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] sers/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(\"/users/delete\", { params: { id: id } });\r }\r \r // V2 版本 API（使用 httpV2 实例）\r function exportData",
+          "params": [
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/graphql",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] res.json(); });\r }\r \r // GraphQL 端点\r function graphqlQuery(query) {\r     return http.post(\"/graphql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http",
+          "params": [
+            "query",
+            "action"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/admin/logs",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] hql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http.get(\"/admin/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.pos",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/gateway/",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] in/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.post(\"/gateway/\" + service, { action: action });\r }",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/api/v2",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/import/data",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/api/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "context": "[baseURL拼接] // ===== 登录/登出逻辑 =====\r \r function doLogin(username, password) {\r     return axios.post(\"/api/auth/login\", {\r         username: username,\r         password: password,\r     }).then(funct",
+          "params": [
+            "username",
+            "password"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/api/sse/notifications",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v1/ws/status",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/users",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/users/detail",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/system/config",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/export/data",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/login",
+          "source_file": "inline_script_0",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/api/...",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] L_PATTERN\r  * - const BASE_URL = \"...\"          → _BASEURL_ASSIGN_PATTERN\r  * - fetch(\"/api/...\")               → _PATH_PATTERNS / API call extraction\r  * - axios.get(\"/api/...",
+          "params": [
+            "baseURL"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/api/v1/dashboard",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ta);\r }\r \r // 使用 fetch 的 API 调用（另一类模式）\r function fetchDashboard() {\r     return fetch(\"/api/v1/dashboard\", {\r         headers: {\r             \"Authorization\": \"Bearer \" + localStorage.g",
+          "params": []
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/api/public/health",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] turn res.json(); });\r }\r \r // 公开接口（不需要认证）\r function checkHealth() {\r     return fetch(\"/api/public/health\").then(function(res) { return res.json(); });\r }\r \r // GraphQL 端点\r function grap",
+          "params": [
+            "query"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] TH_PATTERNS） =====\r \r // 认证相关\r function login(username, password) {\r     return http.post(\"/auth/login\", { username: username, password: password });\r }\r \r function getUserInfo() {",
+          "params": [
+            "username",
+            "password",
+            "params"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/auth/userinfo",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] me: username, password: password });\r }\r \r function getUserInfo() {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/auth/logout",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] {\r     return http.get(\"/auth/userinfo\");\r }\r \r function logout() {\r     return http.post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/li",
+          "params": [
+            "params",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/users/list",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] post(\"/auth/logout\");\r }\r \r // 用户管理\r function getUserList(params) {\r     return http.get(\"/users/list\", { params: params });\r }\r \r function getUserDetail(id) {\r     return http.get(\"",
+          "params": [
+            "params",
+            "params",
+            "id",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/users/create",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] detail\", { params: { id: id } });\r }\r \r function createUser(data) {\r     return http.post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/upda",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/v2/users/update",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] .post(\"/users/create\", data);\r }\r \r function updateUser(id, data) {\r     return http.put(\"/users/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(",
+          "params": [
+            "id",
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/v2/users/delete",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] sers/update\", { id: id, ...data });\r }\r \r function deleteUser(id) {\r     return http.delete(\"/users/delete\", { params: { id: id } });\r }\r \r // V2 版本 API（使用 httpV2 实例）\r function exportData",
+          "params": [
+            "params",
+            "id"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/graphql",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] res.json(); });\r }\r \r // GraphQL 端点\r function graphqlQuery(query) {\r     return http.post(\"/graphql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http",
+          "params": [
+            "query",
+            "action"
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/v2/admin/logs",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] hql\", { query: query });\r }\r \r // 管理后台接口\r function getAdminLogs() {\r     return http.get(\"/admin/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.pos",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/gateway/",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] in/logs\");\r }\r \r // 网关代理接口\r function callGateway(service, action) {\r     return http.post(\"/gateway/\" + service, { action: action });\r }",
+          "params": [
+            "action"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/import/data",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/api/v1",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "POST",
+          "path": "/api/v2/api/auth/login",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "context": "[baseURL拼接] // ===== 登录/登出逻辑 =====\r \r function doLogin(username, password) {\r     return axios.post(\"/api/auth/login\", {\r         username: username,\r         password: password,\r     }).then(funct",
+          "params": [
+            "username",
+            "password"
+          ]
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/api/sse/notifications",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/api/v1/dashboard/stream",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        },
+        {
+          "method": "UNKNOWN",
+          "path": "/api/v2/ws/status",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js",
+          "context": "[baseURL拼接] ",
+          "params": []
+        }
+      ],
+      "routes": [
+        {
+          "path": "/dashboard",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        },
+        {
+          "path": "/users",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        },
+        {
+          "path": "/users/detail",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        },
+        {
+          "path": "/system/config",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        },
+        {
+          "path": "/export/data",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        },
+        {
+          "path": "/login",
+          "component": "",
+          "meta": "table",
+          "source_file": "http://127.0.0.1:9876/js/app.js"
+        }
+      ],
+      "auth_patterns": [
+        {
+          "pattern_type": "token_storage",
+          "description": "前端 Storage Token key（localStorage/sessionStorage）",
+          "code_snippet": "auth_token",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "storage_keys": [
+            "auth_token"
+          ]
+        },
+        {
+          "pattern_type": "interceptor",
+          "description": "Axios/HTTP 请求拦截器（全局注入 Token/Cookie）",
+          "code_snippet": "http.interceptors.request.use(\r\n    function(config)",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "storage_keys": []
+        },
+        {
+          "pattern_type": "global_header",
+          "description": "全局 Authorization/Token Header 注入",
+          "code_snippet": "headers[\"Authorization\"] = \"Bearer \" + token",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "storage_keys": []
+        },
+        {
+          "pattern_type": "token_storage",
+          "description": "Token 存储/读取（localStorage/sessionStorage/cookie）",
+          "code_snippet": "localStorage.getItem(\"auth_token\")",
+          "source_file": "http://127.0.0.1:9876/js/api.js",
+          "storage_keys": [
+            "auth_token"
+          ]
+        },
+        {
+          "pattern_type": "token_storage",
+          "description": "前端 Storage Token key（localStorage/sessionStorage）",
+          "code_snippet": "auth_token, refresh_token, session_id, login_type",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "storage_keys": [
+            "auth_token",
+            "refresh_token",
+            "session_id",
+            "login_type"
+          ]
+        },
+        {
+          "pattern_type": "token_storage",
+          "description": "Token 存储/读取（localStorage/sessionStorage/cookie）",
+          "code_snippet": "sessionStorage.getItem(\"session_id\")",
+          "source_file": "http://127.0.0.1:9876/js/auth.js",
+          "storage_keys": [
+            "auth_token",
+            "refresh_token",
+            "session_id",
+            "login_type"
+          ]
+        }
+      ],
+      "sensitive_info": [
+        {
+          "info_type": "internal_url",
+          "value": "https://127.0.0.1:9876/api/v2/export/stream",
+          "context": "的 SSE\r var extSource = new EventSource(\"https://127.0.0.1:9876/api/v2/export/stream\");\r \r // ===== 辅助函数 =====\r \r function up",
+          "source_file": "http://127.0.0.1:9876/js/realtime.js"
+        }
+      ],
+      "source_maps": [],
+      "js_files_analyzed": 5,
+      "total_js_size": 17097,
+      "router_mode": "history",
+      "js_file_urls": [
+        "http://127.0.0.1:9876/js/api.js",
+        "http://127.0.0.1:9876/js/auth.js",
+        "http://127.0.0.1:9876/js/realtime.js",
+        "http://127.0.0.1:9876/js/app.js"
+      ],
+      "websocket_endpoints": [
+        "ws://...",
+        "wss://...",
+        "ws://127.0.0.1:9876/ws/chat",
+        "wss://127.0.0.1:9876/ws/notifications",
+        "/ws/status"
+      ],
+      "sse_endpoints": [
+        "/api/...",
+        "https://...",
+        "/api/sse/notifications",
+        "/api/v1/dashboard/stream",
+        "https://127.0.0.1:9876/api/v2/export/stream"
+      ],
+      "base_urls": [
+        "...",
+        "/api/v1",
+        "/api/v2"
+      ]
+    },
+    "login_success": false
+  },
+  "events": [],
+  "meta": {
+    "progress": [
+      "  [anonymous] 页面 1: http://127.0.0.1:9876",
+      "  [http://127.0.0.1:9876] 展开菜单...",
+      "  [http://127.0.0.1:9876] 发现 0 个菜单项, 1 个按钮",
+      "  [http://127.0.0.1:9876] 🔐 检测到登录页面，跳过菜单/按钮点击 (省略 0 菜单 + 1 按钮)，仅提取 API/表单",
+      "  [http://127.0.0.1:9876] 菜单项点击完成: 0/0",
+      "  [anonymous] 📦 JS 深度分析中...",
+      "  [anonymous] 📦 JS 分析完成: 5 个文件, 发现 111 个 API 路径, 6 个前端路由",
+      "  [anonymous] 爬取完成: 1 个页面, 5 条请求 (业务API: 0, 其他: 5)"
+    ]
+  },
+  "recipe": {
+    "runtime": "mock_spa",
+    "target": "http://127.0.0.1:9876",
+    "port": 9876,
+    "fast_mode": true,
+    "role": "anonymous",
+    "login_info": null
+  }
+}

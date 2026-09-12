@@ -1,0 +1,51 @@
+name: XuanJian Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 3 * * *'   # 每日 03:00 例行扫描
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: '目标 URL'
+        required: false
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run XuanJian scan with CI gate
+        # G8：含 High+ 漏洞或覆盖门控未过 → 退出码 1，流水线变红
+        run: |
+          python -m cli.main run --mode standard --ci-gate \
+            ${TARGET_URL:+--url "$TARGET_URL"}
+        env:
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+
+      - name: Upload SARIF to code-scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: data/scan_artifacts/${{ env.TASK_ID }}/report.sarif
+          category: xuanjian
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xuanjian-scan
+          path: |
+            data/scan_artifacts/
+            coverage-report/
