@@ -2,8 +2,8 @@
 
 **一个会操作浏览器、会抓包改包、会按照方法论执行、会自己验证漏洞的自动化渗透测试 Agent**
 
-> **v2.0 封板版** — 本仓库已冻结为稳定引擎基座，功能不再新增，仅接纳 bugfix 与安全补丁。
-> AI-native 安全测试平台（LLM/Agent/RAG 安全）已迁移至 [**鉴微 JianWei**](https://github.com/yzdily/jianwei)，由玄鉴引擎驱动。
+> **v2.0 稳定版** — 玄鉴是一个持续维护的开源智能渗透测试引擎。
+> LLM/Agent/RAG 安全测试能力在 [**鉴微 JianWei**](https://github.com/yzdily/jianwei) 中基于玄鉴引擎持续演进。
 > 详见 [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md)
 
 <p>

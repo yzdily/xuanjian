@@ -2,8 +2,8 @@
 
 > An autonomous penetration testing agent that drives a real browser, intercepts traffic, follows methodology, validates findings, and writes its own report — without ever forgetting a test step.
 
-**v2.0 Frozen Release** — this repository is now in maintenance mode. New features are frozen; only bug fixes and security patches are accepted.
-The AI-native security testing platform (LLM / Agent / RAG security) has moved to [**JianWei**](https://github.com/yzdily/jianwei), which is powered by the XuanJian engine.
+**v2.0 Stable** — XuanJian is an actively maintained open-source agentic security scanner.
+The AI-native security testing platform (LLM / Agent / RAG security) builds on the XuanJian engine at [**JianWei**](https://github.com/yzdily/jianwei).
 See [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md) · [中文文档](README.zh.md)
 
 <p>
@@ -365,7 +365,7 @@ Contributions of any kind are welcome:
 - 🔧 **Open a pull request** — code improvements, doc fixes
 - ⭐ **Star the repo** — help others find it
 
-> This repo is in maintenance mode (v2.0 frozen). New features are not accepted — only bug fixes and security patches. Methodology contributions via `skills_my/discovery/` or `skills_my/exploit/` are always welcome.
+> Methodology contributions via `skills_my/discovery/` or `skills_my/exploit/` are always welcome.
 
 ---
 
