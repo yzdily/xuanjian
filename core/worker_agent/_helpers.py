@@ -74,6 +74,14 @@ class _WorkerAgentHelpers:
                     return a
         return apis[0]
 
+    def _domain_checks(self, fp) -> list:
+        """testflow 域内派单：只取属于本 worker 域的 HTTP 待测项（domain 空则全部）。"""
+        pending = fp.get_http_pending()
+        if not getattr(self, "domain", ""):
+            return pending
+        from core.worker_agent._agent import check_matches_domain
+        return [c for c in pending if check_matches_domain(c.vuln_type, self.domain)]
+
     def _build_group_task_message(self, injected_skills: set[str]):
         """构建包含所有功能点 checklist 的任务消息。
 
@@ -98,11 +106,15 @@ class _WorkerAgentHelpers:
             f"这些功能点属于同一业务模块/流程，你需要**按顺序**逐个测试。\n",
             f"同组功能点共享上下文，前面的测试结果可以为后续测试提供线索。\n",
         ]
+        # ★ testflow 域内派单：任务单元为 (fp, domain) 对，只列该域相关项
+        if getattr(self, "domain", ""):
+            lines.insert(0, f"🎯 域内任务：本组只测 **{self.domain}** 域相关的 checklist 项，"
+                            f"其它域的项由其他执行者负责，不要越域测试。\n")
 
         total_checks = 0
         for i, fp in enumerate(self.features, 1):
-            http_checks = fp.get_http_pending()
-            browser_checks = fp.get_browser_pending()
+            http_checks = self._domain_checks(fp)
+            browser_checks = [] if getattr(self, "domain", "") else fp.get_browser_pending()
             total_checks += len(http_checks)
 
             lines.append(f"\n### 功能点 {i}/{len(self.features)}: {fp.name}")
@@ -385,11 +397,11 @@ class _WorkerAgentHelpers:
             log.warning("[%s] 加载 memory 模块失败，跳过历史经验注入: %s", self.worker_id, e)
             return
 
-        # 收集本组涉及的所有 vuln_type（去重，保持顺序）
+        # 收集本组涉及的所有 vuln_type（去重，保持顺序；域内派单只取本域项）
         vuln_types: list[str] = []
         seen: set[str] = set()
         for fp in self.features:
-            for c in fp.get_http_pending():
+            for c in self._domain_checks(fp):
                 if c.vuln_type and c.vuln_type not in seen:
                     seen.add(c.vuln_type)
                     vuln_types.append(c.vuln_type)
@@ -635,7 +647,7 @@ class _WorkerAgentHelpers:
         # 只注入第一个功能点的核心 SKILL（最多 2 个），其余由提示词引导按需加载
         if self.features:
             first_fp = self.features[0]
-            first_checks = first_fp.get_http_pending()
+            first_checks = self._domain_checks(first_fp)
             injected_count = 0
             MAX_INITIAL_SKILLS = 2  # 初始只注入 2 个，保持上下文轻量
 
@@ -705,7 +717,7 @@ class _WorkerAgentHelpers:
         # 收集所有需要但没预注入的 SKILL，在提示词中告知按需加载
         self._pending_skills: dict[str, str] = {}  # vuln_type → skill_name
         for fp in self.features:
-            for c in fp.get_http_pending():
+            for c in self._domain_checks(fp):
                 skill_name = VULN_TO_SKILL.get(c.vuln_type, "")
                 if skill_name and skill_name not in injected_skills:
                     self._pending_skills[c.vuln_type] = skill_name

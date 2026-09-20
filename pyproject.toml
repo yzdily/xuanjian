@@ -1,6 +1,6 @@
 [project]
 name = "xuanjian"
-version = "0.1.0"
+version = "2.0.0"
 description = "玄鉴 XuanJian — 智能化安全漏洞扫描器，AI驱动 + 本地规则双引擎"
 requires-python = ">=3.10"
 dependencies = [

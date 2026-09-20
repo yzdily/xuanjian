@@ -805,7 +805,8 @@ async def census_endpoint(
     from core.fast_scanner import _normalize_body
 
     if not session.sitemap:
-        return {}
+        session._census_summary = {}
+        return
     target_base = session.sitemap.target.rstrip("/")
     auth_headers: dict = dict((session_info or {}).get("headers", {}) or {})
 

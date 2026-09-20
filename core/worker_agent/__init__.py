@@ -13,6 +13,8 @@ from core.worker_agent._agent import (
     WORKER_COMPRESS_THRESHOLD,
     WORKER_SKIP_CIRCUIT_BREAKER_RATIO,
     WORKER_SKIP_CIRCUIT_BREAKER_MIN_ROUNDS,
+    DOMAIN_CHECK_KEYWORDS,
+    check_matches_domain,
     log,
 )
 
@@ -21,5 +23,7 @@ __all__ = [
     "WORKER_COMPRESS_THRESHOLD",
     "WORKER_SKIP_CIRCUIT_BREAKER_RATIO",
     "WORKER_SKIP_CIRCUIT_BREAKER_MIN_ROUNDS",
+    "DOMAIN_CHECK_KEYWORDS",
+    "check_matches_domain",
     "log",
 ]

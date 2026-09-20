@@ -38,6 +38,32 @@ WORKER_SKIP_CIRCUIT_BREAKER_RATIO = 0.5
 WORKER_SKIP_CIRCUIT_BREAKER_MIN_ROUNDS = 3
 
 
+# ============================================================
+# ★ testflow (fp, domain) 任务单元（v3 §五 Stage 3 R4）
+# 任务单元从 checklist 项改为 (fp, domain) 对：WorkerAgent 可被
+# engine.llm_dispatcher 按域派单，只测该域相关的 checklist 项。
+# ============================================================
+DOMAIN_CHECK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "authz": ("IDOR", "越权", "未授权", "Mass Assignment", "JWT"),
+    "csrf": ("CSRF",),
+    "injection": ("SQL注入", "XXE", "命令注入", "SSTI", "注入"),
+    "ssrf": ("SSRF",),
+    "upload": ("上传", "upload"),
+    "file": ("信息泄露", "用户枚举", "路径", "遍历", "下载", "导出"),
+    "business": ("金额", "数量", "订单", "支付", "竞态", "并发", "密码重置", "逻辑"),
+    "config": ("配置", "JS代码审计", "硬编码", "Swagger", "Actuator"),
+}
+
+
+def check_matches_domain(vuln_type: str, domain: str) -> bool:
+    """checklist 漏洞类型是否属于指定域（domain 为空/未知 = 全部匹配，向后兼容）。"""
+    keywords = DOMAIN_CHECK_KEYWORDS.get(domain or "")
+    if not keywords:
+        return True
+    vt = (vuln_type or "").lower()
+    return any(kw.lower() in vt for kw in keywords)
+
+
 class WorkerAgent(_WorkerAgentHelpers):
     """测试一组功能点的子 Agent。
 
@@ -57,12 +83,15 @@ class WorkerAgent(_WorkerAgentHelpers):
         # 兼容旧参数：单个功能点
         feature: FeaturePoint | None = None,
         on_event: Callable | None = None,
+        # ★ testflow：域内派单（空串 = 传统全 checklist 模式，行为不变）
+        domain: str = "",
     ):
         self.worker_id = worker_id
         self.llm = llm
         self.sitemap = sitemap
         self.session_info = session_info
         self.on_event = on_event
+        self.domain = domain or ""
 
         # 兼容：旧代码传 feature=单个功能点
         if features:
@@ -562,9 +591,10 @@ class WorkerAgent(_WorkerAgentHelpers):
         """
         if func_name == "worker_done":
             # 检查是否所有功能点的 checklist 都已标记
+            # ★ testflow 域内派单：只要求本域相关项完成（_domain_checks 已按域过滤）
             all_pending = []
             for fp in self.features:
-                pending = [c for c in fp.checklist if c.result == CheckResult.PENDING and not c.needs_browser]
+                pending = self._domain_checks(fp)
                 if pending:
                     all_pending.append((fp, [c for c in pending]))
 
@@ -634,7 +664,7 @@ class WorkerAgent(_WorkerAgentHelpers):
         # ★ checklist_mark 后检测：当前功能点是否所有 HTTP 项都完成了？
         # 如果完成 → 自动递增 _current_idx 推进到下一个功能点
         if func_name == "checklist_mark" and self.current_feature:
-            curr_pending = self.current_feature.get_http_pending()
+            curr_pending = self._domain_checks(self.current_feature)
             if not curr_pending:
                 # 当前功能点所有 HTTP 项已完成
                 old_idx = self._current_idx

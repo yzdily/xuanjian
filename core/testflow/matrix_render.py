@@ -57,45 +57,43 @@ def render_sparse_matrix(sitemap: Any, session: Any = None) -> str:
     lines.append("## 稀疏矩阵：漏洞域 × 接口（五态格）\n")
     if not rows:
         lines.append("（无归属功能点——本次扫描未启用 testflow 或无可用资产）\n")
-        lines.append("✓ verified  ⚠ pending/needs_follow_up  ✗ no_issue  ∅ ruled_out  — not_applicable")
-        return "\n".join(lines)
 
-    header = "| 接口 | " + " | ".join(cols) + " |"
-    sep = "|---" * (len(cols) + 1) + "|"
-    lines.append(header)
-    lines.append(sep)
-    for fp in rows:
-        method, path = "", (getattr(fp, "page_url", "") or "")
-        for api_str in (fp.related_apis or []):
-            parts = api_str.split(" ", 1)
-            if len(parts) == 2 and parts[0].isupper():
-                method, path = parts[0], parts[1]
-                break
-            if len(parts) == 1 and parts[0]:
-                method, path = "GET", parts[0]
-                break
-        status_map = getattr(fp, "domain_status", None) or {}
-        cells = []
-        for d in cols:
-            outcome = status_map.get(d)
-            cells.append(CELL_SYMBOLS.get(outcome, " ") if outcome else " ")
-        label = f"{method} {path}".strip() or getattr(fp, "name", "?")
-        lines.append(f"| {label[:60]} | " + " | ".join(cells) + " |")
+    if rows:
+        lines.append("| 接口 | " + " | ".join(cols) + " |")
+        lines.append("|---" * (len(cols) + 1) + "|")
+        for fp in rows:
+            method, path = "", (getattr(fp, "page_url", "") or "")
+            for api_str in (fp.related_apis or []):
+                parts = api_str.split(" ", 1)
+                if len(parts) == 2 and parts[0].isupper():
+                    method, path = parts[0], parts[1]
+                    break
+                if len(parts) == 1 and parts[0]:
+                    method, path = "GET", parts[0]
+                    break
+            status_map = getattr(fp, "domain_status", None) or {}
+            cells = []
+            for d in cols:
+                outcome = status_map.get(d)
+                cells.append(CELL_SYMBOLS.get(outcome, " ") if outcome else " ")
+            label = f"{method} {path}".strip() or getattr(fp, "name", "?")
+            lines.append(f"| {label[:60]} | " + " | ".join(cells) + " |")
 
     lines.append("")
     lines.append("✓ verified  ⚠ pending/needs_follow_up  ✗ no_issue  ∅ ruled_out  — not_applicable")
 
     # ---- 域级结论 ----
-    lines.append("")
-    lines.append("### 域级结论\n")
-    for d in cols:
-        covered = sum(1 for fp in rows
-                      if (getattr(fp, "domain_status", None) or {}).get(d) not in (None, MatrixOutcome.NOT_APPLICABLE.value))
-        reported = sum(1 for fp in rows
-                       if (getattr(fp, "domain_status", None) or {}).get(d) == MatrixOutcome.REPORTED.value)
-        pending = sum(1 for fp in rows
-                      if (getattr(fp, "domain_status", None) or {}).get(d) == MatrixOutcome.NEEDS_FOLLOW_UP.value)
-        lines.append(f"- **{d}**: 覆盖 {covered} 格 → 产出 {reported}（待跟进 {pending}）")
+    if rows and cols:
+        lines.append("")
+        lines.append("### 域级结论\n")
+        for d in cols:
+            covered = sum(1 for fp in rows
+                          if (getattr(fp, "domain_status", None) or {}).get(d) not in (None, MatrixOutcome.NOT_APPLICABLE.value))
+            reported = sum(1 for fp in rows
+                           if (getattr(fp, "domain_status", None) or {}).get(d) == MatrixOutcome.REPORTED.value)
+            pending = sum(1 for fp in rows
+                          if (getattr(fp, "domain_status", None) or {}).get(d) == MatrixOutcome.NEEDS_FOLLOW_UP.value)
+            lines.append(f"- **{d}**: 覆盖 {covered} 格 → 产出 {reported}（待跟进 {pending}）")
 
     # ---- 部分覆盖声明（G6 双数据源）----
     declarations: list[str] = []
@@ -111,7 +109,8 @@ def render_sparse_matrix(sitemap: Any, session: Any = None) -> str:
     auth_surface = str(getattr(session, "auth_surface_mode", "") or "") if session is not None else ""
     if auth_surface == "unauth_only":
         declarations.append("登录面未测：无有效凭证，auth 相位整相位 not_applicable（报告须声明）")
-    if getattr(session, "_testflow_waf_degrade", False) if session is not None else False:
+    _waf_degrade = bool(getattr(session, "_testflow_waf_degrade", False)) if session is not None else False
+    if _waf_degrade:
         declarations.append("WAF 降级：注入类域在拦截率超阈后降权执行，结论可能保守")
     if declarations:
         lines.append("")
