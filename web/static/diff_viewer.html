@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>玄鉴 Diff 版本对比 Viewer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+  h1 { font-size: 20px; margin-bottom: 16px; color: #38bdf8; }
+  .toolbar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  select, button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #334155; }
+  .diff-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel { background: #1e293b; border: 1px solid #334155; border-radius: 8px; overflow: hidden; }
+  .panel-header { padding: 12px; background: #0f172a; border-bottom: 1px solid #334155; font-weight: 600; color: #38bdf8; }
+  .panel-body { padding: 16px; max-height: 70vh; overflow-y: auto; font-size: 13px; line-height: 1.6; }
+  .empty { color: #64748b; text-align: center; padding: 60px 0; }
+  .finding { background: #0f172a; border-left: 3px solid #38bdf8; padding: 10px 14px; margin-bottom: 10px; border-radius: 4px; }
+  .finding.critical { border-left-color: #ef4444; }
+  .finding.high { border-left-color: #f97316; }
+  .finding.medium { border-left-color: #eab308; }
+  .finding.low { border-left-color: #22c55e; }
+  .finding .type { font-weight: 600; }
+  .finding .sev { font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-left: 8px; }
+  .sev.critical { background: #7f1d1d; }
+  .sev.high { background: #7c2d12; }
+  .sev.medium { background: #713f12; }
+  .sev.low { background: #14532d; }
+  .finding .url { color: #94a3b8; font-size: 12px; margin-top: 4px; }
+  .summary { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .summary h3 { color: #38bdf8; margin-bottom: 8px; }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; }
+  .stat { text-align: center; }
+  .stat .num { font-size: 28px; font-weight: 700; }
+  .stat .label { font-size: 12px; color: #94a3b8; }
+  .num.critical { color: #ef4444; }
+  .num.high { color: #f97316; }
+  .num.medium { color: #eab308; }
+  .num.low { color: #22c55e; }
+</style>
+</head>
+<body>
+<h1>玄鉴 Diff 版本对比 Viewer</h1>
+<div class="toolbar">
+  <select id="planA"><option value="">选择基线版本 A</option></select>
+  <select id="planB"><option value="">选择当前版本 B</option></select>
+  <button onclick="loadDiff()">对比</button>
+</div>
+<div id="summary" class="summary" style="display:none"></div>
+<div class="diff-container">
+  <div class="panel"><div class="panel-header">版本 A（基线）</div><div class="panel-body" id="panelA"><div class="empty">请选择版本</div></div></div>
+  <div class="panel"><div class="panel-header">版本 B（当前）</div><div class="panel-body" id="panelB"><div class="empty">请选择版本</div></div></div>
+</div>
+<script>
+async function loadPlans() {
+  try {
+    const r = await fetch('/api/diff-viewer/plans');
+    const plans = await r.json();
+    const a = document.getElementById('planA'), b = document.getElementById('planB');
+    plans.forEach(p => {
+      a.innerHTML += `<option value="${p}">${p}</option>`;
+      b.innerHTML += `<option value="${p}">${p}</option>`;
+    });
+  } catch(e) { document.getElementById('panelA').innerHTML = '<div class="empty">加载失败</div>'; }
+}
+function renderFindings(findings, elId) {
+  const el = document.getElementById(elId);
+  if (!findings || !findings.length) { el.innerHTML = '<div class="empty">无漏洞</div>'; return; }
+  el.innerHTML = findings.map(f => `
+    <div class="finding ${f.severity||'info'}">
+      <span class="type">${f.vuln_type||'unknown'}</span>
+      <span class="sev ${f.severity||'info'}">${f.severity||'info'}</span>
+      <div class="url">${f.url||''}</div>
+    </div>`).join('');
+}
+async function loadDiff() {
+  const a = document.getElementById('planA').value;
+  const b = document.getElementById('planB').value;
+  if (!a || !b) { alert('请选择两个版本'); return; }
+  try {
+    const r = await fetch(`/api/diff-viewer/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+    const data = await r.json();
+    renderFindings(data.plan_a || [], 'panelA');
+    renderFindings(data.plan_b || [], 'panelB');
+    const sum = document.getElementById('summary');
+    const stats = data.stats || {};
+    sum.style.display = 'block';
+    sum.innerHTML = `<h3>对比统计</h3><div class="stats">
+      <div class="stat"><div class="num critical">${stats.critical||0}</div><div class="label">Critical</div></div>
+      <div class="stat"><div class="num high">${stats.high||0}</div><div class="label">High</div></div>
+      <div class="stat"><div class="num medium">${stats.medium||0}</div><div class="label">Medium</div></div>
+      <div class="stat"><div class="num low">${stats.low||0}</div><div class="label">Low</div></div>
+      <div class="stat"><div class="num">${(data.new_findings||[]).length}</div><div class="label">新增</div></div>
+      <div class="stat"><div class="num">${(data.fixed_findings||[]).length}</div><div class="label">已修复</div></div>
+    </div>`;
+  } catch(e) { alert('对比失败: ' + e); }
+}
+loadPlans();
+</script>
+</body>
+</html>

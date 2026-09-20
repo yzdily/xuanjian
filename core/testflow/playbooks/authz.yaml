@@ -1,0 +1,39 @@
+# authz 域 playbook — 第一批（v3 §五）
+# 执行者三分：local=FastScanner 规则子集 / llm=worker SKILL 决策树 / tool=loops 存量模块
+# 每步产物 → build_verdict() → 矩阵格五态 → GATE-TRI 准入
+domain: authz
+steps:
+  - id: auth_matrix_multi_identity
+    executor: llm
+    description: 双/三身份矩阵（admin/user/low/noauth 对照）
+    skill: idor-broken-object-authorization
+  - id: idor_plus_minus_n
+    executor: llm
+    description: IDOR ±N 枚举（相邻 ID 采样）
+    skill: idor-broken-object-authorization
+    depth_chain: 1
+  - id: nonexistent_id_ownership
+    executor: llm
+    description: 不存在 ID + 业务成功码 = 无所有权校验坐实（hegui 教训，CWE-639）
+    skill: idor-broken-object-authorization
+  - id: mass_assignment
+    executor: llm
+    description: 批量赋值（role/isAdmin 字段注入）
+    skill: privilege-escalation
+  - id: write_endpoint_three_state
+    executor: tool
+    tool: authz_write
+    description: 写接口三态×多host（dry-run→G0 授权门）
+  - id: token_binding
+    executor: local
+    rules: [authz_token_binding]
+    description: token 与会话绑定验证（weiquan 教训）
+  - id: signature_tamper_replay
+    executor: local
+    rules: [signature_replay]
+    description: 签名篡改重放（dangan 教训）
+termination:
+  - depth >= 3
+  - rce_confirmed
+  - no_new_findings_in_layer
+verdict_ref: run_triage_gate

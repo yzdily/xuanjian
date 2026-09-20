@@ -1,0 +1,31 @@
+# upload 域 playbook — 第一批（v3 §五）
+# 域内链：上传→HTML/SVG 变体→可访问性→存储 XSS（同接口同域，不起全局 XSS 通道）
+domain: upload
+steps:
+  - id: probe_upload_basic
+    executor: local
+    rules: [upload_baseline]
+    description: 上传存在性 + 白名单探测
+  - id: try_html_svg_payload
+    executor: llm
+    description: HTML/SVG/Content-Type 变体绕过
+    depth_chain: 1
+    skill: insecure-file-upload
+  - id: verify_accessibility
+    executor: local
+    rules: [upload_readback]
+    description: 拉回上传文件真访问（text/html 响应头坐实）
+  - id: stored_xss_same_domain
+    executor: tool
+    tool: upload_chain
+    description: 新会话读回坐实存储型（CAPS 教训：新会话，非原会话）
+    depth_chain: 2
+  - id: chain_search_response_field_leak
+    executor: tool
+    tool: chain
+    description: 上传响应字段 → 值池联动喂下游接口
+termination:
+  - depth >= 3
+  - rce_confirmed
+  - no_new_findings_in_layer
+verdict_ref: run_triage_gate

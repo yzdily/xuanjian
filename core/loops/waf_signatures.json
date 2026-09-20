@@ -1,0 +1,192 @@
+{
+  "_comment": "§2.7 WAF 厂商签名库（配置驱动；identify_waf.py 优先加载本文件，失败回退内置副本）。修改此文件即可扩厂商，无需改代码。",
+  "version": "1.0",
+  "updated": "2026-09-19",
+  "vendors": {
+    "Cloudflare": {
+      "headers": {
+        "server": "cloudflare",
+        "cf-ray": ""
+      },
+      "body": []
+    },
+    "AWS WAF": {
+      "headers": {
+        "x-amzn-waf": "",
+        "x-aws-waf": ""
+      },
+      "body": []
+    },
+    "ModSecurity": {
+      "headers": {
+        "server": "mod_security"
+      },
+      "body": [
+        "mod_security",
+        "not acceptable"
+      ]
+    },
+    "Akamai": {
+      "headers": {
+        "x-akamai": ""
+      },
+      "body": [
+        "akamai"
+      ]
+    },
+    "Imperva": {
+      "headers": {
+        "x-iinfo": ""
+      },
+      "body": [
+        "incapsula"
+      ]
+    },
+    "F5 BIG-IP": {
+      "headers": {
+        "server": "big-ip"
+      },
+      "body": [
+        "the requested url was rejected"
+      ]
+    },
+    "Sucuri": {
+      "headers": {
+        "x-sucuri-id": ""
+      },
+      "body": [
+        "sucuri"
+      ]
+    },
+    "SafeDog": {
+      "headers": {
+        "server": "safedog"
+      },
+      "body": [
+        "safedog"
+      ]
+    },
+    "YunSuo": {
+      "headers": {},
+      "body": [
+        "yunsuo",
+        "云锁"
+      ]
+    },
+    "360": {
+      "headers": {},
+      "body": [
+        "360webscan",
+        "360网站卫士"
+      ]
+    },
+    "Alibaba Cloud WAF": {
+      "headers": {
+        "server": "aqs"
+      },
+      "body": [
+        "aliyun",
+        "waf"
+      ]
+    },
+    "Tencent Cloud WAF": {
+      "headers": {},
+      "body": [
+        "tencent",
+        "waf.tencent"
+      ]
+    },
+    "Huawei Cloud WAF": {
+      "headers": {},
+      "body": [
+        "huawei",
+        "huaweicloud"
+      ]
+    },
+    "DenyAll": {
+      "headers": {},
+      "body": [
+        "denyall"
+      ]
+    },
+    "Naxsi": {
+      "headers": {},
+      "body": [
+        "naxsi"
+      ]
+    },
+    "Wallarm": {
+      "headers": {
+        "x-wallarm": ""
+      },
+      "body": []
+    },
+    "Reblaze": {
+      "headers": {
+        "x-reblaze": ""
+      },
+      "body": []
+    },
+    "Citrix NSP": {
+      "headers": {
+        "server": "citrix"
+      },
+      "body": []
+    },
+    "Varnish": {
+      "headers": {
+        "server": "varnish"
+      },
+      "body": []
+    },
+    "Profense": {
+      "headers": {},
+      "body": [
+        "profense"
+      ]
+    },
+    "Powerful": {
+      "headers": {},
+      "body": [
+        "powerful"
+      ]
+    },
+    "Airlock": {
+      "headers": {},
+      "body": [
+        "airlock"
+      ]
+    },
+    "Barracuda": {
+      "headers": {
+        "server": "barracuda"
+      },
+      "body": []
+    }
+  },
+  "suggested_tamper": {
+    "Cloudflare": [
+      "space2comment",
+      "random_case"
+    ],
+    "ModSecurity": [
+      "versioned_comment",
+      "random_comments"
+    ],
+    "SafeDog": [
+      "space2comment",
+      "equal_to_like"
+    ],
+    "YunSuo": [
+      "random_comments",
+      "random_case"
+    ]
+  },
+  "block_status": [
+    403,
+    406,
+    418,
+    429,
+    503
+  ]
+}

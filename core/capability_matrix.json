@@ -1,0 +1,170 @@
+{
+  "version": "1.0",
+  "source": "§0.1 红线 + 产品方案 §2.4 + 技术方案 §4/§6",
+  "seal_rule": "全 L0-L3 项均有 pytest 覆盖 + CI 绿方可封板（gate_seal）",
+  "tiers": [
+    {
+      "level": "L0",
+      "name": "基础设施红线",
+      "items": [
+        {
+          "id": "L0-1",
+          "name": "零外部依赖",
+          "dod": "新增/移植项纯 stdlib 重写，复用 HttpClient/VulnFinding/SCRIPT_REGISTRY，禁 pip install sqlmap/XSStrike",
+          "test_globs": ["tests/unit/test_layer_lint.py", "tests/unit/test_a_grade_hoists.py"]
+        },
+        {
+          "id": "L0-2",
+          "name": "单一事实源 + 授权护栏",
+          "dod": "端点清单单一事实源；CLI 统一 --scope-file；无授权→告警降级；越域/过期→阻断",
+          "test_globs": ["tests/unit/test_prompts_single_source.py", "tests/unit/test_auth_gate.py"]
+        },
+        {
+          "id": "L0-3",
+          "name": "不破坏覆盖率审计",
+          "dod": "不得改 SKILL.md 的每接口全覆盖表述；coverage_ledger 审计不破坏",
+          "test_globs": ["tests/unit/test_coverage_ledger.py", "tests/unit/test_coverage_integration.py"]
+        },
+        {
+          "id": "L0-4",
+          "name": "发布去标识化卡点",
+          "dod": "对外发布前过 7 项去标识化卡点（全量去标识/无真实密钥/无真实 host）",
+          "test_globs": ["tests/unit/test_deidentify_gate.py"]
+        }
+      ]
+    },
+    {
+      "level": "L1",
+      "name": "核心扫描基座",
+      "items": [
+        {
+          "id": "L1-1",
+          "name": "FastScanner 规则引擎 + 检查表注册",
+          "dod": "YAML 规则 + 硬编码兜底；检查表 all_rules 注册新 _check_* 方法",
+          "test_globs": ["tests/unit/test_fast_scanner_priority.py", "tests/unit/test_framework_scan.py"]
+        },
+        {
+          "id": "L1-2",
+          "name": "误报治理 11 铁律",
+          "dod": "_fp_filters 11 函数：_normalize_body/_bodies_similar/_is_waf_block_page/_is_business_deny 等",
+          "test_globs": ["tests/unit/test_false_positive_manager.py"]
+        },
+        {
+          "id": "L1-3",
+          "name": "WAF 检测 + 熔断",
+          "dod": "连续封禁阈值熔断；identify_waf 厂商归因；waf_bypass 三态验证",
+          "test_globs": ["tests/unit/test_identify_waf.py", "tests/unit/test_waf_bypass.py"]
+        },
+        {
+          "id": "L1-4",
+          "name": "业务码门 + 三态判定",
+          "dod": "BUSINESS_DENY_PATTERNS + verdict confirmed/observed/inferred",
+          "test_globs": ["tests/unit/test_three_state_verdict.py", "tests/unit/test_business_code_keys.py"]
+        }
+      ]
+    },
+    {
+      "level": "L2",
+      "name": "方法论铁律 + 专项探针",
+      "items": [
+        {
+          "id": "L2-1",
+          "name": "verdict 三道门 + High/Critical 6 条门",
+          "dod": "FindingVerdict dataclass + 三道门；evaluate_high_critical 6 条门未过降级",
+          "test_globs": ["tests/unit/test_verdict.py", "tests/unit/test_high_critical_gate.py"]
+        },
+        {
+          "id": "L2-2",
+          "name": "覆盖闸门 L6-L10 + L-NOVEL",
+          "dod": "coverage_gate.run_coverage_gate 任一 ERROR 阻断交付",
+          "test_globs": ["tests/unit/test_coverage_gate.py"]
+        },
+        {
+          "id": "L2-3",
+          "name": "跨域链路登记 + F13 spawner",
+          "dod": "chained_finding 跨域链路；hypothesis_spawner 下游验证子 agent 入队",
+          "test_globs": ["tests/unit/test_chained_finding.py", "tests/unit/test_hypothesis_spawner.py"]
+        },
+        {
+          "id": "L2-4",
+          "name": "SSO/IDOR/上传/XSS 专项",
+          "dod": "sso_auth_probe Token↔主体绑定；idor_probe CRUD+签名；upload_exploit L1-L5；deep_xss L1-L5 漏斗",
+          "test_globs": [
+            "tests/unit/test_sso_auth_probe.py",
+            "tests/unit/test_idor_probe.py",
+            "tests/unit/test_upload_exploit.py",
+            "tests/unit/test_deep_xss.py"
+          ]
+        },
+        {
+          "id": "L2-5",
+          "name": "方法论铁律（8 探针）",
+          "dod": "config_switch/write_risk/llm_state_machine/pii_grade/auth_survey/weakpwd/signature/fp_governance",
+          "test_globs": [
+            "tests/unit/test_config_switch_probe.py",
+            "tests/unit/test_write_risk_probe.py",
+            "tests/unit/test_llm_state_machine_probe.py",
+            "tests/unit/test_pii_grade.py",
+            "tests/unit/test_auth_survey.py",
+            "tests/unit/test_weakpwd_verify.py",
+            "tests/unit/test_signature_enforcement.py",
+            "tests/unit/test_fp_governance.py"
+          ]
+        },
+        {
+          "id": "L2-6",
+          "name": "GATE-4 报告硬门",
+          "dod": "gate4 报告硬门 + 未覆盖声明",
+          "test_globs": ["tests/unit/test_gate4.py"]
+        }
+      ]
+    },
+    {
+      "level": "L3",
+      "name": "绕过闭环 + Phase 2 合规",
+      "items": [
+        {
+          "id": "L3-1",
+          "name": "注入绕过原语 + tamper_chain",
+          "dod": "injection_tamper 28+ 可组合原语 + generate_variants",
+          "test_globs": ["tests/unit/test_injection_tamper.py"]
+        },
+        {
+          "id": "L3-2",
+          "name": "WAF 厂商签名 + 绕过覆盖率账本",
+          "dod": "identify_waf 23 家厂商签名；bypass_coverage 矩阵渲染",
+          "test_globs": ["tests/unit/test_identify_waf.py", "tests/unit/test_bypass_coverage.py"]
+        },
+        {
+          "id": "L3-3",
+          "name": "§2.8 P1 补检 9 项",
+          "dod": "nosql/expression/403_bypass/user_enum/captcha_leak/mass_assignment/host_header/graphql_abuse/race_condition",
+          "test_globs": ["tests/unit/test_checks_supplement.py"]
+        },
+        {
+          "id": "L3-4",
+          "name": "能力成熟度 + 去标识化 + 多租户 + 知识包",
+          "dod": "capability_matrix 自检；deidentify_gate 7 卡点；tenant_isolation A/B 重放；skill_loader 五段按需注入",
+          "test_globs": [
+            "tests/unit/test_capability_matrix.py",
+            "tests/unit/test_deidentify_gate.py",
+            "tests/unit/test_tenant_isolation.py",
+            "tests/unit/test_skill_loader.py"
+          ]
+        },
+        {
+          "id": "L3-5",
+          "name": "§2.8 P2 13 类 + 批次 3 4 类 + P2 注入绕过 3 项",
+          "dod": "XSLT/CSV/CRLF/原型链/H2/HPP/点击劫持/CSP/缓存欺骗/WebSocket/SAML/子域接管/依赖混淆 + 请求走私/JNDI/反序列化/OAuth-OIDC + context_generator/chain_search/sig_version",
+          "test_globs": [
+            "tests/unit/test_checks_p2.py",
+            "tests/unit/test_loops_batch3.py",
+            "tests/unit/test_context_generator.py",
+            "tests/unit/test_chain_search.py",
+            "tests/unit/test_sig_version.py"
+          ]
+        }
+      ]
+    }
+  ]
+}

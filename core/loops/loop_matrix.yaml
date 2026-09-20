@@ -1,0 +1,159 @@
+# F4.1 — 漏洞深度 LOOP 矩阵定义
+# 每个 trigger 定义一个 depth_chain：表层发现 → 自动下游深挖
+# 终止条件命中即停止，防止无限递归
+
+loops:
+  # ========== 框架级 ==========
+
+  - trigger: actuator_exposure
+    description: "/actuator/* 端点暴露"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: scan_all_actuator_endpoints
+        endpoints: [env, beans, mappings, heapdump, loggers,
+                    configprops, threaddump, health, metrics,
+                    scheduledtasks, conditions]
+        endpoint_template: "GET /actuator/{sub}"
+      - step: extract_creds_from_env
+        targets: [password, jdbc.url, datasource, secret, key]
+        upgrade_to: heapdump_dump
+      - step: heapdump_download_extract
+        upgrade_to: shiro_cipherKey OR db_password
+        max_size_mb: 100
+    termination: [heapdump_unreachable, cipherKey_failed, rce_confirmed]
+
+  - trigger: shiro_remmeberme_active
+    description: "Shiro rememberMe Cookie 检测 deleteMe 标志"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: detect_rememberme_active
+      - step: extract_cipher_key
+        sources: [default_kPH+bIxk5D2deZiIxcaaaA==, heapdump, env]
+      # ↓↓↓ C 类利用步骤：auto: false = 引擎停下产出人工确认节点，绝不自动执行。
+      #     该标记由矩阵声明（引擎不硬编码步骤名单）；硬开关 XJ_LOOP_AUTO_EXPLOIT 为二次兜底。
+      #     manual 块回答三问（why=为什么停 / ready=已具备什么条件 / actions=我能做什么）。
+      - step: construct_deserialization_payload
+        auto: false
+        manual:
+          why: "该步骤属利用类操作（构造 Shiro 反序列化载荷），默认不自动执行"
+          ready: ["rememberMe 活跃", "cipherKey 已取得", "目标 URL 可用"]
+          ready_keys: [rememberme_active, shiro_key, base_url]
+          actions: ["复制复现指引", "在终端手动执行", "标记不适用"]
+      - step: validate_rce
+        auto: false
+        manual:
+          why: "该步骤属利用类操作（对目标验证 RCE），默认不自动执行"
+          ready: ["反序列化载荷已构造", "cipherKey 可用", "目标 URL 可用"]
+          ready_keys: [shiro_key, base_url]
+          actions: ["复制复现指引", "在终端手动执行", "标记不适用"]
+    termination: [key_unobtainable, payload_failed, rce_confirmed]
+
+  - trigger: heapdump_leak
+    description: "/actuator/heapdump 200 且大小 > 1MB"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: download_heapdump
+        max_size_mb: 100
+      - step: string_scan_secrets
+        patterns: [password, jdbc, secret, cipherKey, AKID, SKID]
+      - step: cross_ref_with_findings
+    termination: [download_failed, scan_complete]
+
+  - trigger: actuator_env_leak
+    description: "/actuator/env 含敏感字段"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: extract_all_secrets
+        patterns: [password, jdbc.url, datasource.password,
+                   spring.datasource, redis.password,
+                   mongodb.uri, kafka.sasl]
+      - step: test_cred_usability
+      - step: report_internal_services
+    termination: [all_fields_extracted, encrypted_uncrackable]
+
+  - trigger: param_config_leak
+    description: "一次性返回大量参数的接口"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: list_all_params
+        endpoints_pattern: [getPara*, getConfig*, querConfig*, getParamConfig*]
+      - step: filter_sensitive
+        hints: [password, secret, jdbc, url, user, token, key,
+               ftp.password, oauth2.client.secret, jdbcUrl, paramName,
+               paramValue, client.secret]
+      - step: classify_severity
+        rules:
+          plaintext_password: Critical
+          secret_key: Critical
+          db_connection_string: High
+    termination: [all_params_scanned]
+
+  - trigger: unauthenticated_read
+    description: "未授权可读 API"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: try_write_operations
+        methods: [POST, PUT, DELETE]
+      - step: try_admin_endpoints
+      - step: try_sensitive_resources
+    termination: [write_blocked, write_succeeded]
+
+  - trigger: path_normalization_bypass
+    description: "../ 或 URL 编码绕过"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: enumerate_all_variants
+        variants:
+          - "/.//<path>"
+          - "/../<path>"
+          - "/<path>/../"
+          - "/%2e%2e/<path>"
+          - "//<path>"
+          - "/<path>;/"
+          - "/%2e%2e///..///"
+          - "/<path>/..;/"
+      - step: compare_status_codes
+      - step: report_variants_work
+    termination: [variants_exhausted]
+
+  # ========== 业务级 ==========
+
+  - trigger: vertical_privilege_escalation
+    description: "403→200 + 返回敏感数据"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: enumerate_all_user_ids
+      - step: cross_user_read_write
+      - step: try_admin_only_endpoints
+    termination: [all_ids_tested, blocked]
+
+  - trigger: sqli_possible
+    description: "注入试探 500 错误"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: distinguish_injection_vs_error
+        check: 500_error_with_payload_echo
+      - step: try_waf_bypass_primitives
+        primitives_ref: waf_bypass_primitives.yaml#sql_injection_primitives
+      - step: confirm_with_blind
+    termination: [waf_bypassed, confirmed, ruled_out]
+
+  - trigger: ssrf_possible
+    description: "SSRF 可疑"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: try_internal_targets
+        targets: [169.254.169.254, 127.0.0.1, 192.168.0.1]
+      - step: try_protocol_smuggling
+        protocols: [gopher://, dict://, file://]
+      - step: try_aws_metadata_endpoints
+    termination: [internal_blocked, aws_blocked, confirmed]
+
+  - trigger: xss_possible
+    description: "XSS 可疑"
+    spawn_pattern: validation_agent
+    depth_chain:
+      - step: exclude_500_error_echo
+      - step: exclude_error_message_field
+      - step: confirm_in_data_field
+    termination: [confirmed, ruled_out]

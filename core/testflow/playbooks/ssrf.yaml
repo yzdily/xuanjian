@@ -1,0 +1,23 @@
+# ssrf 域 playbook — 第一批（v3 §五）
+domain: ssrf
+steps:
+  - id: oob_callback
+    executor: local
+    rules: [ssrf_oob]
+    description: OOB 回调坐实（非 banner 猜测）
+  - id: internal_metadata
+    executor: llm
+    description: 内网元数据端点（169.254.169.254 / 100.100.100.200）
+    skill: ssrf-server-side-request-forgery
+  - id: protocol_smuggling
+    executor: llm
+    description: 协议走私（gopher/file/dict）
+    skill: ssrf-server-side-request-forgery
+  - id: waf_bypass_coverage
+    executor: tool
+    tool: bypass
+    description: WAF 绕过变体（WAF 预检命中 waf_masked 时降 Info）
+termination:
+  - depth >= 2
+  - no_new_findings_in_layer
+verdict_ref: run_triage_gate

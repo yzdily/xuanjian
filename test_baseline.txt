@@ -1,0 +1,454 @@
+﻿FFFFFF.EEEEEEEE......................................................... [  5%]
+........................................................................ [ 11%]
+...................................................................FF... [ 17%]
+........................................................................ [ 22%]
+........................................................................ [ 28%]
+........................................................................ [ 34%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 51%]
+........................................................................ [ 56%]
+........................................................................ [ 62%]
+........................................................................ [ 68%]
+........................................................................ [ 73%]
+........................................................................ [ 79%]
+........................................................................ [ 85%]
+..................................................F..................... [ 90%]
+........................................................................ [ 96%]
+python : C:\Users\45963\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\lib\site-packages\coverage\re
+port_core.py:113: CoverageWarning: Couldn't parse Python file 'D:\xuanjian-main\core\worker_agent.py' (couldnt-parse); 
+see https://coverage.readthedocs.io/en/7.15.2/messages.html#warning-couldnt-parse
+At line:15 char:3712
++ ... njian-main; python -m pytest -m "not slow and not e2e and not llm" -- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\45963\...g-couldnt-parse:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  coverage._warn(msg, slug="couldnt-parse")
+..............................................                           [100%]
+=================================== ERRORS ====================================
+______________________ ERROR at setup of test_base_urls _______________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 122
+  def test_base_urls(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:122
+______________________ ERROR at setup of test_websocket _______________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 130
+  def test_websocket(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:130
+_________________________ ERROR at setup of test_sse __________________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 138
+  def test_sse(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:138
+______________________ ERROR at setup of test_api_calls _______________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 146
+  def test_api_calls(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:146
+________________________ ERROR at setup of test_routes ________________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 168
+  def test_routes(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:168
+_____________________ ERROR at setup of test_router_mode ______________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 178
+  def test_router_mode(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:178
+____________________ ERROR at setup of test_auth_patterns _____________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 191
+  def test_auth_patterns(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:191
+______________________ ERROR at setup of test_crawl_data ______________________
+file D:\xuanjian-main\tests\mock_spa\test_js_analysis.py, line 219
+  def test_crawl_data(result: JSAnalysisResult) -> bool:
+E       fixture 'result' not found
+>       available fixtures: _asyncio_loop_factory, _class_scoped_runner, _function_scoped_runner, _module_scoped_runner, _package_scoped_runner, _session_scoped_runner, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, capteesys, cov, doctest_namespace, event_loop_policy, fake_clock, fast_scanner, fp_manager, fp_memory_store, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, http_target, make_response, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, route_request, sample_target, subtests, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+D:\xuanjian-main\tests\mock_spa\test_js_analysis.py:219
+================================== FAILURES ===================================
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 1: 无认证访问受保护接口[0m
+[1m============================================================[0m
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 2: 公开接口无认证访问[0m
+[1m============================================================[0m
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 3: 登录 + Cookie 注入[0m
+[1m============================================================[0m
+
+  3a: 登录获取 Cookie
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 4: Bearer Token 注入[0m
+[1m============================================================[0m
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 5: 错误凭证验证[0m
+[1m============================================================[0m
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。
+
+During handling of the above exception, another exception occurred:
+E   urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+---------------------------- Captured stdout call -----------------------------
+
+[1m============================================================[0m
+[1m  测试 6: 认证态结构验证 (模拟 _auto_extract_auth_state)[0m
+[1m============================================================[0m
+urllib\request.py:1351: urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+E   assert 0 >= 1
+     +  where 0 = len([])
+---------------------------- Captured stderr setup ----------------------------
+11:49:55 [I] pentest_agent.fast_scanner: 从 rules 加载了 27 条规则
+11:49:55 [I] pentest_agent.fast_scanner: [FastScanner] 加载了 27 条 YAML 规则
+----------------------------- Captured log setup ------------------------------
+INFO     pentest_agent.fast_scanner:_rules_loader.py:63 从 rules 加载了 27 条规则
+INFO     pentest_agent.fast_scanner:_engine.py:164 [FastScanner] 加载了 27 条 YAML 规则
+---------------------------- Captured stderr call -----------------------------
+11:49:55 [I] pentest_agent.fast_scanner: [SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: http://t.com/api/profile
+------------------------------ Captured log call ------------------------------
+INFO     pentest_agent.fast_scanner:_checks_auth.py:87 [SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: http://t.com/api/profile
+D:\xuanjian-main\tests\test_fast_scanner_detection.py:176: assert 0 >= 1
+E   assert False
+     +  where False = any(<generator object TestUnauthorized.test_high_when_sensitive_data_leaked.<locals>.<genexpr> at 0x000001B7880D5310>)
+---------------------------- Captured stderr setup ----------------------------
+11:49:55 [I] pentest_agent.fast_scanner: 从 rules 加载了 27 条规则
+11:49:55 [I] pentest_agent.fast_scanner: [FastScanner] 加载了 27 条 YAML 规则
+----------------------------- Captured log setup ------------------------------
+INFO     pentest_agent.fast_scanner:_rules_loader.py:63 从 rules 加载了 27 条规则
+INFO     pentest_agent.fast_scanner:_engine.py:164 [FastScanner] 加载了 27 条 YAML 规则
+---------------------------- Captured stderr call -----------------------------
+11:49:55 [I] pentest_agent.fast_scanner: [SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: http://t.com/api/users/me
+------------------------------ Captured log call ------------------------------
+INFO     pentest_agent.fast_scanner:_checks_auth.py:87 [SCAN] Unauth | 去认证 200 但响应体为公开数据，跳过: http://t.com/api/users/me
+D:\xuanjian-main\tests\test_fast_scanner_detection.py:188: assert False
+E   assert 3 == 5
+D:\xuanjian-main\tests\unit\test_supplemental_test_agent.py:126: assert 3 == 5
+============================== warnings summary ===============================
+tests/mock_spa/test_cookie_injection.py::test_spa_fallback_decision
+  C:\Users\45963\AppData\Roaming\TRAE SOLO CN\ModularData\ai-agent\vm\tools\python\lib\site-packages\_pytest\python.py:171: PytestReturnNotNoneWarning: Test functions should return None, but tests/mock_spa/test_cookie_injection.py::test_spa_fallback_decision returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.10.11-final-0 _______________
+
+Name                                         Stmts   Miss Branch BrPart  Cover   Missing
+----------------------------------------------------------------------------------------
+core\__init__.py                                 0      0      0      0   100%
+core\analyze_worker.py                         163    145     62      0     8%   36-88, 105-116, 132-180, 184-245, 251-292, 313-339
+core\api_doc_discovery.py                      249    249    128      0     0%   14-564
+core\asset_mapping.py                          123    123     28      0     0%   8-306
+core\auth.py                                   225    176     64      3    18%   56, 62-74, 99, 104-105, 115-120, 129-148, 153, 161, 167-179, 184-188, 197-208, 216-245, 258-282, 295-322, 333-339, 344-351, 366-387, 399-423
+core\auto_crawler.py                             2      0      0      0   100%
+core\browse_worker.py                         1140   1140    602      0     0%   13-2028
+core\browse_worker\__init__.py                  10      0      0      0   100%
+core\browse_worker\_ledger.py                  260    239    152      0     5%   21-31, 34-91, 95-152, 155, 158-159, 162-176, 179-184, 187-207, 210-216, 219-223, 226-232, 235-286, 289-291, 294-302, 318, 321-336, 339-361, 364-374
+core\browse_worker\_menu_grouper.py            302    293    176      0     2%   18-83, 88-97, 102-107, 112-118, 123-172, 194-303, 318-536
+core\browse_worker\_menu_parser.py             360    330    170      0     6%   43-44, 49-62, 66-70, 74-84, 88-92, 96-105, 109-134, 139-151, 155-165, 169-210, 215-234, 238-281, 286-305, 317-386, 424-613, 618-628
+core\browse_worker\_worker.py                  230    208    104      0     7%   53-69, 74-144, 153-449, 460-511
+core\browser_resolver.py                        81     81     56      0     0%   9-168
+core\business_understanding.py                 461     88    238     60    75%   59, 65-68, 79->94, 85, 116-117, 123-127, 128->114, 137->135, 153, 155, 161, 164->167, 167->170, 182, 189, 191->198, 195-196, 200-204, 217, 222-224, 250, 259-261, 274, 299-301, 311->345, 336-343, 360-367, 386, 415, 430-446, 452-466, 477, 484, 527-528, 536->549, 544-545, 561->568, 566, 583, 590->597, 598->614, 607->611, 615->633, 622, 634->668, 639, 656, 669->700, 674, 683->688, 687, 688->690, 690->693, 691->693, 694-696, 701->722, 710, 723->736, 737->748, 742, 749->775, 756, 771-772
+core\captcha_solver.py                         358    358    142      0     0%   22-641
+core\compliance_report.py                      106    106     22      0     0%   8-239
+core\config.py                                  80     24     12      1    62%   156-162, 593-606, 615-624
+core\config_runtime.py                          64      2     30      0    98%   71-72
+core\context.py                                117     15     36      7    84%   110->113, 163-171, 199, 202, 210->209, 215, 226, 232-234
+core\crawl_merger.py                           148     40     50      4    70%   50-51, 71-97, 106-125, 171->170, 235-245
+core\crawler\__init__.py                         3      0      0      0   100%
+core\crawler\_blocklist.py                       1      0      0      0   100%
+core\crawler\crawler_core.py                  1537   1489    590      0     2%   106-157, 177-235, 266-334, 345-347, 351, 356, 367, 371-372, 385-441, 508-518, 521-522, 526, 539, 558-565, 569-629, 633-1619, 1627-1657, 1664-3520
+core\crawler\form_mixin.py                      65     57     24      0     9%   22-96, 101-118
+core\crawler\login_mixin.py                    362    326    104      6    10%   25, 40-105, 117-178, 183-508, 515, 534-535, 537, 542, 547, 552, 556, 572-654, 663-691
+core\crawler\menu_ranker.py                    120     86     80      0    18%   415-418, 422-425, 438-516, 528-546, 566-569, 574-575
+core\crawler\models.py                          38      0      0      0   100%
+core\crawler\result_builder_mixin.py           453    435    236      0     3%   43-58, 71-94, 98-123, 127-187, 192-799
+core\crawler\scope_mixin.py                    131    123     86      0     4%   21-44, 48-58, 72-117, 127-159, 172-225
+core\crawler\spa_mixin.py                      223    203     62      0     7%   88-239, 254-281, 311-489, 510-567, 587-659, 668, 681-736
+core\crawler\timeouts.py                       104     82     20      0    18%   72-74, 78-83, 87-104, 107, 110, 130-159, 182-224
+core\crawler\url_filter_mixin.py               112    104     56      0     5%   29-49, 56-89, 100-123, 133-200
+core\credential_injector.py                    387    387    106      0     0%   19-722
+core\crypto_engine.py                          344    300    126      0     9%   49, 53, 65-166, 171-217, 222-243, 248-337, 341-354, 359-379, 384-404, 411-425, 429-430, 434-439, 443-462, 467-492, 498-506, 510-521, 527-536, 540-552, 558-565, 569-582
+core\crypto_replay\__init__.py                   5      0      0      0   100%
+core\crypto_replay\applier.py                   77     26     26      6    65%   33-36, 40-46, 57-59, 72-78, 86, 89-97, 124->123, 127->123
+core\crypto_replay\learner.py                   26      1      6      1    94%   37
+core\crypto_replay\models.py                    71      0     14      3    96%   45->47, 52->57, 81->80
+core\crypto_replay\register.py                  18      0      2      0   100%
+core\crypto_replay\store.py                     68     14     14      3    79%   26, 52-54, 60, 67-69, 75, 87-88, 100-102
+core\cwe_mapping.py                             36      3     16      3    88%   82, 118, 125->127, 132
+core\di.py                                      22      0      2      0   100%
+core\diff\__init__.py                            4      0      0      0   100%
+core\diff\differ.py                            120      5     46      7    93%   112, 129, 137->142, 142->125, 214, 239, 271
+core\diff\models.py                             50      2      0      0    96%   88, 95
+core\diff\register.py                           20      2      4      1    88%   34-35
+core\diff\regression.py                         64     10     18      3    77%   83, 112-114, 129-132, 175-176
+core\diff\snapshot.py                          109     25     24      8    75%   63, 68-69, 75, 107-109, 118-119, 143-145, 155, 161, 166, 169, 173-174, 184, 187-189, 201-203
+core\dir_scanner.py                            487    487    196      0     0%   21-1343
+core\dir_scanner\__init__.py                     7      0      0      0   100%
+core\dir_scanner\_constants.py                  19      0      0      0   100%
+core\dir_scanner\_models.py                     52      0      0      0   100%
+core\dir_scanner\_scanner.py                   389     65    180     40    79%   86, 89, 98, 183-184, 186->192, 189-190, 208->238, 219-233, 268, 274-276, 301, 321, 332->334, 344, 350, 368, 380, 404, 410, 442-444, 455-456, 482-484, 501, 504, 535-539, 576, 579, 581, 584, 588, 593, 601, 609-611, 636, 638->642, 650, 670, 672, 682, 703, 721, 732
+core\dir_scanner\_wordlist.py                   35      6     16      2    84%   54-58, 61
+core\events.py                                  65      4      8      1    93%   55, 116-117, 121
+core\false_positive_manager.py                 105     13     18      4    86%   78-83, 87-95, 164->154, 172, 177->176
+core\fast_scanner.py                          1694   1694    882      0     0%   23-4266
+core\fast_scanner\__init__.py                    7      0      0      0   100%
+core\fast_scanner\_checks_auth.py              297    184    164     25    34%   54, 65, 76-77, 80-81, 83->127, 92-93, 98-113, 160, 180, 210-216, 252, 255, 260->321, 263-264, 270, 273, 282, 289, 291, 294->267, 318, 328-430, 434-528, 546, 554-568, 594-598, 603->601, 607, 612-632, 645-769
+core\fast_scanner\_checks_injection.py         320    199    196     20    35%   56, 75, 104->155, 117->155, 134, 140, 172, 176-197, 201-235, 239-274, 279-460, 464-575, 595, 601->584, 619-638, 679, 682, 726, 729, 740
+core\fast_scanner\_checks_server.py            232    182    126      7    19%   35-148, 176, 179, 195, 209-220, 234-255, 266-311, 347, 351, 380-505, 515-562, 575-660
+core\fast_scanner\_constants.py                 21      0      0      0   100%
+core\fast_scanner\_engine.py                   401    217    154     11    41%   145-153, 163->exit, 165-167, 184->179, 198-204, 212-220, 223-233, 252-423, 428, 434, 464-567, 622-624, 636-638, 648-650, 664-666, 676, 689-690, 718-719, 747-750, 785->780
+core\fast_scanner\_entry.py                     16     10      2      0    33%   33-41, 51-56, 70-84
+core\fast_scanner\_fp_filters.py               149      9     98     12    91%   51->78, 66->59, 82, 130, 132, 144, 167, 189, 205->207, 256, 268, 284
+core\fast_scanner\_models.py                    47      0      0      0   100%
+core\fast_scanner\_rules_loader.py              25      8      8      2    64%   45, 49-51, 58-61
+core\fast_scanner\_sitemap_integration.py      197    180    100      1     6%   31-180, 194-272, 287-357, 365-401, 411
+core\form_api_bridge.py                         51      2     24      0    97%   70-71
+core\fp_rate_tracker.py                         75      5     14      1    93%   28-29, 37-38, 89
+core\fuzz\__init__.py                            3      0      0      0   100%
+core\fuzz\base.py                              156     70     58      3    43%   37-43, 147, 168-194, 220, 224-230, 245-271, 295-302, 306-318, 323->328, 326, 328->330
+core\fuzz\concurrent.py                         68     41     14      0    35%   31-37, 51-53, 83-145, 173-177
+core\fuzz\race_condition.py                     79      0     26      1    99%   210->222
+core\fuzz\registry.py                           51     31      8      0    34%   27-29, 33-43, 47-48, 55-58, 65-92, 103, 107, 113-115
+core\fuzz\sqli.py                              592    592    278      0     0%   25-1259
+core\fuzz\waf_bypass.py                         88     88     34      0     0%   20-292
+core\harm_validation\__init__.py                10      0      0      0   100%
+core\harm_validation\_render_helpers.py        282    177    112     24    37%   31->29, 35-37, 40-45, 60, 66, 70, 75, 80, 83, 95-96, 105-211, 220, 230, 247, 251, 257, 261-262, 264-265, 267-268, 270-271, 280-288, 291-292, 303, 316->319, 328-342, 395-464
+core\harm_validation\context.py                273    101    132     29    59%   28, 30, 32, 38-40, 78-112, 125-142, 153, 163-164, 171-193, 196->203, 198-201, 223-224, 251, 271, 298, 310-311, 339-347, 374-380, 419->425, 420->419, 428->426, 434-439, 448->452, 453->462, 456->455, 463->471, 466->465, 476, 481-483, 496-501, 513, 529, 531-532
+core\harm_validation\exploit.py                 84     73     34      0     9%   60-222
+core\harm_validation\parser.py                 178      1     92      9    96%   42->48, 61->68, 71->77, 133->124, 231->230, 243, 247->240, 304->235, 311->309
+core\harm_validation\render.py                 533    146    162     43    68%   28, 50->48, 82->194, 126-131, 143-144, 156-157, 168-169, 176->178, 178->180, 186, 187->190, 194->216, 202->205, 208->210, 216->236, 236->242, 310, 313, 326, 337-342, 372, 380-382, 389, 394-395, 403, 415->413, 421-543, 580, 584, 585->587, 588, 590, 637->643, 642, 644->647, 658-659, 661-662, 676-686, 706-716, 749, 751, 754->757, 761->766, 769-775
+core\harm_validation\tools.py                  148    103     64      7    27%   34-126, 137-175, 184-246, 262-308, 369, 371, 373, 376-384, 393, 396, 398
+core\harm_validation\validator.py              209    151     80      9    25%   100-105, 141-142, 145-146, 149, 176-200, 230, 245, 249, 266-267, 274-297, 315-323, 340-382, 412-653
+core\intent.py                                 377    183    214     46    48%   44-98, 109-120, 126-133, 138-145, 163, 166, 185, 194, 197, 205-212, 227, 233, 237, 240->231, 256->252, 259->261, 292->332, 306-330, 332->336, 337->344, 338->337, 362, 364-367, 372-402, 416-445, 459-491, 553, 565, 576, 584->597, 589, 594, 598, 605->609, 606->605, 610, 614-619, 625-626, 648, 652, 675, 686, 698, 705->707, 708, 717-719, 725->728, 729->733, 740-742, 744, 750-751, 757, 765, 769
+core\js_analyzer.py                            821    821    430      0     0%   14-1937
+core\js_analyzer\__init__.py                    10      0      0      0   100%
+core\js_analyzer\_analyzer.py                   45     39     14      0    10%   36-111
+core\js_analyzer\_cache.py                     144    132     72      0     6%   29-37, 48-80, 95-107, 112, 142-310
+core\js_analyzer\_crawl_data.py                 82     15     42     17    74%   69, 72, 75, 79, 86, 94->108, 97->101, 98->97, 102, 103->108, 105-106, 140, 156-159, 174->181, 178, 191, 199
+core\js_analyzer\_extractors.py                334    290    224      3    10%   80-189, 221-274, 281-316, 326-354, 363-371, 380, 381->exit, 394->392, 402-419, 428-444, 455-465, 480-507, 520-533, 547-588, 594-629, 635-642
+core\js_analyzer\_llm.py                       117    106     54      0     6%   47-72, 81-131, 156-264
+core\js_analyzer\_models.py                     42      0      0      0   100%
+core\js_analyzer\_page.py                       60     52     24      0    10%   31-134
+core\js_analyzer\_patterns.py                   29      0      0      0   100%
+core\lesson_extractor.py                        49      3     18      0    96%   103-105
+core\llm.py                                   1028   1028    416      0     0%   8-2048
+core\llm\__init__.py                            15      0      0      0   100%
+core\llm\_client.py                            278    205    114      7    24%   34-45, 48-58, 62, 103-139, 146-166, 188, 220->227, 243, 249, 254, 256-285, 288, 291-440, 448-534, 538-546
+core\llm\_config.py                            263     59    104     17    75%   58, 87-88, 94, 97->113, 156, 159, 162, 244, 248->250, 254-255, 258-259, 275-278, 294-334, 346-347, 362-363, 368-369, 401-403, 478-479, 483-484, 504->501, 509, 514-515
+core\llm\_context.py                            31      3     10      4    83%   51->exit, 60, 64, 67
+core\llm\_crypto.py                             62     23     14      3    63%   38-40, 43, 61-67, 84-89, 94-102
+core\llm\_monitor.py                           100      9     24      2    91%   42, 162-170
+core\llm\_parse.py                             103     19     50     10    77%   27, 35, 53-54, 56-57, 67->50, 119->124, 124->134, 128->134, 130-131, 135-142, 159-162
+core\llm\_pool.py                              124    106     58      0    10%   15-27, 33-39, 42, 45, 64-95, 99, 111-147, 158-209, 216-234, 238-251
+core\llm\_response_cache.py                     62      1     16      1    97%   48
+core\llm\_tokens.py                             50      1     26      1    97%   141
+core\log.py                                    100      7     16      5    90%   42, 60-62, 78->82, 84, 99, 208
+core\memory.py                                 248     23    106     16    89%   75, 78-81, 159, 184-185, 193-194, 200, 207-208, 246, 268, 291, 322, 399, 401, 405, 411->410, 413, 422, 426->425, 430, 455->457
+core\packet_merger.py                          532    504    248      0     4%   48-65, 73, 101-118, 123-136, 145-173, 194-227, 242-349, 358-409, 424-454, 476-541, 563-637, 653-735, 765-824, 829-842, 856-872, 877-889, 905-938, 955-966
+core\parallel\__init__.py                        5      0      0      0   100%
+core\parallel\_orchestrator_helpers.py         322    305    132      0     4%   40-49, 64-205, 216-229, 245-258, 274-335, 345-377, 382-384, 393-431, 448-561
+core\parallel\batch_test.py                    635    609    302      1     3%   46-121, 154-299, 316-626, 641-778, 796-980, 999-1033
+core\parallel\grouping.py                      109     80     38      4    24%   33->40, 37->33, 51-70, 91-92, 100-204
+core\parallel\orchestrator.py                  958    941    468      0     1%   58-777, 786-921, 926-1000, 1006-1495
+core\parallel\session_info.py                   54     48     18      0     8%   25-94
+core\poc_generator.py                          139    139     44      0     0%   8-292
+core\port_scanner.py                           128    128     28      0     0%   8-272
+core\prompts\__init__.py                        22      4      4      2    77%   31, 37, 53, 67
+core\prompts\phase1_user.py                     26     17      6      0    28%   26, 40, 59-65, 84-85, 139-156, 178, 197-201
+core\prompts\phases.py                           7      0      0      0   100%
+core\realtime_protocols.py                      98      0     42      0   100%
+core\realtime_worker.py                        361    361    150      0     0%   16-697
+core\reconcile.py                              228     64    120     23    68%   64, 75, 99, 103, 123, 133, 149, 151-152, 188, 190, 196-197, 210-215, 222, 228->235, 233, 250, 256-287, 327-328, 347-348, 361->360, 378->383, 380->379, 384-385, 388->387, 390->387, 394-399, 404
+core\replay\__init__.py                          5      0      0      0   100%
+core\replay\emit_helper.py                      36     25     12      0    23%   36-44, 68-89, 114-135
+core\replay\frame.py                            63      4      2      1    92%   62->68, 86-91
+core\replay\miner.py                            84     11     28      6    85%   40, 44, 47, 73->82, 76, 79->73, 111, 142->122, 165, 168-170, 184-185
+core\replay\recorder.py                         31      3      2      1    88%   33->35, 113-128
+core\replay\register.py                         21      0      6      0   100%
+core\replay\store.py                           123     20     38      9    82%   89-91, 100-101, 111->110, 114->117, 117->121, 136->149, 141, 144-147, 150->156, 153-154, 162, 166, 169, 173-174, 186-188
+core\report_templates.py                        94     94     36      0     0%   12-272
+core\scan_store.py                             143    121     46      0    12%   30-35, 44-47, 51-82, 91-115, 120-133, 138-163, 168-179, 184-186, 191-202, 215-297, 302-308
+core\scan_strategies.py                        209     48     50      7    75%   88->91, 216->226, 218, 221->226, 339-341, 345-381, 389-417, 421-424, 526-540
+core\scripted_scan\__init__.py                   3      0      0      0   100%
+core\scripted_scan\export_openapi.py            58     47     22      0    14%   18-23, 27-33, 37-49, 53-98
+core\scripted_scan\runner.py                    96     81     36      0    11%   23-37, 42-55, 59-72, 76-83, 92-153
+core\scripted_scan\types.py                     81     45     46      6    38%   50, 66-80, 84-93, 98, 108-111, 113, 117, 119, 145-160
+core\session\__init__.py                        14      0      0      0   100%
+core\session\advance_mixin.py                  136     26     76     15    74%   71->80, 83, 92, 123->129, 125, 129->142, 132, 142->153, 145, 154->215, 170-171, 177->179, 202-212, 222-243, 252->254, 258->exit
+core\session\analyze_mixin.py                  210    199    118      0     3%   28-140, 154-229, 233-280, 295-399
+core\session\approval_mixin.py                  93     48     14      0    42%   56-57, 77-118, 129-139, 147-151, 169-171, 174, 178, 182-186, 192, 201
+core\session\base.py                           190    154     60      0    14%   39-84, 89, 93-94, 98-147, 150-151, 156-159, 163-167, 171-198, 201-203, 207-239, 243, 246-258, 263-272
+core\session\chat_loop.py                     1205   1165    528      0     3%   80-220, 273-287, 295-308, 312-2222
+core\session\explore_mixin.py                  323    307    132      0     4%   32-65, 77-228, 233-241, 245-291, 302-482, 490-636
+core\session\focused_test_mixin.py             178    160     70      0     7%   50-202, 216-243, 249-264, 274-281, 297-358, 374-392
+core\session\hermes_mixin.py                    20     15      4      0    21%   23-42
+core\session\idle_mixin.py                     152    139     72      0     6%   46-237, 249-271
+core\session\report_mixin.py                   136     65     46      8    52%   22-31, 35-42, 51-104, 126, 130-131, 147, 165-166, 202, 207-208, 225-226, 229, 231, 236, 242, 244->250, 278-299
+core\session\utils_mixin.py                    147    124     74      1    12%   45-79, 93-133, 136-143, 157->159, 160-161, 167-205, 224-334
+core\severity_rules.py                          52      3     20      3    92%   82, 122, 142
+core\sitemap\__init__.py                         4      0      0      0   100%
+core\sitemap\api_samples.py                    521    495    252      0     3%   23, 39-61, 84-214, 238-274, 289-317, 331-503, 511-557, 568-692, 698-731, 736-749, 755-820, 824-828
+core\sitemap\constants.py                        9      0      0      0   100%
+core\sitemap\coverage.py                       323    156    160     29    46%   37, 62, 67, 86-91, 101->100, 115->exit, 130->exit, 145->144, 148->144, 154, 170-173, 175-176, 178, 211-216, 224-229, 240-243, 273-326, 329-333, 354-359, 361-363, 368-374, 386, 414-415, 417, 420->423, 425-427, 429-430, 438-440, 456-465, 471-505, 509-545
+core\sitemap\feature_gen.py                    889    736    582     39    15%   40-69, 74-160, 164-179, 190-415, 421-508, 513-533, 538-547, 552-585, 590-602, 609-621, 626-627, 632-637, 650-657, 661-704, 709-713, 716-728, 748-806, 808->817, 818-828, 845, 859->864, 862, 865-895, 900, 904, 907-908, 915, 918, 924, 928, 931-939, 942, 945, 948, 956->955, 980, 982-987, 989, 993, 999-1038, 1043->1049, 1046, 1057-1058, 1066-1068, 1075-1081, 1084-1085, 1094-1096, 1112, 1115, 1122-1152, 1157-1164, 1167, 1208-1217, 1225-1240, 1261-1301, 1309-1340, 1348-1388
+core\sitemap\filters.py                         26     26     16      0     0%   7-128
+core\sitemap\models.py                         124     28     12      2    72%   107, 111, 115, 118, 127->126, 140-154, 157-171
+core\sitemap\report.py                         776    456    312     48    38%   25, 36, 54-58, 78-80, 97-104, 127-128, 133-134, 135->138, 140, 144-148, 153-165, 225->232, 235-237, 243-245, 251, 257, 263, 267-272, 281-312, 319-325, 329-337, 340-341, 349-381, 386-446, 452-460, 465-489, 527-558, 577-581, 588-591, 593-596, 599-771, 797->841, 812->814, 815, 818->821, 821->828, 825->824, 828->835, 832->831, 835->838, 841->885, 855-856, 872->874, 876->879, 879->882, 886-902, 909->918, 926-963, 978->980, 991->993, 994, 996, 999->988
+core\sitemap\sitemap.py                        187    124     56      1    26%   80-83, 87-88, 94-136, 141-189, 241-242, 246-247, 250-311
+core\sitemap_models.py                           1      1      0      0     0%   2
+core\skill_registry.py                         230     77     90     11    62%   46-48, 77-78, 115-123, 127, 149, 167, 204-207, 248-249, 262, 292, 306-308, 352, 356, 374-384, 390-392, 407-451
+core\skill_router.py                            58      5     20      5    87%   34, 46-48, 56, 122, 127->120, 140->142
+core\solver.py                                   2      0      0      0   100%
+core\strategy_base.py                           92     92     38      0     0%   11-224
+core\supplemental_test_agent.py                765    765    284      0     0%   26-1714
+core\supplemental_test_agent\__init__.py         7      0      0      0   100%
+core\supplemental_test_agent\_attach.py        100     12     40      6    87%   47-48, 64->36, 68-69, 74-75, 119-120, 140->142, 143-144, 169->173, 174, 189
+core\supplemental_test_agent\_constants.py       5      0      0      0   100%
+core\supplemental_test_agent\_discovery.py     310     48    132     20    84%   107-108, 117->114, 125-127, 139, 143-148, 166-167, 183-184, 194-195, 204-215, 331, 337, 340, 343, 346, 349, 352, 403->401, 410-412, 416-417, 475-476, 524-525, 532->530, 539-541, 549-550, 612-613, 635
+core\supplemental_test_agent\_runner.py        379     94    126     21    75%   121-134, 146, 160-171, 245-250, 261-262, 267->335, 283-284, 287-333, 338-347, 374, 459-461, 513, 526-536, 551-553, 578-581, 591, 607->605, 611-615, 620, 637-641, 653-655, 660-673, 679->678, 683-684, 691-692, 698, 712-713, 717-725, 799->803
+core\task_queue.py                             127    127     32      0     0%   13-232
+core\test_templates.py                          87     87     22      0     0%   27-394
+core\tool_executor.py                          511    435    262     16    13%   38-40, 46, 50, 54, 58, 61->68, 69, 73, 79-81, 87-268, 274, 277-278, 283-321, 334->337, 342-345, 349-352, 366, 371-374, 385, 394-508, 517-529, 533, 553-606, 615-652, 660-697, 702-736, 742-750, 755-802, 808-864
+core\tool_router.py                             75      4     18      1    95%   151-154
+core\tools.py                                   24      2      0      0    92%   865-867
+core\traffic_evidence.py                        81      3     38      8    91%   43->45, 111->116, 115, 118->120, 120->122, 123, 125, 126->128
+core\user_triggers.py                           86     75     36      1    10%   39-43, 55-85, 93-119, 124-149
+core\vision.py                                 202    180     56      0     9%   37-40, 45-54, 83-105, 123-159, 179-224, 244-269, 281-320, 341-352, 365-454, 461-504, 513-537
+core\worker_agent\__init__.py                    2      0      0      0   100%
+core\worker_agent\_agent.py                    313    291    144      0     5%   61-105, 109-111, 115-549, 563-650
+core\worker_agent\_helpers.py                  385    366    212      0     3%   36-75, 88-249, 254-257, 269-279, 332-358, 369-425, 436-559, 562-718
+core\xss\__init__.py                             9      4      0      0    56%   44-47
+core\xss\browser_engine.py                     140    127     36      0     7%   41-44, 47-51, 64-113, 119-237, 241-249, 253-257
+core\xss\context.py                            157     48     76     19    64%   39, 60-61, 72-76, 85-86, 106-131, 153, 161-162, 164, 166->151, 170, 184, 188, 204->206, 206->208, 209-210, 212-213, 244, 250, 265-274
+core\xss\csp_analyzer.py                       178     70     92     20    56%   98, 123-126, 132, 143, 145, 147, 158-159, 171-172, 180-181, 185-186, 190-191, 195-202, 214->221, 229->233, 234-235, 244, 248, 260->exit, 263-264, 272-283, 288-298, 303-304, 312-317, 323-329
+core\xss\dom_analyzer.py                       118     94     68      0    13%   104-185, 190-237, 242-270
+core\xss\header_injection.py                    75     23     50     14    64%   78, 82, 86, 90, 93->121, 99-103, 105-108, 110, 114, 118, 121->134, 124-131, 153->152, 155->152
+core\xss\http_engine.py                        216     75     84     16    63%   72->exit, 75-76, 98-101, 121, 128->130, 143, 147, 150, 175-176, 190, 198-199, 202, 205-206, 231-232, 236-243, 247-261, 270-283, 290, 301-306, 324, 326, 337-349
+core\xss\llm_judge.py                          155     51     44     15    63%   52->62, 84, 90-99, 127-141, 154-156, 163->exit, 166-167, 184, 195, 200, 210, 225-228, 270-272, 277, 319, 325-335, 353->359, 356-357, 360, 362
+core\xss\models.py                             116      1      2      1    98%   186
+core\xss\mutation_xss.py                       179    145     62      1    16%   129, 152-160, 163-167, 172-204, 208-235, 244-330, 336-374
+core\xss\oob.py                                206    150     40      2    24%   105-106, 141, 152-153, 162-164, 184-193, 196-200, 209-243, 252-294, 300-337, 341-353, 371-374, 377-401, 406-408, 419-432, 441-445, 461-471, 481-490, 498-501, 515-519, 532-533
+core\xss\param_discover.py                     234    174    134     12    22%   92, 99-133, 152-156, 159-162, 164, 168->147, 184-199, 212-244, 249-258, 286-379, 395->399, 399->421, 410->408, 414->421, 417-419, 425-465
+core\xss\payloads.py                            24      8      6      0    53%   185-193
+core\xss\postmessage_scanner.py                197    115     86     14    39%   83, 92, 136, 149, 151, 185->exit, 188-189, 204-229, 232-254, 258-262, 275-282, 286->296, 288-293, 299-301, 304-308, 316-397, 403-460
+core\xss\scanner.py                            391    172    136     22    53%   114-118, 121-122, 133, 201-203, 212->263, 244-248, 255-258, 264-294, 300-327, 340-342, 344-353, 359->391, 373-377, 384-385, 391->424, 407-411, 418-419, 424->462, 448-449, 452, 456-457, 463-492, 497->512, 507-510, 520-541, 568-572, 577-580, 634, 639-647, 653->655, 658, 661->exit, 664-667, 672-690, 693-696
+core\xss\stored_tracker.py                     183    162     62      0     9%   69-75, 78-82, 88-123, 127-159, 169-272, 278-329
+core\xss\template_injection.py                 115     46     34      7    52%   123->exit, 126-127, 132, 149-151, 156, 168, 173-226, 246-271
+core\xss\upload_xss.py                         166     98     76      7    34%   59, 67, 76, 122->118, 136-140, 143-145, 174->exit, 177-178, 186-270, 280-307, 312-338
+core\xss\waf_bypass.py                         230     70     84     15    67%   85->98, 116, 171-173, 180-191, 215->exit, 218-219, 231, 246->exit, 248-249, 273->283, 279-280, 286->285, 292, 296->341, 304, 307, 310, 317-320, 339-340, 360-407
+mcp_servers\__init__.py                          0      0      0      0   100%
+mcp_servers\browser_mcp.py                     619    619    282      0     0%   8-1265
+mcp_servers\custom_report_mcp.py               123    123     42      0     0%   17-276
+mcp_servers\knowledge_mcp.py                   149    149     82      0     0%   8-237
+mcp_servers\mitm_addon.py                      100    100     42      0     0%   13-239
+mcp_servers\note_mcp.py                         55     55     22      0     0%   9-95
+mcp_servers\proxy_mcp.py                       380    367    146      0     2%   26-801
+mcp_servers\report_mcp.py                      457    457    206      0     0%   8-962
+mcp_servers\target_mcp.py                       46     46     22      0     0%   8-83
+web\__init__.py                                  0      0      0      0   100%
+web\_state.py                                  173    173     62      0     0%   18-269
+web\api\__init__.py                              0      0      0      0   100%
+web\api\auth_api.py                             70     70     20      0     0%   16-139
+web\api\credential_injection_api.py             72     72     12      0     0%   15-163
+web\api\crypto_api.py                           57     57      8      0     0%   5-103
+web\api\dashboard_api.py                        48     48     14      0     0%   7-73
+web\api\diff_api.py                             67     67     18      0     0%   11-144
+web\api\memory_api.py                           60     60     14      0     0%   6-86
+web\api\models_api.py                          260    260     80      0     0%   6-423
+web\api\oob_api.py                              42     42     10      0     0%   6-77
+web\api\packet_api.py                          165    165     64      0     0%   6-251
+web\api\presets_api.py                          90     90     24      0     0%   8-187
+web\api\replay_api.py                           90     90     34      0     0%   5-160
+web\api\reports_api.py                         444    444    190      0     0%   7-789
+web\api\sessions_api.py                        202    202     80      0     0%   6-300
+web\api\skills_api.py                          175    175     50      0     0%   7-276
+web\api\system_api.py                          404    404    122      0     0%   6-700
+web\api\templates_api.py                       317    317    104      0     0%   6-714
+web\api\triggers_api.py                         86     86     22      0     0%   6-119
+web\server.py                                  316    316     78      0     0%   14-537
+web\traffic_api.py                             181    181     60      0     0%   17-376
+----------------------------------------------------------------------------------------
+TOTAL                                        43633  32918  18220    959    22%
+Coverage XML written to file coverage.xml
+=========================== short test summary info ===========================
+ERROR tests/mock_spa/test_js_analysis.py::test_base_urls
+ERROR tests/mock_spa/test_js_analysis.py::test_websocket
+ERROR tests/mock_spa/test_js_analysis.py::test_sse
+ERROR tests/mock_spa/test_js_analysis.py::test_api_calls
+ERROR tests/mock_spa/test_js_analysis.py::test_routes
+ERROR tests/mock_spa/test_js_analysis.py::test_router_mode
+ERROR tests/mock_spa/test_js_analysis.py::test_auth_patterns
+ERROR tests/mock_spa/test_js_analysis.py::test_crawl_data
+FAILED tests/mock_spa/test_cookie_injection.py::test_unauthorized_access - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/mock_spa/test_cookie_injection.py::test_public_access - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/mock_spa/test_cookie_injection.py::test_login_and_cookie_injection - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/mock_spa/test_cookie_injection.py::test_bearer_token_injection - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/mock_spa/test_cookie_injection.py::test_invalid_credentials - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/mock_spa/test_cookie_injection.py::test_auth_state_structure - urllib.error.URLError: <urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>
+FAILED tests/test_fast_scanner_detection.py::TestUnauthorized::test_medium_when_no_sensitive_data - assert 0 >= 1
+ +  where 0 = len([])
+FAILED tests/test_fast_scanner_detection.py::TestUnauthorized::test_high_when_sensitive_data_leaked - assert False
+ +  where False = any(<generator object TestUnauthorized.test_high_when_sensitive_data_leaked.<locals>.<genexpr> at 0x000001B7880D5310>)
+FAILED tests/unit/test_supplemental_test_agent.py::TestConstants::test_features_per_worker_is_5 - assert 3 == 5
+9 failed, 1253 passed, 1 warning, 8 errors in 471.90s (0:07:51)

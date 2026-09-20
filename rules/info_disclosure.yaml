@@ -1,0 +1,241 @@
+# 信息泄露检测规则
+- name: 敏感文件泄露
+  type: info_disclosure
+  severity: high
+  description: 检测可访问的敏感文件和配置文件
+  paths:
+    - /.env
+    - /.git/config
+    - /.git/HEAD
+    - /.svn/entries
+    - /.DS_Store
+    - /.htaccess
+    - /.htpasswd
+    - /web.config
+    - /config.php.bak
+    - /config.yml
+    - /application.yml
+    - /backup.sql
+    - /db.sql
+    - /database.sql
+    - /dump.sql
+    - /backup.zip
+    - /www.zip
+    - /web.zip
+    - /docker-compose.yml
+    - /Dockerfile
+  detection:
+    method: status_code
+    expected: 200
+    min_length: 10
+  fix: 限制对敏感文件的访问，添加访问控制
+
+- name: API 文档泄露
+  type: info_disclosure
+  severity: medium
+  description: 检测可访问的 API 文档
+  paths:
+    - /swagger-ui.html
+    - /swagger-ui/
+    - /v2/api-docs
+    - /api-docs
+    - /openapi.json
+    - /api/swagger
+  detection:
+    method: status_code
+    expected: 200
+  fix: 生产环境关闭 API 文档访问
+
+- name: Spring Actuator 泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Boot Actuator 端点未授权访问
+  paths:
+    - /actuator
+    - /actuator/env
+    - /actuator/health
+    - /actuator/heapdump
+    - /actuator/mappings
+    - /actuator/beans
+    - /actuator/configprops
+    - /actuator/refresh
+    - /actuator/restart
+    - /actuator/jolokia
+    - /actuator/loggers
+    - /actuator/httptrace
+    - /actuator/threaddump
+    - /actuator/scheduledtasks
+    - /actuator/sessions
+    - /actuator/prometheus
+    - /actuator/logfile
+    - /manage
+    - /manage/env
+    - /manage/heapdump
+    - /manage/refresh
+    - /management/env
+  detection:
+    method: status_code
+    expected: 200
+  fix: 禁用或限制 Actuator 端点，添加认证
+
+- name: Spring Cloud Gateway 泄露
+  type: info_disclosure
+  severity: critical
+  description: Spring Cloud Gateway Actuator 端点暴露（CVE-2022-22947 SpEL RCE）
+  paths:
+    - /actuator/gateway/routes
+    - /actuator/gateway/refresh
+    - /actuator/gateway/globalfilters
+    - /actuator/gateway/routefilters
+    - /gateway/actuator
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制 Gateway Actuator 端点访问，升级 Spring Cloud Gateway >= 3.1.1
+
+- name: Spring Cloud Eureka 未授权
+  type: info_disclosure
+  severity: high
+  description: Eureka 注册中心未授权访问，泄露内网微服务列表
+  paths:
+    - /eureka
+    - /eureka/apps
+    - /eureka/lastn
+    - /eureka/v2/apps
+  detection:
+    method: status_code
+    expected: 200
+  fix: 为 Eureka Dashboard 添加认证
+
+- name: Jolokia JMX 未授权
+  type: info_disclosure
+  severity: critical
+  description: Jolokia JMX over HTTP 未授权访问（可触发 JNDI RCE）
+  paths:
+    - /jolokia
+    - /jolokia/list
+    - /jolokia/version
+    - /jolokia/exec
+    - /actuator/jolokia
+    - /actuator/jolokia/list
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制 Jolokia 端点访问，禁用危险 MBean 操作
+
+- name: Spring Cloud Config 泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Cloud Config Server 配置文件未授权访问
+  paths:
+    - /application/default
+    - /application/default/master
+    - /application-dev.yml
+    - /application-prod.yml
+    - /application-dev.properties
+    - /application-prod.properties
+  detection:
+    method: status_code
+    expected: 200
+  fix: 为 Config Server 添加认证，限制环境配置访问
+
+- name: Spring Cloud Function 端点
+  type: info_disclosure
+  severity: critical
+  description: Spring Cloud Function 路由端点暴露（CVE-2022-22963 SpEL RCE）
+  paths:
+    - /functionRouter
+  detection:
+    method: status_code
+    expected: 200
+  fix: 升级 Spring Cloud Function >= 3.2.3，限制函数端点访问
+
+- name: Spring Boot 配置文件泄露
+  type: info_disclosure
+  severity: high
+  description: Spring Boot 应用配置文件可直接访问，泄露数据库密码等敏感信息
+  paths:
+    - /application.yml
+    - /application.yaml
+    - /application.properties
+    - /bootstrap.yml
+    - /bootstrap.properties
+  detection:
+    method: status_code
+    expected: 200
+  fix: 将配置文件移出 Web 根目录，限制静态资源访问范围
+
+- name: 响应头信息泄露
+  type: info_disclosure
+  severity: low
+  description: 响应头泄露服务器版本和技术栈信息
+  headers:
+    - x-powered-by
+    - server
+    - x-aspnet-version
+    - x-generator
+  fix: 移除或混淆版本信息响应头
+
+- name: 源码映射文件泄露
+  type: info_disclosure
+  severity: medium
+  description: JavaScript Source Map 文件可访问，泄露源码
+  paths:
+    - /app.js.map
+    - /main.js.map
+    - /bundle.js.map
+    - /app.min.js.map
+  detection:
+    method: status_code
+    expected: 200
+    content_type: application/json
+  fix: 生产环境禁用 source map
+
+- name: 开发工具泄露
+  type: info_disclosure
+  severity: high
+  description: 检测可访问的开发和管理工具
+  paths:
+    - /console
+    - /h2-console
+    - /adminer.php
+    - /phpmyadmin/
+    - /pma/
+    - /druid/index.html
+    - /druid/login.html
+    - /phpinfo.php
+    - /info.php
+    - /test.php
+    - /server-status
+  detection:
+    method: status_code
+    expected: 200
+  fix: 限制开发工具的访问，生产环境关闭
+
+- name: JSONP 接口信息泄露
+  type: info_disclosure
+  severity: medium
+  description: 检测 JSONP 回调接口，可能泄露用户信息或被 CSRF 利用
+  detection:
+    method: body_pattern
+    patterns:
+      - "callback("
+      - "jsonp"
+      - "jQuery"
+    content_type: javascript
+  fix: 限制 JSONP 接口的回调域名白名单，敏感接口改用同源 JSON 响应
+
+- name: 硬编码地图 API Key 泄露
+  type: info_disclosure
+  severity: medium
+  description: 前端 JS 硬编码地图服务 API Key（高德/百度/Google），可被滥用产生费用
+  detection:
+    method: body_pattern
+    patterns:
+      - "key=AIza[A-Za-z0-9_\\-]{35}"
+      - "amap_key=['\"][A-Za-z0-9]{32}['\"]"
+      - "map_key=['\"][A-Za-z0-9]{32}['\"]"
+      - "baidu_ak=['\"][A-Za-z0-9]{32}['\"]"
+      - "ak=['\"][A-Za-z0-9]{32}['\"]"
+  fix: 将地图 API Key 迁移到后端代理调用，前端使用受限 Key 并配置域名白名单
+
