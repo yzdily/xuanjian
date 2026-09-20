@@ -1,6 +1,6 @@
 # 玄鉴 XuanJian 智能安全扫描器
 
-**一个会操作浏览器、会抓包改包、会按照方法论执行、会自己验证漏洞的自动化渗透测试 Agent**
+**一个驱动浏览器爬取、拦截流量，并按阶段方法论（爬虫→分析→并行编排测试→三态闭包验证→报告）自动执行、自主验证漏洞的自动化渗透测试 Agent**
 
 > 每条漏洞都归属到具体的「接口 × 漏洞域」坐标，并记录在稀疏覆盖矩阵上——既不遗漏任何测试步骤，也能给每个接口一个明确结论。
 
@@ -244,9 +244,9 @@ cd burp-plugin && ./gradlew jar
 | 阶段 | 做什么 | 谁执行 |
 |------|--------|--------|
 | **Phase 0** | 站点探索（爬虫 + JS 分析 + 流量抓取 + SPA 降级） | AutoCrawler |
-| **Phase 0.5** | 业务理解（分析业务语义 → 推导攻击假设） | BusinessUnderstanding |
+| **Phase 1.5** | 业务理解（分析业务语义 → 推导攻击假设） | analyze_business |
 | **Phase 1** | 功能分析（识别功能点 → 生成 Checklist） | AnalyzeWorker |
-| **Phase 1.5** | 业务对账（Checklist 与业务理解交叉验证） | 主 Agent |
+| **Phase 2.5** | 业务对账（Checklist 与业务理解交叉验证） | reconcile_loop |
 | **Phase 2a** | HTTP 漏洞测试（SQLi / IDOR / 未授权 …） | 3 个子 Agent 并行 |
 | **Phase 2b** | 浏览器漏洞测试（XSS / CSRF …） | 主 Agent |
 | **Phase 2.55** | 补测（扫描遗漏的 API） | SupplementalTestAgent |
@@ -254,6 +254,55 @@ cd burp-plugin && ./gradlew jar
 | **Phase 3** | 汇总报告（覆盖矩阵 + 漏洞详情 + 修复建议 + PoC） | 主 Agent |
 
 > **扫描模式**：深度维度（FAST/STANDARD/DEEP/SMART，对应 `ScanMode` / `session.user_scan_mode`）与编排维度（Batch/Realtime/Packet，对应 `session.scan_mode`）两个正交维度独立选择，详见下方「扫描模式」章节。
+
+模块级流水线，每个节点都是一个真实的 `core.*` 模块：
+
+```mermaid
+flowchart TD
+    auto["AutoCrawler<br/><i>crawler/crawler_core</i><br/>P0 站点探索"]
+    biz["BusinessUnderstanding<br/><i>business_understanding</i><br/>P1.5 业务理解"]
+    ana["AnalyzeWorker<br/><i>analyze_worker</i><br/>P1 功能分析"]
+    rec["reconcile_loop<br/><i>reconcile</i><br/>P2.5 业务对账"]
+    orc["Orchestrator.dispatch<br/><i>parallel/_orch_phases/_run_parallel_test</i><br/>P2 调度"]
+    http["WorkerAgent ×N<br/><i>worker_agent/ (F2 认证探活)</i><br/>P2a HTTP 并行"]
+    brw["start_browser_feature_test<br/><i>parallel/_orch_phases/_browser_test</i><br/>P2b 浏览器串行"]
+    mrg["merge 候选漏洞集<br/><i>orchestrator 合并</i><br/>P2 merge"]
+    sup["SupplementalTestAgent<br/><i>supplemental_test_agent</i><br/>P2.55 补测(条件)"]
+    ver["三态闭包裁决 verdict<br/><i>verdict + gates</i><br/>P2.6 危害验证"]
+    ret["P2.retest 回退重测<br/><i>loop → P2 调度</i>"]
+    gate["人工复核 gate<br/><i>interrupt_before P3</i><br/>P2.9"]
+    rep["Report Phase<br/><i>_enter_report_phase → export → finish_scan</i><br/>P3 报告"]
+
+    auto --> biz --> ana --> rec --> orc
+    orc --> http
+    orc --> brw
+    http --> mrg
+    brw --> mrg
+    mrg --> sup --> ver
+    ver --> gate
+    gate -->|approve| rep
+    ver -. OPEN_PROOF_GAP .-> ret
+    gate -. reject .-> ret
+    ret -.-> orc
+    mrg -. FAST 跳过 .-> rep
+
+    classDef explore fill:#e8f0fe,stroke:#5b5b6b;
+    classDef orch fill:#fef7e0,stroke:#5b5b6b;
+    classDef test fill:#e6f4ea,stroke:#5b5b6b;
+    classDef judge fill:#fce8f3,stroke:#5b5b6b;
+    classDef loop fill:#fff0e0,stroke:#5b5b6b;
+    classDef gatec fill:#f3e8fd,stroke:#5b5b6b;
+    classDef repc fill:#e8eaed,stroke:#5b5b6b;
+    class auto,biz,ana,rec explore;
+    class orc orch;
+    class http,brw test;
+    class mrg,sup,ver judge;
+    class ret loop;
+    class gate gatec;
+    class rep repc;
+```
+
+> 图的相位编号与上方八相位表一致（业务理解 = Phase 1.5，业务对账 = Phase 2.5）。图内流程顺序遵循 `core/graph/` 参考实现（业务理解先于功能分析），与八相位表的 `advance_mixin` 顺序不同；P2.9 人工复核为可选 interrupt gate（`interrupt_before P3`），默认 8 相位全自动流转。
 
 ### 新一代测试编排（`core/testflow/`，可选启用）
 

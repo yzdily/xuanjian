@@ -1,0 +1,329 @@
+Microsoft Windows [版本 10.0.19045.6466]
+(c) Microsoft Corporation。保留所有权利。
+H:\xuanjian-main\core\graph>python demo.py
+
+========================================================================
+1) 八阶段拓扑（Mermaid；含 P2.6 回退重测回边 + P2.9 人工复核 gate）
+========================================================================
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+        __start__([<p>__start__</p>]):::first
+        p0_explore(p0_explore)
+        p0_5_business(p0_5_business)
+        p1_analyze(p1_analyze)
+        p1_5_reconcile(p1_5_reconcile)
+        p2_dispatch(p2_dispatch)
+        p2a_http_test(p2a_http_test)
+        p2b_browser_test(p2b_browser_test)
+        p2_merge(p2_merge)
+        p2_55_supplement(p2_55_supplement)
+        p2_6_validate(p2_6_validate)
+        p2_retest(p2_retest)
+        p3_report(p3_report)
+        p2_9_human_review(p2_9_human_review)
+        __end__([<p>__end__</p>]):::last
+        __start__ --> p0_explore;
+        p0_5_business --> p1_analyze;
+        p0_explore -.-> p0_5_business;
+        p0_explore -.-> p1_analyze;
+        p1_5_reconcile --> p2_dispatch;
+        p1_analyze -.-> p1_5_reconcile;
+        p1_analyze -.-> p2_dispatch;
+        p2_55_supplement --> p2_6_validate;
+        p2_6_validate -. &nbsp;p3_report&nbsp; .-> p2_9_human_review;
+        p2_6_validate -.-> p2_retest;
+        p2_9_human_review -.-> p2_retest;
+        p2_9_human_review -.-> p3_report;
+        p2_dispatch --> p2a_http_test;
+        p2_dispatch --> p2b_browser_test;
+        p2_merge -.-> p2_55_supplement;
+        p2_merge -.-> p2_6_validate;
+        p2_merge -.-> p3_report;
+        p2_retest --> p2_dispatch;
+        p2a_http_test --> p2_merge;
+        p2b_browser_test --> p2_merge;
+        p3_report --> __end__;
+        classDef default fill:#f2f0ff,line-height:1.2
+        classDef first fill-opacity:0
+        classDef last fill:#bfb6fc
+
+
+========================================================================
+2) DEEP 全量路径（非 FAST，无新 API → 跳过 2.55）
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+→ 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP  测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P3 报告完成
+→ retest_round = 1  open_proof_gap = []
+
+========================================================================
+3) FAST 跳过路径（0.5 / 1.5 / 2.55 / 2.6 全跳过，无回退重测）
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+→ 经历阶段: P0 站点探索完成 → P1 功能分析完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P3 报告完成
+
+========================================================================
+4) 触发 P2.55 补测分支（new_apis_found=True）
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.55] 补测: SupplementalTestAgent(对账遗漏 API)
+WARNING xuanjian.graph: adapter stub: core.supplemental_test_agent.run_supplemental_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.55] 补测: SupplementalTestAgent(对账遗漏 API)
+WARNING xuanjian.graph: adapter stub: core.supplemental_test_agent.run_supplemental_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+→ 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.55 补测完成 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.55 补测完成 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P3 报告完成
+
+========================================================================
+5) ★ P2.6 三态闭包回退重测：证据不足 → 回退 P2.retest → 重测补证 → P3
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+→ 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP  测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P3 报告完成
+→ 回退重测轮次 retest_round = 1
+→ 末轮 open_proof_gap = []  确认漏洞数 = 2
+
+========================================================================
+5b) 重测预算用尽：max_retest=0 → 证据不足也放行到 P3（人工复核），不死循环
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+WARNING xuanjian.graph: [P2.6] 重测预算用尽仍有 2 项证据不足，放行至 P3(人工复核)
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+→ 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P3 报告完成
+→ retest_round = None  open_proof_gap = ['http', 'browser']
+
+========================================================================
+6) ★ 文件落盘 checkpointer 跨进程崩溃恢复
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+  [进程1] 跑到 P2 被中断，checkpoint 已落盘 → C:\Users\45963\AppData\Local\Temp\xuanjian_xproc_recovery.db
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+  [进程2] 从磁盘 checkpoint 续跑完成，current_phase = P3
+  [进程2] 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器 测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P3 报告完成
+  [进程2] 报告 = {'target': 'https://crash.xuanjian.local', 'vulns': 2, 'status': 'generated'}
+  ✅ 跨进程恢复成功：P2_merge 之前的阶段未重跑，仅续跑后续。
+
+========================================================================
+7) ★ 人工复核 gate（interrupt_before P3）：approve 放行 / reject 回退重测
+========================================================================
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+  [运行] 已暂停在 P2.9 人工复核 gate（interrupt_before P3）
+  [人工看到] 裁决摘要 = {'confirmed': 2, 'open_proof_gap': [], 'retest_round': 1, 'max_retest': 2}
+  [人工决策] approve → 放行 P3
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+  [运行] 续跑完成，report = {'target': 'https://gate.xuanjian.local', 'vulns': 2, 'status': 'generated'}
+  [运行] 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P2.9 人工复核 gate: approve（证据充分，准 予出报告） → P3 报告完成
+INFO xuanjian.graph: [P0] 站点探索: AutoCrawler(爬虫+JS分析+流量+SPA降级)
+WARNING xuanjian.graph: adapter stub: core.crawler.crawler_core.AutoCrawler 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.auto_crawler.AutoCrawler 不可用 (No module named 'core')
+INFO xuanjian.graph: [P0.5] 业务理解: BusinessUnderstanding(语义→攻击假设)
+WARNING xuanjian.graph: adapter stub: core.business_understanding.BusinessUnderstanding 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1] 功能分析: AnalyzeWorker(功能点→Checklist)
+WARNING xuanjian.graph: adapter stub: core.analyze_worker.AnalyzeWorker 不可用 (No module named 'core')
+INFO xuanjian.graph: [P1.5] 业务对账: reconcile_loop(Checklist × 业务理解交叉验证)
+WARNING xuanjian.graph: adapter stub: core.reconcile.reconcile_loop 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.retest] 证据不足 2 项 → 回退重测 (第 1 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+  [运行] 第1次过门，人工决策 reject（要求补证），传回门
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+INFO xuanjian.graph: [P2.retest] 证据不足 0 项 → 回退重测 (第 2 轮)
+INFO xuanjian.graph: [P2] 漏洞测试调度 → 分叉 2a(HTTP 并行)/2b(浏览器串行)
+INFO xuanjian.graph: [P2a] HTTP 漏洞测试: WorkerAgent×3 并行 (F2 认证探活)
+INFO xuanjian.graph: [P2b] 浏览器漏洞测试: start_browser_feature_test(主 Agent 串行)
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._run_parallel_test.run_parallel_test 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._browser_test.start_browser_feature_test 不可用 (No module named 'core')
+INFO xuanjian.graph: [P2 merge] 合并 HTTP / 浏览器发现 → 候选漏洞集
+INFO xuanjian.graph: [P2.6] 危害验证: 三态闭包裁决 (CONFIRMED/RULED_OUT/OPEN_PROOF_GAP)
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+  [运行] reject 后状态：current_phase = P2.6  retest_round = 2
+INFO xuanjian.graph: [P2.9] 人工复核 gate（interrupt_before P3）
+INFO xuanjian.graph: [P3] 汇总报告: _enter_report_phase + export_scan_artifacts + finish_scan
+WARNING xuanjian.graph: adapter stub: core.parallel._orch_phases._report_phase._enter_report_phase 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.loops.coverage_integration.export_scan_artifacts 不可用 (No module named 'core')
+WARNING xuanjian.graph: adapter stub: core.scan_store.finish_scan 不可用 (No module named 'core')
+  [运行] 第2次过门 approve，report = {'target': 'https://gate-rej.xuanjian.local', 'vulns': 2, 'status': 'generated'}
+  [运行] 经历阶段: P0 站点探索完成 → P0.5 业务理解完成 → P1 功能分析完成 → P1.5 业务对账完成 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 0 确认 / 2 证据不足(OPEN_PROOF_GAP) → P2.retest 回退重测(第1轮): 证据不足 2 项 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P2.9 人工复核 gate: reject（证据单薄，需重测） → P2.retest 回退重测(第2轮): 证据不足 0 项 → P2 调度: 2a+2b 并行 → P2a HTTP 测试完成 → P2b 浏览器测试完成 → P2 合并 2 项发现 → P2.6 危害验证: 2 确认 / 0 证据不足(OPEN_PROOF_GAP) → P2.9 人工复核 gate: approve（重测补证后准予出报告） → P3 报告完成
+  ✅ 人工复核 gate 演示成功：approve 放行 / reject 回退重测再复核。
+
+H:\xuanjian-main\core\graph>

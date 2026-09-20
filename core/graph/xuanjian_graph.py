@@ -50,10 +50,19 @@ XuanJian 八阶段渗透流水线 —— LangGraph 编排
     这是 F15「反误报三态闭包」在编排层的落地：看似证伪其实不够的，
     不草率判 RULED_OUT，而是回退补证。
 
-与以下官方定义完全一致：
-  - ARCHITECTURE.md:21   Phase 0 → 0.5 → 1 → 1.5 → 2a/2b → 2.55 → 2.6 → 3
-  - README.zh.md:240     八阶段表
-  - XUANJIAN_TESTFLOW_SKILLS.md:30  八阶段编排 + FAST 跳过 0.5/1.5/2.55/2.6
+相位编号说明（重要：本 graph 与 legacy 状态机 / 文档的相位编号不互通）
+  本图采用**自有**的 LangGraph 相位编号，与 legacy 状态机 advance_mixin.py 以及
+  README.md / ARCHITECTURE.md（均已对齐 advance_mixin）的相位**编号与顺序不互通**，
+  请勿混用：
+    - 本 graph：P0 探索 → P0.5 业务理解 → P1 功能分析 → P1.5 业务对账
+               （在测试**前**，用于 Checklist×业务理解 交叉验证、指导测试重点）
+               → P2 测试(2a/2b 并行) → P2.55 补测 → P2.6 验证 → P3 报告
+    - legacy 状态机（advance_mixin.py；README/ARCHITECTURE 已对齐它）：
+       Phase 0 → 1 → 1.5 业务理解 → 2 测试 → 2.5 业务对账（在测试**后**，闭环）
+               → 2.55 补测 → 2.6 验证 → 3 报告
+  差异根因：本 graph 把「业务对账」放在测试前作指导，legacy 把「业务对账」放在测试后
+  作闭环；二者是两套设计。本文件仅作 LangGraph 拓扑 / 续跑(checkpointer) / 三态闭包
+  回边的参考实现，真实端到端渗透逻辑以 advance_mixin 状态机为准。
 
 【编排要点 / LangGraph 坑位】
   * 并行分支（P2a / P2b）在同一个 superstep 内运行，若写同一普通 channel 会抛
@@ -106,7 +115,12 @@ import operator
 import sqlite3
 from typing import Annotated, Literal, TypedDict
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+try:
+    # 新版 langgraph（>=0.3）：SqliteSaver 拆到独立包 langgraph-checkpoint-sqlite
+    from langgraph_checkpoint_sqlite import SqliteSaver
+except ImportError:
+    # 旧版 langgraph：SqliteSaver 仍在主包子模块内
+    from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 

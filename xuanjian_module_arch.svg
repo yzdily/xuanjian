@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 880" font-family="sans-serif">
+<rect x="0" y="0" width="820" height="880" fill="#ffffff"/>
+<defs><marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L8,3 L0,6 Z" fill="#3a3a4a"/></marker></defs>
+<text x="410" y="26" text-anchor="middle" font-size="17" font-weight="800" fill="#1f2330">玄鉴 XuanJian — 模块级流水线（八阶段编排）</text>
+<line x1="410" y1="80" x2="410" y2="99" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="155" x2="410" y2="174" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="230" x2="410" y2="249" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="305" x2="410" y2="324" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="380" x2="175" y2="399" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="380" x2="645" y2="399" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="175" y1="455" x2="410" y2="474" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="645" y1="455" x2="410" y2="474" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="530" x2="410" y2="549" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="605" x2="410" y2="624" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="680" x2="410" y2="707" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="410" y1="763" x2="410" y2="787" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<line x1="295" y1="652" x2="235" y2="652" stroke="#3a3a4a" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+<polyline points="295,735 235,735 235,624" stroke="#3a3a4a" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+<polyline points="120,624 120,318 295,318 295,352" stroke="#3a3a4a" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+<line x1="525" y1="502" x2="525" y2="815" stroke="#3a3a4a" stroke-width="1.6" stroke-dasharray="2 4" marker-end="url(#ah)"/>
+<rect x="295" y="24" width="230" height="56" rx="9" fill="#e8f0fe" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="37" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P0 站点探索</text>
+<text x="410" y="53" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">AutoCrawler</text>
+<text x="410" y="69" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">crawler/crawler_core</text>
+<rect x="295" y="99" width="230" height="56" rx="9" fill="#e8f0fe" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="112" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P1.5 业务理解</text>
+<text x="410" y="128" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">BusinessUnderstanding</text>
+<text x="410" y="144" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">business_understanding</text>
+<rect x="295" y="174" width="230" height="56" rx="9" fill="#e8f0fe" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="187" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P1 功能分析</text>
+<text x="410" y="203" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">AnalyzeWorker</text>
+<text x="410" y="219" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">analyze_worker</text>
+<rect x="295" y="249" width="230" height="56" rx="9" fill="#e8f0fe" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="262" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2.5 业务对账</text>
+<text x="410" y="278" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">reconcile_loop</text>
+<text x="410" y="294" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">reconcile</text>
+<rect x="295" y="324" width="230" height="56" rx="9" fill="#fef7e0" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="337" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2 调度</text>
+<text x="410" y="353" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">Orchestrator.dispatch</text>
+<text x="410" y="369" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">parallel/_orch_phases/_run_parallel_test</text>
+<rect x="60" y="399" width="230" height="56" rx="9" fill="#e6f4ea" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="175" y="412" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2a HTTP 并行</text>
+<text x="175" y="428" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">WorkerAgent ×N</text>
+<text x="175" y="444" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">worker_agent/ (F2 认证探活)</text>
+<rect x="530" y="399" width="230" height="56" rx="9" fill="#e6f4ea" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="645" y="412" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2b 浏览器串行</text>
+<text x="645" y="428" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">start_browser_feature_test</text>
+<text x="645" y="444" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">parallel/_orch_phases/_browser_test</text>
+<rect x="295" y="474" width="230" height="56" rx="9" fill="#fce8f3" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="487" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2 merge</text>
+<text x="410" y="503" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">merge 候选漏洞集</text>
+<text x="410" y="519" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">orchestrator 合并 HTTP/浏览器</text>
+<rect x="295" y="549" width="230" height="56" rx="9" fill="#fce8f3" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="562" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2.55 补测(条件)</text>
+<text x="410" y="578" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">SupplementalTestAgent</text>
+<text x="410" y="594" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">supplemental_test_agent</text>
+<rect x="295" y="624" width="230" height="56" rx="9" fill="#fce8f3" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="637" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2.6 危害验证</text>
+<text x="410" y="653" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">三态闭包裁决 verdict</text>
+<text x="410" y="669" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">verdict + gates</text>
+<rect x="5" y="624" width="230" height="56" rx="9" fill="#fff0e0" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="120" y="653" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">P2.retest 回退重测</text>
+<text x="120" y="669" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">loop → P2 调度</text>
+<rect x="295" y="707" width="230" height="56" rx="9" fill="#f3e8fd" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="720" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P2.9</text>
+<text x="410" y="736" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">人工复核 gate</text>
+<text x="410" y="752" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">interrupt_before P3</text>
+<rect x="295" y="787" width="230" height="56" rx="9" fill="#e8eaed" stroke="#5b5b6b" stroke-width="1.2"/>
+<text x="410" y="800" text-anchor="middle" font-size="10" fill="#7a5c00" font-family="Menlo,Consolas,monospace">P3 报告</text>
+<text x="410" y="816" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2330" font-family="Menlo,Consolas,monospace">Report Phase</text>
+<text x="410" y="832" text-anchor="middle" font-size="9.5" fill="#555" font-family="Menlo,Consolas,monospace">_enter_report_phase → export → finish_scan</text>
+<text x="60" y="500" font-size="9.5" fill="#9a5b00" font-family="monospace">OPEN_PROOF_GAP / reject</text>
+<text x="540" y="690" font-size="9.5" fill="#9a5b00" font-family="monospace">approve</text>
+<text x="470" y="660" font-size="9.5" fill="#9a5b00" font-family="monospace">new_apis</text>
+<line x1="40" y1="ly" x2="70" y2="ly" stroke="#3a3a4a" stroke-width="1.6" marker-end="url(#ah)"/>
+<text x="76" y="ly+4" font-size="10" fill="#333">主流程</text>
+<line x1="150" y1="ly" x2="180" y2="ly" stroke="#3a3a4a" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+<text x="186" y="ly+4" font-size="10" fill="#333">条件 / 回退重测 / 人工复核</text>
+<text x="370" y="ly+4" font-size="10" fill="#9a5b00">FAST 模式可跳过 1.5/2.5/2.55/2.6 与回退，直达 P3</text>
+</svg>

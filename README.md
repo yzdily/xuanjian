@@ -1,6 +1,6 @@
 # XuanJian — Agentic Security Scanner
 
-> An autonomous penetration testing agent that drives a real browser, intercepts traffic, follows methodology, validates findings, and writes its own report — without ever forgetting a test step.
+> An agentic penetration testing agent that drives a browser to crawl, intercepts traffic, and autonomously executes by a phased methodology (crawl → analysis → parallel orchestrated testing → three-state closure verdict → report) and validates findings on its own.
 >
 > Every finding is attributed to a concrete `(endpoint × vulnerability domain)` pair and tracked on a sparse coverage matrix, so no test step is missed and every endpoint gets a verdict.
 
@@ -245,16 +245,64 @@ Eight phases, no human in the loop:
 | Phase | What happens | Who runs it |
 |---|---|---|
 | **Phase 0** | Site exploration (crawl + JS analysis + traffic capture + SPA fallback) | AutoCrawler |
-| **Phase 0.5** | Business understanding (semantic analysis → attack hypotheses) | BusinessUnderstanding |
-| **Phase 1** | Feature analysis (identify functionality → Checklist) | AnalyzeWorker |
-| **Phase 1.5** | Business reconciliation (Checklist × business-understanding cross-verify) | Main Agent |
-| **Phase 2a** | HTTP vulnerability tests (SQLi / IDOR / Unauthorized …) | 3 sub-agents in parallel |
-| **Phase 2b** | Browser vulnerability tests (XSS / CSRF …) | Main Agent |
+| **Phase 1** | Feature analysis (identify functionality → Checklist) | Main Agent + AnalyzeWorker sub-agents |
+| **Phase 1.5** | Business understanding (semantic analysis → attack hypotheses) | analyze_business |
+| **Phase 2** | Parallel vulnerability tests (HTTP sub-agents + browser items) | run_parallel_test (orchestrator) |
+| **Phase 2.5** | Business reconciliation (Checklist × business-understanding cross-verify) | reconcile_loop |
 | **Phase 2.55** | Supplemental test (newly discovered APIs) | SupplementalTestAgent |
 | **Phase 2.6** | Harm validation (FP suppression: detection-layer iron rules + LLM auditor) | HarmValidator |
 | **Phase 3** | Report aggregation (coverage matrix + vuln details + remediation + PoC) | Main Agent |
 
 > **Scan modes** are an orthogonal 2-D model (depth × orchestration) — see the *Scan modes* section above. Code-wise: `ScanMode` / `session.user_scan_mode` for depth; `session.scan_mode` for orchestration.
+
+The module-level pipeline — every node is a real `core.*` module:
+
+```mermaid
+flowchart TD
+    auto["AutoCrawler<br/><i>crawler/crawler_core</i><br/>P0 站点探索"]
+    biz["BusinessUnderstanding<br/><i>business_understanding</i><br/>P1.5 业务理解"]
+    ana["AnalyzeWorker<br/><i>analyze_worker</i><br/>P1 功能分析"]
+    rec["reconcile_loop<br/><i>reconcile</i><br/>P2.5 业务对账"]
+    orc["Orchestrator.dispatch<br/><i>parallel/_orch_phases/_run_parallel_test</i><br/>P2 调度"]
+    http["WorkerAgent ×N<br/><i>worker_agent/ (F2 认证探活)</i><br/>P2a HTTP 并行"]
+    brw["start_browser_feature_test<br/><i>parallel/_orch_phases/_browser_test</i><br/>P2b 浏览器串行"]
+    mrg["merge 候选漏洞集<br/><i>orchestrator 合并</i><br/>P2 merge"]
+    sup["SupplementalTestAgent<br/><i>supplemental_test_agent</i><br/>P2.55 补测(条件)"]
+    ver["三态闭包裁决 verdict<br/><i>verdict + gates</i><br/>P2.6 危害验证"]
+    ret["P2.retest 回退重测<br/><i>loop → P2 调度</i>"]
+    gate["人工复核 gate<br/><i>interrupt_before P3</i><br/>P2.9"]
+    rep["Report Phase<br/><i>_enter_report_phase → export → finish_scan</i><br/>P3 报告"]
+
+    auto --> biz --> ana --> rec --> orc
+    orc --> http
+    orc --> brw
+    http --> mrg
+    brw --> mrg
+    mrg --> sup --> ver
+    ver --> gate
+    gate -->|approve| rep
+    ver -. OPEN_PROOF_GAP .-> ret
+    gate -. reject .-> ret
+    ret -.-> orc
+    mrg -. FAST 跳过 .-> rep
+
+    classDef explore fill:#e8f0fe,stroke:#5b5b6b;
+    classDef orch fill:#fef7e0,stroke:#5b5b6b;
+    classDef test fill:#e6f4ea,stroke:#5b5b6b;
+    classDef judge fill:#fce8f3,stroke:#5b5b6b;
+    classDef loop fill:#fff0e0,stroke:#5b5b6b;
+    classDef gatec fill:#f3e8fd,stroke:#5b5b6b;
+    classDef repc fill:#e8eaed,stroke:#5b5b6b;
+    class auto,biz,ana,rec explore;
+    class orc orch;
+    class http,brw test;
+    class mrg,sup,ver judge;
+    class ret loop;
+    class gate gatec;
+    class rep repc;
+```
+
+> **Phase numbering**: the diagram's phase labels now match the eight-phase table above (both follow the `advance_mixin` state machine — Phase 1.5 = business understanding, Phase 2.5 = business reconciliation). The **flow order** in the diagram follows the `core/graph/` LangGraph reference implementation, where business understanding runs *before* feature analysis; the table above lists them in the `advance_mixin` order. P2.9 人工复核 is an optional interrupt gate (`interrupt_before P3`); the default 8-phase pipeline runs fully automated.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module-level architecture diagram.
 
@@ -267,6 +315,8 @@ XuanJian is being re-orchestrated around **8 risk domains** — `authz`, `csrf`,
 - **Seven gates (G0–G6)** — authorization → endpoint-reality → response-reality → pairing-integrity → vuln-verification → coverage-integrity → report gates run throughout the pipeline to suppress false positives and guarantee traceable evidence (`evidence_request` / `evidence_response` on every finding).
 
 This engine is **opt-in** via the `XUANJIAN_TESTFLOW_V2` environment flag (`census` / `playbook` / `full`). When the flag is unset, the legacy 8-phase pipeline above runs unchanged. See `core/testflow/engine.py`.
+
+> **Phase vs. Stage naming**: the legacy pipeline above uses **Phase** numbering (`0 / 1 / 1.5 / 2 / 2.5 / 2.55 / 2.6 / 3`). The next-gen `core/testflow/` engine uses a separate **Stage** numbering (`Stage 0.1–0.4 → 1.1–1.5 → 2.G1–2.6 → 3.G3 → 4.G5 → 5.G6`, see `hollowing-optimization-plan/plan/TECH_IMPL_XUANJIAN_ADAPT_0919_v3.md`). The two numbering schemes are **not interchangeable** — e.g. legacy `Phase 1.5` = business understanding, while testflow `Stage 1.5` = domain attribution.
 
 ---
 

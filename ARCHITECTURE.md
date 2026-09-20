@@ -18,8 +18,8 @@
 │  presets · templates · models · auth · system                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Session State Machine                         │
-│   Phase 0 → 0.5 → 1 → 1.5 → 2a/2b → 2.55 → 2.6 → 3          │
-│   (chat_loop.py: 爬虫→业务理解→功能分析→对账→漏洞测试→补测→验证→报告)│
+│   Phase 0 → 1 → 1.5 → 2 → 2.5 → 2.55 → 2.6 → 3          │
+│   (chat_loop.py: 爬虫→功能分析→业务理解→并行测试→对账→补测→验证→报告)│
 ├─────────────────────────────────────────────────────────────────┤
 │                      Core Engine Layer                           │
 │  ┌──────────┐ ┌───────────┐ ┌──────────┐ ┌──────────────────┐  │
@@ -45,6 +45,12 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## 模块级流水线（八阶段编排）
+
+下图以**模块粒度**呈现玄鉴的端到端流水线：从 P0 站点探索（`AutoCrawler`）经 P1 / P1.5 业务理解与功能分析，到 P2 调度（`Orchestrator.dispatch`）分叉为 HTTP 并行（`WorkerAgent ×N`）与浏览器串行（`start_browser_feature_test`），合并后进入补测、三态闭包裁决（`verdict`）、人工复核 gate，最终 P3 报告导出。虚线表示条件 / 回退重测路径；FAST 模式可跳过 1.5 / 2.5 / 2.55 / 2.6 与回退，直达 P3。
+
+![玄鉴模块架构](./xuanjian_module_arch.svg)
+
 ## 核心模块说明
 
 ### 会话状态机 (`core/session/`)
@@ -54,14 +60,15 @@
 | 阶段 | 职责 | 执行者 |
 |------|------|--------|
 | Phase 0 | 站点探索（爬虫 + JS 分析 + 流量 + SPA 降级） | AutoCrawler |
-| Phase 0.5 | 业务理解（语义分析 → 攻击假设） | BusinessUnderstanding |
-| Phase 1 | 功能分析（识别功能点 → Checklist） | AnalyzeWorker |
-| Phase 1.5 | 业务对账（Checklist × 业务理解交叉验证） | 主 Agent |
-| Phase 2a | HTTP 漏洞测试（SQLi/IDOR/未授权…） | 3 子 Agent 并行 |
-| Phase 2b | 浏览器漏洞测试（XSS/CSRF…） | 主 Agent |
+| Phase 1 | 功能分析（识别功能点 → Checklist） | 主 Agent + AnalyzeWorker 子Agent |
+| Phase 1.5 | 业务理解（语义分析 → 攻击假设） | analyze_business |
+| Phase 2 | 并行漏洞测试（HTTP 子Agent + 浏览器项） | run_parallel_test |
+| Phase 2.5 | 业务对账（Checklist × 业务理解交叉验证） | reconcile_loop |
 | Phase 2.55 | 补测（扫描遗漏 API） | SupplementalTestAgent |
 | Phase 2.6 | 危害验证（检测层铁律 + LLM 审核员双重去误报） | HarmValidator |
 | Phase 3 | 汇总报告（覆盖矩阵 + 漏洞详情 + PoC） | 主 Agent |
+
+> **Phase 与 Stage 命名区分**：上表 legacy 流水线用 **Phase** 编号（`0 / 1 / 1.5 / 2 / 2.5 / 2.55 / 2.6 / 3`）；下一代 `core/testflow/` 引擎使用独立的 **Stage** 编号（`Stage 0.1–0.4 → 1.1–1.5 → 2.G1–2.6 → 3.G3 → 4.G5 → 5.G6`，详见 `hollowing-optimization-plan/plan/TECH_IMPL_XUANJIAN_ADAPT_0919_v3.md`）。**两套编号不互通**——例如 legacy `Phase 1.5` = 业务理解，而 testflow `Stage 1.5` = 域归属。
 
 ### 爬虫引擎 (`core/crawler/`)
 

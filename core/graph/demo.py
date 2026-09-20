@@ -24,7 +24,12 @@ import os
 import sqlite3
 import tempfile
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+try:
+    # 新版 langgraph（>=0.3）：SqliteSaver 拆到独立包 langgraph-checkpoint-sqlite
+    from langgraph_checkpoint_sqlite import SqliteSaver
+except ImportError:
+    # 旧版 langgraph：SqliteSaver 仍在主包子模块内
+    from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from xuanjian_graph import build_graph
