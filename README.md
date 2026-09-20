@@ -1,6 +1,8 @@
 # XuanJian — Agentic Security Scanner
 
 > An autonomous penetration testing agent that drives a real browser, intercepts traffic, follows methodology, validates findings, and writes its own report — without ever forgetting a test step.
+>
+> Every finding is attributed to a concrete `(endpoint × vulnerability domain)` pair and tracked on a sparse coverage matrix, so no test step is missed and every endpoint gets a verdict.
 
 **v2.0 Stable** — XuanJian is an actively maintained open-source agentic security scanner.
 The AI-native security testing platform (LLM / Agent / RAG security) builds on the XuanJian engine at [**JianWei**](https://github.com/yzdily/jianwei).
@@ -256,6 +258,16 @@ Eight phases, no human in the loop:
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module-level architecture diagram.
 
+### Next-generation test orchestration (`core/testflow/`, opt-in)
+
+XuanJian is being re-orchestrated around **8 risk domains** — `authz`, `csrf`, `upload`, `ssrf`, `injection`, `file`, `business`, `config` — derived from battle-tested bug-legacy methodology. This replaces ad-hoc per-phase logic with deterministic, domain-driven testing:
+
+- **Domain attribution** — each endpoint is classified into one or more risk domains (a single endpoint can belong to several domains), so multi-domain endpoints are tested against every relevant domain.
+- **Sparse coverage matrix** — every finding is tagged with its `(endpoint, vuln_domain)` pair and marked across five states (`verified` / `pending` / `no_issue` / `ruled_out` / `not_applicable`), giving per-endpoint, per-domain proof of coverage.
+- **Seven gates (G0–G6)** — authorization → endpoint-reality → response-reality → pairing-integrity → vuln-verification → coverage-integrity → report gates run throughout the pipeline to suppress false positives and guarantee traceable evidence (`evidence_request` / `evidence_response` on every finding).
+
+This engine is **opt-in** via the `XUANJIAN_TESTFLOW_V2` environment flag (`census` / `playbook` / `full`). When the flag is unset, the legacy 8-phase pipeline above runs unchanged. See `core/testflow/engine.py`.
+
 ---
 
 ## Knowledge base
@@ -392,6 +404,7 @@ taskkill /F /PID <pid>       # force
 |---|---|---|
 | `WEB_PORT` | `7788` | Web UI listen port |
 | `PROXY_PORT` | `18080` | mitmproxy proxy port |
+| `XUANJIAN_TESTFLOW_V2` | _(unset)_ | Opt-in next-gen test orchestration: `census` (attribution + census only), `playbook` (+ domain playbooks), `full` (all gates). Unset = legacy 8-phase pipeline. |
 
 ---
 

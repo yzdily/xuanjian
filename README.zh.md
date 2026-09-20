@@ -2,6 +2,8 @@
 
 **一个会操作浏览器、会抓包改包、会按照方法论执行、会自己验证漏洞的自动化渗透测试 Agent**
 
+> 每条漏洞都归属到具体的「接口 × 漏洞域」坐标，并记录在稀疏覆盖矩阵上——既不遗漏任何测试步骤，也能给每个接口一个明确结论。
+
 > **v2.0 稳定版** — 玄鉴是一个持续维护的开源智能渗透测试引擎。
 > LLM/Agent/RAG 安全测试能力在 [**鉴微 JianWei**](https://github.com/yzdily/jianwei) 中基于玄鉴引擎持续演进。
 > 详见 [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md)
@@ -253,6 +255,16 @@ cd burp-plugin && ./gradlew jar
 
 > **扫描模式**：深度维度（FAST/STANDARD/DEEP/SMART，对应 `ScanMode` / `session.user_scan_mode`）与编排维度（Batch/Realtime/Packet，对应 `session.scan_mode`）两个正交维度独立选择，详见下方「扫描模式」章节。
 
+### 新一代测试编排（`core/testflow/`，可选启用）
+
+玄鉴正在围绕 **8 个风险域** —— `authz`（授权）、`csrf`、`upload`（上传）、`ssrf`、`injection`（注入）、`file`（文件）、`business`（业务逻辑）、`config`（配置）—— 重组测试流，该分类源自实战验证的 bug-legacy 方法论。它以确定性的「按域归属测试」取代原先分散在各阶段的临时逻辑：
+
+- **漏洞域归属**：每个接口端点会被归类到一个或多个风险域（一个端点可命中多个域），多域端点会对每个相关域逐一测试。
+- **稀疏覆盖矩阵**：每条漏洞都带上其 `(接口, 漏洞域)` 坐标，并标记为五种状态（`verified` 已确认 / `pending` 待复核 / `no_issue` 无问题 / `ruled_out` 已排除 / `not_applicable` 不适用），为「每个接口 × 每个域」提供覆盖证明。
+- **七道闸门（G0–G6）**：授权门 → 端点真实性门 → 响应真实性门 → 配对完整性门 → 漏洞验证门 → 覆盖完整性门 → 报告门，贯穿全流程，压制误报并确保每条漏洞都带可追溯证据（`evidence_request` / `evidence_response`）。
+
+该引擎通过环境变量 `XUANJIAN_TESTFLOW_V2`（`census` / `playbook` / `full`）**可选启用**。未设置该 flag 时，上方传统的 8 相位流程保持不变。详见 `core/testflow/engine.py`。
+
 ---
 
 ## 知识库
@@ -383,6 +395,7 @@ taskkill /F /PID <pid>       # 强制结束
 |---|---|---|
 | `WEB_PORT` | `7788` | Web UI 监听端口 |
 | `PROXY_PORT` | `18080` | mitmproxy 代理端口 |
+| `XUANJIAN_TESTFLOW_V2` | _(未设置)_ | 可选启用新一代测试编排：`census`（仅归属+普查）、`playbook`（+ 域 playbook）、`full`（全部闸门）。未设置 = 传统 8 相位流程。 |
 
 ---
 
