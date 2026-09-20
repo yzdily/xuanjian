@@ -497,6 +497,64 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
             log.warning("Phase 2.7 loop deep dive crashed: %s", _e, exc_info=True)
             yield session._event("system", f"⚠️ Phase 2.7 LOOP 深挖异常（不影响主报告）: {str(_e)[:200]}")
 
+    # ★ testflow G6 前置（v3 §五 Stage 5）：GATE-TRI 六项准入 —— finish_scan 前插。
+    # engine.finish() 已备（core/testflow/engine.py）；对 sitemap 汇总的
+    # VULNERABLE/CONFIRMED findings 跑溯源门 + verdict 三道门：
+    #   缺 evidence_request/response → 转人工复核（NEEDS_REVIEW，不入库不静默删）；
+    #   verdict 三道门未过 → severity 降 Info 留人工复核。
+    # XUANJIAN_GATE_TRI=0 可关闭（兼容存量回归钉）。
+    if session.sitemap and os.getenv("XUANJIAN_GATE_TRI", "1") != "0":
+        try:
+            from core.testflow.engine import TestflowEngine
+            _gate_findings: list[dict] = []
+            for fp in session.sitemap.features.values():
+                for c in fp.checklist:
+                    if c.result and c.result.name in ("VULNERABLE", "CONFIRMED"):
+                        _gate_findings.append({
+                            "vuln_type": c.vuln_type,
+                            "severity": (getattr(c, "severity", "medium") or "medium"),
+                            "url": (", ".join(fp.related_apis[:2]) if fp.related_apis else "") or fp.page_url,
+                            "method": "",
+                            "detail": c.detail or "",
+                            "evidence_request": getattr(c, "evidence_request", "") or getattr(c, "evidence_flow_id", "") or (c.detail or "")[:300],
+                            "evidence_response": getattr(c, "evidence_response", "") or (c.detail or "")[300:800],
+                            "evidence": getattr(c, "evidence_request", "") or (c.detail or "")[:300],
+                            "response": getattr(c, "evidence_response", "") or (c.detail or "")[300:800],
+                            "_check": c,
+                        })
+            if _gate_findings:
+                _tf_engine = TestflowEngine(session, session.sitemap)
+                _admitted, _blocked = _tf_engine.finish(_gate_findings)
+                _n_block = _n_demote = 0
+                for f in _gate_findings:
+                    c = f["_check"]
+                    if f.get("_triage_blocked"):
+                        c.result = CheckResult.NEEDS_REVIEW
+                        c.detail = (f"[GATE-TRI] {f.get('_triage_reason', '缺溯源证据')}（转人工复核，不入报告）\n"
+                                    + (c.detail or ""))[:800]
+                        _n_block += 1
+                    elif f.get("_fp_downgraded"):
+                        c.severity = "info"
+                        c.detail = (f"[GATE-TRI] {f.get('_triage_reason', '')}（降 Info 留人工复核）\n"
+                                    + (c.detail or ""))[:800]
+                        _n_demote += 1
+                session.sitemap.triage_gate = {
+                    "total": len(_gate_findings),
+                    "admitted": len(_gate_findings) - _n_block - _n_demote,
+                    "demoted": _n_demote,
+                    "blocked": _n_block,
+                }
+                yield session._event("system",
+                    f"🚧 GATE-TRI 准入: {len(_gate_findings)} 条 → "
+                    f"通过 {len(_gate_findings) - _n_block - _n_demote} / "
+                    f"降级 {_n_demote} / 转人工复核 {_n_block}")
+                try:
+                    session.sitemap.save()
+                except OSError:
+                    pass
+        except Exception as e:
+            log.warning("GATE-TRI 异常（不影响报告主流程）: %s", e, exc_info=True)
+
     session.phase = "report"
     # 持久化扫描完成状态
     from core.scan_store import finish_scan as _finish_scan, upsert_vuln
@@ -523,6 +581,19 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
         except Exception as _e:
             log.warning("coverage integration export failed: %s", _e, exc_info=True)
     cov = session.sitemap.get_coverage() if session.sitemap else {"coverage": 0, "vulns": 0}
+
+    # ★ testflow Stage 5（v3 §〇 0.4）：稀疏矩阵全图落盘（漏洞域 × 接口五态格）
+    _matrix_path = ""
+    if session.sitemap:
+        try:
+            from core.testflow.matrix_render import write_matrix_report
+            _matrix_path = write_matrix_report(session.sitemap, session)
+            if _matrix_path:
+                yield session._event("system", f"📊 稀疏矩阵全图已生成: {_matrix_path}")
+                cov_summary_text = (cov_summary_text + "；" if cov_summary_text else "") + \
+                    f"稀疏矩阵全图 {_matrix_path}"
+        except Exception as _e:
+            log.warning("sparse matrix render failed: %s", _e, exc_info=True)
 
     # ★ 记录 Phase 状态与终止原因到 sitemap
     if session.sitemap:
@@ -618,6 +689,7 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
             "\n\n【覆盖骨架补充要求】报告须包含以下章节（数据已落盘于 "
             "data/scan_artifacts/ 下 coverage_report.md / report.sarif / stride_summary.md）：\n"
             f"- 覆盖摘要：{cov_summary_text}\n"
+            "- 「稀疏矩阵全图」：漏洞域 × 接口五态格表（matrix_report.md 已落盘，须原样嵌入报告）；\n"
             "- 「域级结论表」：按风险域聚合 已测/缺失/高风险未覆盖；\n"
             "- 「未覆盖声明」：列出期望漏洞类型未实测的端点（需补测或显式 ruled_out）；\n"
             "- 「STRIDE 威胁建模聚合」：按 S/T/R/I/D/E 归类已确认漏洞。"

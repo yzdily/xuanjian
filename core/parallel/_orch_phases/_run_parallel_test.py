@@ -124,17 +124,67 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
         log.warning("幽灵端点过滤异常（不影响主流程）: %s", e)
 
     # ---- Step 1: deferred 功能点批量测未授权访问（纯代码，极快） ----
-    deferred_fps = [fp for fp in untested if fp.deferred and len(fp.checklist) == 1
-                    and fp.checklist[0].vuln_type == "未授权访问"]
-    if deferred_fps:
+    # ★ testflow 灰度（v3 §七）：XUANJIAN_TESTFLOW_V2=census|playbook|full 启用时
+    # census_endpoint 接管全端点普查（G1+G2 双请求 + 反哺归属 + 五态写格）；
+    #   census 档：普查后继续存量流程（普查结论只做增强，零回归风险）；
+    #   playbook/full 档：普查后由 engine 跑 Stage 3 域内测试并直进报告
+    #   （legacy FastScanner 广扫/LLM 分组跳过——普查+域内即全部请求面）。
+    # 未设 flag 时走存量 deferred 批测路径，53 回归钉不动。
+    _testflow_flag = os.getenv("XUANJIAN_TESTFLOW_V2", "").strip().lower()
+    if _testflow_flag in ("census", "playbook", "full"):
+        from core.parallel.batch_test import census_endpoint
         yield session._event("system",
-            f"⚡ 批量 deferred 未授权访问: {len(deferred_fps)} 个")
-        batch_result = await _batch_test_unauth(session, deferred_fps)
-        yield session._event("system",
-            f"⚡ deferred 完成: {batch_result['tested']} 已测, "
-            f"{batch_result['accessible']} 可未授权访问, {batch_result['blocked']} 需认证")
-        tested_ids = {fp.id for fp in deferred_fps}
-        untested = [fp for fp in untested if fp.id not in tested_ids]
+            f"📊 资产账本: {len(untested)} 端点进入普查（G1 端点真实性门 + G2 响应真实性门）")
+        _tf_session_info: dict = {}
+        try:
+            from core.parallel.session_info import get_session_info as _get_session_info
+            from core.session import cred_scope as _cred_scope
+            _tf_session_info = await _get_session_info(_cred_scope.current_target_url())
+        except Exception as _e:
+            log.debug("testflow 普查取 session_info 失败（降级无认证普查）: %s", _e)
+        async for _cevt in census_endpoint(session, untested, session_info=_tf_session_info):
+            yield _cevt
+
+        if _testflow_flag in ("playbook", "full"):
+            # ---- Stage 3: engine 域内测试（三执行者 local/llm/tool）----
+            from core.testflow.engine import TestflowEngine
+            from core.testflow.local_runner import make_local_runner
+            from core.testflow.llm_dispatcher import make_llm_dispatcher
+            _engine = TestflowEngine(
+                session, session.sitemap,
+                local_runner=make_local_runner(session, _tf_session_info),
+                llm_dispatcher=make_llm_dispatcher(session, _tf_session_info),
+                mode="SMART",
+            )
+            async for _eevt in _engine.run(untested, census_summary=getattr(session, "_census_summary", None)):
+                yield _eevt
+            # ---- Stage 4.1: 覆盖盲区显式化（R3 全量原则，不静默缺位）----
+            _gaps = _engine.detect_gaps(untested)
+            if _gaps:
+                yield session._event("system",
+                    f"🕳️ 覆盖盲区: {len(_gaps)} 格 needs_follow_up（显式未闭环，报告中声明）")
+            if session.sitemap:
+                session.sitemap.save()
+            async for evt in _enter_report_phase(session):
+                yield evt
+            return
+
+        # census 档：deferred 单项功能点已被普查覆盖（L1 保 PENDING / L2/L3 结案），
+        # 跳过 legacy 批测避免重复请求
+        _census_done_ids = {fp.id for fp in untested if fp.deferred}
+        untested = [fp for fp in untested if fp.id not in _census_done_ids]
+    else:
+        deferred_fps = [fp for fp in untested if fp.deferred and len(fp.checklist) == 1
+                        and fp.checklist[0].vuln_type == "未授权访问"]
+        if deferred_fps:
+            yield session._event("system",
+                f"⚡ 批量 deferred 未授权访问: {len(deferred_fps)} 个")
+            batch_result = await _batch_test_unauth(session, deferred_fps)
+            yield session._event("system",
+                f"⚡ deferred 完成: {batch_result['tested']} 已测, "
+                f"{batch_result['accessible']} 可未授权访问, {batch_result['blocked']} 需认证")
+            tested_ids = {fp.id for fp in deferred_fps}
+            untested = [fp for fp in untested if fp.id not in tested_ids]
 
     if not untested:
         async for evt in _enter_report_phase(session):
@@ -285,30 +335,34 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
         from core.sitemap import CheckResult
         # ★ OPT2: FAST 模式保底清单 — 5 项检测已由 FastScanner 本地规则执行，
         # 不应标记为"跳过"，而应标记为"FastScanner 保底检测"。
-        # 英文规则名 → 中文 vuln_type 映射（与 fast_scanner.py 中 vuln_type 一致）
+        # ★ testflow（v3 Stage 2）：XUANJIAN_TESTFLOW_V2 启用时保底清单退役——
+        # census 普查即全端点最低覆盖（G1/G2 已给每端点结论），无需保底特判。
+        _tf_on = _testflow_flag in ("census", "playbook", "full")
         _minimal_vuln_types: set[str] = set()
-        _RULE_TO_VULN_TYPE = {
-            "sql_injection": {"SQL注入"},
-            "unauthorized_access": {"未授权访问", "IDOR"},
-            "info_disclosure": {"信息泄露"},
-            "weak_password": {"弱口令"},
-            "cors": {"CORS配置错误"},
-        }
-        for _rule in (getattr(scan_cfg, 'fast_minimal_checks', None) or []):
-            _minimal_vuln_types.update(_RULE_TO_VULN_TYPE.get(_rule, set()))
+        if not _tf_on:
+            _RULE_TO_VULN_TYPE = {
+                "sql_injection": {"SQL注入"},
+                "unauthorized_access": {"未授权访问", "IDOR"},
+                "info_disclosure": {"信息泄露"},
+                "weak_password": {"弱口令"},
+                "cors": {"CORS配置错误"},
+            }
+            for _rule in (getattr(scan_cfg, 'fast_minimal_checks', None) or []):
+                _minimal_vuln_types.update(_RULE_TO_VULN_TYPE.get(_rule, set()))
 
         _minimal_kept = 0
         for fp in untested:
             for c in fp.checklist:
                 if c.result == CheckResult.PENDING:
-                    if c.vuln_type in _minimal_vuln_types:
+                    if not _tf_on and c.vuln_type in _minimal_vuln_types:
                         # 保底检测项：FastScanner 已执行但无命中
                         c.result = CheckResult.NOT_VULN
                         c.detail = "FastScanner 保底检测（本地规则已执行，无命中）"
                         _minimal_kept += 1
                     else:
                         c.result = CheckResult.SKIPPED
-                        c.detail = "快速模式跳过 LLM"
+                        c.detail = ("普查（G1/G2）已覆盖最低覆盖，FAST 模式跳过 LLM 深挖"
+                                    if _tf_on else "快速模式跳过 LLM")
             if fp.test_status == TestStatus.NOT_TESTED:
                 fp.test_status = TestStatus.TESTED
         if _minimal_kept > 0:
