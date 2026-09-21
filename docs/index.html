@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XuanJian 玄鉴 · 自主验证漏洞的自动化渗透测试 Agent 框架 (xuanjian)</title>
+  <meta name="description" content="XuanJian（玄鉴，项目代号 xuanjian）是一个 agentic 自动化渗透测试框架 / AI 安全测试 Agent：驱动浏览器爬取、拦截流量，按阶段方法论（爬虫→分析→并行测试→三态闭包验证→报告）自主执行红队任务并验证漏洞。开源 MIT 许可。" />
+  <meta name="keywords" content="xuanjian, 玄鉴, XuanJian, 渗透测试, 自动化渗透测试, pentest, AI pentest, 安全测试, 漏洞扫描, 漏洞验证, 红队, red team, agentic security, offensive security, LLM agent, 自主验证漏洞" />
+  <meta name="author" content="yzdily" />
+  <link rel="canonical" href="https://yzdily.github.io/xuanjian/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="XuanJian 玄鉴 · 自主验证漏洞的自动化渗透测试 Agent 框架" />
+  <meta property="og:description" content="xuanjian 是一个 agentic 自动化渗透测试框架：驱动浏览器爬取、拦截流量，按阶段方法论自主执行红队任务并验证漏洞。" />
+  <meta property="og:url" content="https://yzdily.github.io/xuanjian/" />
+  <meta property="og:image" content="https://raw.githubusercontent.com/yzdily/xuanjian/main/image/首页.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="sitemap" type="application/xml" href="https://yzdily.github.io/xuanjian/sitemap.xml" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "XuanJian (玄鉴)",
+    "alternateName": "xuanjian",
+    "description": "XuanJian（玄鉴，项目代号 xuanjian）是一个 agentic 自动化渗透测试框架 / AI 安全测试 Agent：驱动浏览器爬取、拦截流量，按阶段方法论自主执行红队任务并验证漏洞。",
+    "applicationCategory": "SecurityApplication",
+    "applicationSubCategory": "Penetration Testing",
+    "operatingSystem": "Windows, macOS, Linux, Docker",
+    "url": "https://github.com/yzdily/xuanjian",
+    "codeRepository": "https://github.com/yzdily/xuanjian",
+    "downloadUrl": "https://github.com/yzdily/xuanjian",
+    "license": "https://opensource.org/licenses/MIT",
+    "author": { "@type": "Person", "name": "yzdily", "url": "https://github.com/yzdily" },
+    "programmingLanguage": "Python",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-soft: #161b22;
+      --card: #1c2330;
+      --border: #2a3340;
+      --text: #e6edf3;
+      --muted: #9aa7b4;
+      --brand: #4f8cff;
+      --brand-2: #2dd4bf;
+      --accent: #f472b6;
+      --radius: 14px;
+      --maxw: 1040px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
+    header.nav {
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(8px);
+      background: rgba(13,17,23,0.82);
+      border-bottom: 1px solid var(--border);
+    }
+    header.nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 58px; }
+    .logo { font-weight: 800; letter-spacing: .3px; font-size: 18px; }
+    .logo .accent { color: var(--brand-2); }
+    nav.links a { color: var(--muted); margin-left: 18px; font-size: 14px; }
+    nav.links a:hover { color: var(--text); }
+    .hero {
+      padding: 72px 0 56px;
+      background:
+        radial-gradient(1100px 420px at 15% -10%, rgba(79,140,255,0.18), transparent 60%),
+        radial-gradient(900px 380px at 95% 0%, rgba(45,212,191,0.14), transparent 60%);
+      border-bottom: 1px solid var(--border);
+    }
+    .badge {
+      display: inline-block; padding: 5px 12px; border: 1px solid var(--border);
+      border-radius: 999px; font-size: 12.5px; color: var(--muted); margin-bottom: 18px;
+    }
+    .badge b { color: var(--brand-2); }
+    h1 { font-size: clamp(30px, 5vw, 50px); line-height: 1.12; margin: 0 0 14px; font-weight: 800; }
+    h1 .g { background: linear-gradient(90deg, var(--brand), var(--brand-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p.lead { font-size: 18px; color: var(--muted); max-width: 760px; margin: 0 0 26px; }
+    .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 11px 20px; border-radius: 10px; font-weight: 600; font-size: 15px;
+      border: 1px solid transparent;
+    }
+    .btn.primary { background: var(--brand); color: #06101f; }
+    .btn.primary:hover { background: #6ba0ff; text-decoration: none; }
+    .btn.ghost { border-color: var(--border); color: var(--text); background: var(--bg-soft); }
+    .btn.ghost:hover { border-color: var(--brand); text-decoration: none; }
+    section { padding: 48px 0; border-bottom: 1px solid var(--border); }
+    section h2 { font-size: 26px; margin: 0 0 8px; font-weight: 750; }
+    section .sub { color: var(--muted); margin: 0 0 26px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    @media (max-width: 760px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 20px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 17px; color: var(--text); }
+    .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14.5px; margin-top: 6px; }
+    th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    td b { color: var(--brand-2); }
+    .phase-list { counter-reset: p; display: grid; gap: 10px; }
+    .phase {
+      display: flex; gap: 14px; align-items: flex-start;
+      background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;
+    }
+    .phase .num {
+      flex: 0 0 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: #06101f; font-weight: 800;
+    }
+    .phase .body h4 { margin: 0 0 3px; font-size: 15.5px; }
+    .phase .body p { margin: 0; color: var(--muted); font-size: 13.5px; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    pre {
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px; overflow: auto; font-size: 13.5px; line-height: 1.6;
+    }
+    pre code { color: #cfe3ff; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); color: var(--muted); margin: 2px 4px 2px 0; }
+    .pill.hot { color: var(--accent); border-color: rgba(244,114,182,0.4); }
+    footer { padding: 32px 0 48px; color: var(--muted); font-size: 13.5px; }
+    footer a { color: var(--muted); }
+    .note { font-size: 13px; color: var(--muted); border-left: 3px solid var(--brand); padding: 8px 14px; background: var(--bg-soft); border-radius: 0 8px 8px 0; margin-top: 18px; }
+    .kw { color: var(--brand-2); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <div class="logo">Xuan<span class="accent">Jian</span> <span style="color:var(--muted);font-weight:500;font-size:14px;">玄鉴</span></div>
+      <nav class="links">
+        <a href="#about">简介</a>
+        <a href="#capabilities">能力</a>
+        <a href="#phases">方法论</a>
+        <a href="#coverage">漏洞覆盖</a>
+        <a href="#start">快速开始</a>
+        <a href="https://github.com/yzdily/xuanjian" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="wrap">
+      <span class="badge">开源 · MIT · 跨平台 · <b>agentic pentest</b></span>
+      <h1>自主验证漏洞的<br /><span class="g">自动化渗透测试 Agent</span></h1>
+      <p class="lead">
+        <strong>XuanJian（玄鉴，项目代号 <span class="kw">xuanjian</span>）</strong> 是一个 <span class="kw">agentic</span> 自动化渗透测试框架。
+        它驱动浏览器爬取、拦截并改写流量，按阶段方法论（爬虫 → 分析 → 并行编排测试 → 三态闭包验证 → 报告）自主执行红队任务，
+        并对每一个发现独立验证、抑制误报——像一个不会漏掉任何测试步骤的人类渗透测试专家。
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/yzdily/xuanjian" target="_blank" rel="noopener">★ 在 GitHub 上查看 xuanjian</a>
+        <a class="btn ghost" href="#start">快速开始</a>
+        <a class="btn ghost" href="https://yzdily.github.io/xuanjian/README.zh.html" target="_blank" rel="noopener">中文文档</a>
+      </div>
+    </div>
+  </div>
+
+  <main class="wrap">
+
+    <section id="about">
+      <h2>什么是 xuanjian？</h2>
+      <p class="sub">XuanJian（读作「玄鉴」，仓库代号 <span class="kw">xuanjian</span>）把传统扫描器、AI 辅助分析与人类渗透测试员的经验编码进同一套可执行的智能体。</p>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>它不是签名扫描器</h3>
+          <p>xuanjian 像人一样工作：驱动浏览器、拦截并改写流量、推理业务逻辑、构造 payload、验证漏洞、抑制误报——但永远不会忘记某一步测试。</p>
+        </div>
+        <div class="card">
+          <h3>每个发现都可归因</h3>
+          <p>每个漏洞都归属到具体的 <span class="mono">(endpoint × 漏洞域)</span> 对，并在稀疏覆盖矩阵上追踪状态，确保不漏测、每个端点都有结论。</p>
+        </div>
+        <div class="card">
+          <h3>自主验证，而非报告即信</h3>
+          <p>独立的 LLM 审计员核验真实危害，检测层硬规则在检测当下就拦截误报，即使不开危害验证的 FAST 模式也保持干净。</p>
+        </div>
+        <div class="card">
+          <h3>可生长的技能库</h3>
+          <p>把你的渗透测试经验编码为 SKILL 方法论，xuanjian 会随你一起成长；内置 discovery / exploit 技能库均为 MIT 许可。</p>
+        </div>
+      </div>
+      <div class="note">
+        法律声明：xuanjian 仅用于<strong>合法授权</strong>的安全测试。使用前必须获得目标系统所有者的明确书面授权，并遵守所有适用法律法规。未授权使用属犯罪行为。详见 <a href="https://github.com/yzdily/xuanjian/blob/main/DISCLAIMER.md" target="_blank" rel="noopener">DISCLAIMER.md</a>。
+      </div>
+    </section>
+
+    <section id="capabilities">
+      <h2>核心能力</h2>
+      <p class="sub">xuanjian 覆盖从单 URL 到凭据登录、从批处理到实时的端到端渗透测试。</p>
+      <table>
+        <thead><tr><th>能力</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td><b>URL 端到端渗透</b></td><td>输入目标 URL —— 爬虫 → 分析 → 测试 → 报告，全自动。</td></tr>
+          <tr><td><b>凭据式渗透</b></td><td>输入用户名/密码 + URL，自动登录后测试。</td></tr>
+          <tr><td><b>凭据注入</b></td><td>输入 Cookie / JWT / Header，绕过登录直接测试。</td></tr>
+          <tr><td><b>手动登录捕获</b></td><td>Playwright 有头模式，交互捕获 Cookie/Token/Authorization，支持验证码。</td></tr>
+          <tr><td><b>SPA 智能降级</b></td><td>自动识别 Vue / React / Angular，链接不足时切换手动浏览 + 流量录制。</td></tr>
+          <tr><td><b>验证码 OCR</b></td><td>内置图片验证码 OCR，复杂验证码支持人工介入。</td></tr>
+          <tr><td><b>自定义 SKILL</b></td><td>把你的渗透测试经验编码为方法论，xuanjian 持续成长。</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:28px;">两种正交的扫描维度</h3>
+      <p class="sub">xuanjian 的「扫描模式」由<strong>两个正交维度</strong>决定，避免语义混淆。</p>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>维度一 · 扫描深度</h3>
+          <p><span class="pill">FAST 无 LLM</span> <span class="pill">STANDARD 轻量</span> <span class="pill">DEEP 全链路</span> <span class="pill">SMART 自适应</span></p>
+        </div>
+        <div class="card">
+          <h3>维度二 · 编排方式</h3>
+          <p><span class="pill">Batch 整站</span> <span class="pill">Realtime 边点边测</span> <span class="pill">Packet 单包全检</span></p>
+        </div>
+      </div>
+
+      <h3 style="margin-top:28px;">工程化特性</h3>
+      <div class="grid cols-3">
+        <div class="card"><h3>多会话管理</h3><p>并发运行多个渗透任务（含并发上限）。</p></div>
+        <div class="card"><h3>流量管理</h3><p>查看、搜索、重放所有 mitmproxy 流量。</p></div>
+        <div class="card"><h3>决策回放</h3><p>逐步回退任意渗透动作的 LLM 决策链。</p></div>
+        <div class="card"><h3>经验沉淀</h3><p>从历史发现自动学习，复用至相似目标。</p></div>
+        <div class="card"><h3>合规报告</h3><p>内置合规模板，含漏洞统计与修复跟踪。</p></div>
+        <div class="card"><h3>热切换模型</h3><p>10+ LLM 提供商，Web UI 内一键切换。</p></div>
+      </div>
+    </section>
+
+    <section id="phases">
+      <h2>八阶段方法论（无人在环）</h2>
+      <p class="sub">xuanjian 的流水线由真实的 <span class="mono">core.*</span> 模块驱动，每个阶段都可独立验证。</p>
+      <div class="phase-list">
+        <div class="phase"><div class="num">0</div><div class="body"><h4>站点探索</h4><p>爬虫 + JS 分析 + 流量捕获 + SPA 降级（AutoCrawler）。</p></div></div>
+        <div class="phase"><div class="num">1</div><div class="body"><h4>功能分析</h4><p>识别功能 → 生成测试清单（Main Agent + AnalyzeWorker）。</p></div></div>
+        <div class="phase"><div class="num">1.5</div><div class="body"><h4>业务理解</h4><p>语义分析 → 攻击假设（analyze_business）。</p></div></div>
+        <div class="phase"><div class="num">2</div><div class="body"><h4>并行漏洞测试</h4><p>HTTP 子智能体 + 浏览器项并行执行（Orchestrator）。</p></div></div>
+        <div class="phase"><div class="num">2.5</div><div class="body"><h4>业务对账</h4><p>清单 × 业务理解交叉验证（reconcile_loop）。</p></div></div>
+        <div class="phase"><div class="num">2.55</div><div class="body"><h4>补测</h4><p>对新发现的 API 自动补测（SupplementalTestAgent）。</p></div></div>
+        <div class="phase"><div class="num">2.6</div><div class="body"><h4>危害验证</h4><p>三态闭包裁决 + 误报抑制（HarmValidator / verdict）。</p></div></div>
+        <div class="phase"><div class="num">3</div><div class="body"><h4>报告聚合</h4><p>覆盖矩阵 + 漏洞详情 + 修复建议 + PoC（Main Agent）。</p></div></div>
+      </div>
+      <p class="sub" style="margin-top:18px;">下一代编排引擎 <span class="mono">core/testflow/</span>（opt-in，环境变量 <span class="mono">XUANJIAN_TESTFLOW_V2</span>）围绕 8 大风险域（authz / csrf / upload / ssrf / injection / file / business / config）与稀疏覆盖矩阵、七道门控（G0–G6）进一步 deterministic 化测试。</p>
+    </section>
+
+    <section id="coverage">
+      <h2>漏洞覆盖</h2>
+      <p class="sub">浏览器驱动 + 流量拦截 + LLM 深度分析，自动发现并验证：</p>
+      <div class="grid cols-2">
+        <div class="card"><h3>Web 注入</h3><p>SQL 注入（内置 Fuzz 引擎）、XSS（反射/存储/DOM，13 步专用引擎）。</p></div>
+        <div class="card"><h3>认证授权</h3><p>IDOR、认证绕过、越权访问。</p></div>
+        <div class="card"><h3>服务端</h3><p>SSRF（含 OOB 带外验证 + 危害证明）、信息泄露、条件竞争。</p></div>
+        <div class="card"><h3>业务逻辑</h3><p>验证码绕过、用户枚举、业务逻辑分析。</p></div>
+        <div class="card"><h3>其他</h3><p>CSRF、XXE、SSTI、文件上传、路径遍历、命令注入。</p></div>
+        <div class="card"><h3>亮点</h3><p>危害验证达 SRC 标准；自动生成可运行 PoC；可插拔自定义 SKILL。</p></div>
+      </div>
+    </section>
+
+    <section id="fp">
+      <h2>误报防护（FP 铁律）</h2>
+      <p class="sub">xuanjian 借鉴 <a href="https://github.com/yzdily/api-pentest-extension" target="_blank" rel="noopener">api-pentest-extension</a> 的 FP 判定铁律，由<strong>检测层</strong>（而非事后 LLM 仲裁）强制执行确定性过滤：</p>
+      <table>
+        <thead><tr><th>层级</th><th>机制</th><th>覆盖</th></tr></thead>
+        <tbody>
+          <tr><td>业务错误码解析</td><td>HTTP 200 但 <span class="mono">code:500/未登录</span> → 不报越权</td><td>越权 / CORS / 信息泄露</td></tr>
+          <tr><td>空数据检测</td><td>200 但 <span class="mono">data:null/[]</span> → 不报数据泄露</td><td>越权 / CORS</td></tr>
+          <tr><td>WAF 拦截页识别</td><td>403/418/429 + 拦截关键词 → 跳过</td><td>路径遍历 / 命令注入 / SSRF</td></tr>
+          <tr><td>SQL 布尔盲注 3 层校验</td><td>True≈基线 且 False=WAF/报错 → 跳过</td><td>SQL 注入</td></tr>
+          <tr><td>时间盲注二次复现</td><td>延迟 ≥3.5s 且可复现，单次命中视为抖动</td><td>SQL 注入</td></tr>
+          <tr><td>XSS 可执行上下文</td><td>落在 HTML 注释/纯 JSON → 降级为弱证据</td><td>XSS</td></tr>
+          <tr><td>证据质量分级</td><td>所有发现标记 <span class="mono">body_confirmed/header_only</span></td><td>全部</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="entry">
+      <h2>多种入口</h2>
+      <div class="grid cols-3">
+        <div class="card"><h3>Web UI</h3><p>对话式交互、多会话、实时报告、凭据注入登录。</p></div>
+        <div class="card"><h3>Burp Suite 插件</h3><p>右键发送 + 被动扫描 + SSE 反馈。</p></div>
+        <div class="card"><h3>REST API</h3><p>第三方集成与 CI/CD 流水线。</p></div>
+      </div>
+    </section>
+
+    <section id="start">
+      <h2>快速开始</h2>
+      <p class="sub">要求：Python ≥ 3.10、Git、约 500MB 空间（Playwright Chromium）。</p>
+      <h3>方式一 · 一行命令</h3>
+      <pre><code># macOS / Linux
+git clone https://github.com/yzdily/xuanjian.git
+cd xuanjian
+./start.sh
+
+# Windows (PowerShell)
+git clone https://github.com/yzdily/xuanjian.git
+cd xuanjian
+.\start.ps1</code></pre>
+      <h3 style="margin-top:22px;">方式二 · 手动步骤</h3>
+      <pre><code>git clone https://github.com/yzdily/xuanjian.git
+cd xuanjian
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+cp .env.example .env        # 编辑 .env 填入你的 LLM API Key
+python start.py             # 打开 http://localhost:7788</code></pre>
+      <h3 style="margin-top:22px;">方式三 · Docker</h3>
+      <pre><code>git clone https://github.com/yzdily/xuanjian.git
+cd xuanjian
+docker compose up -d        # 访问 http://localhost:7788</code></pre>
+      <div class="note">启动后首次运行会在 <strong>Settings → Models</strong> 提示添加 LLM API Key；容器以非 root 运行、丢弃全部能力、仅绑定 127.0.0.1。</div>
+    </section>
+
+    <section id="resources">
+      <h2>资源与链接</h2>
+      <div class="grid cols-2">
+        <div class="card"><h3>GitHub 仓库</h3><p><a href="https://github.com/yzdily/xuanjian" target="_blank" rel="noopener">github.com/yzdily/xuanjian</a> — 源码、Issue、Release。</p></div>
+        <div class="card"><h3>架构文档</h3><p><a href="https://github.com/yzdily/xuanjian/blob/main/ARCHITECTURE.md" target="_blank" rel="noopener">ARCHITECTURE.md</a> — 模块级流水线全图。</p></div>
+        <div class="card"><h3>中文文档</h3><p><a href="https://github.com/yzdily/xuanjian/blob/main/README.zh.md" target="_blank" rel="noopener">README.zh.md</a> — 中文说明。</p></div>
+        <div class="card"><h3>技能贡献指南</h3><p><a href="https://github.com/yzdily/xuanjian/blob/main/CONTRIBUTING_SKILLS.md" target="_blank" rel="noopener">CONTRIBUTING_SKILLS.md</a> — 编写你的 SKILL。</p></div>
+        <div class="card"><h3>下一代编排</h3><p><a href="https://github.com/yzdily/xuanjian/blob/main/XUANJIAN_TESTFLOW_SKILLS.md" target="_blank" rel="noopener">XUANJIAN_TESTFLOW_SKILLS.md</a>。</p></div>
+        <div class="card"><h3>法律声明</h3><p><a href="https://github.com/yzdily/xuanjian/blob/main/DISCLAIMER.md" target="_blank" rel="noopener">DISCLAIMER.md</a> — 仅限合法授权测试。</p></div>
+      </div>
+      <p class="sub" style="margin-top:22px;">想了解更多关于 <span class="kw">xuanjian</span>（玄鉴）的实战与案例？欢迎 Star 仓库并阅读上述文档。</p>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>XuanJian（玄鉴，<span class="kw">xuanjian</span>）· 自主验证漏洞的自动化渗透测试 Agent 框架 · 采用 <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT 许可证</a>。</p>
+      <p>© yzdily · 本项目仅供合法授权的安全测试使用。关键词：xuanjian / 玄鉴 / 自动化渗透测试 / pentest / AI 安全测试 Agent。</p>
+    </div>
+  </footer>
+</body>
+</html>

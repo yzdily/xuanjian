@@ -8,6 +8,8 @@
 The AI-native security testing platform (LLM / Agent / RAG security) builds on the XuanJian engine at [**JianWei**](https://github.com/yzdily/jianwei).
 See [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md) · [中文文档](README.zh.md)
 
+> 📖 **文档站点（GitHub Pages）：** https://yzdily.github.io/xuanjian/
+
 <p>
   <a href="#platform-support">Platform Support</a> •
   <a href="#quick-start">Quick Start</a> •

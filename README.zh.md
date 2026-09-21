@@ -7,6 +7,8 @@
 > **v2.0 稳定版** — 玄鉴是一个持续维护的开源智能渗透测试引擎。
 > LLM/Agent/RAG 安全测试能力在 [**鉴微 JianWei**](https://github.com/yzdily/jianwei) 中基于玄鉴引擎持续演进。
 > 详见 [ARCHITECTURE.md](ARCHITECTURE.md) · [CHANGELOG.md](CHANGELOG.md)
+>
+> 📖 **文档站点（GitHub Pages）：** https://yzdily.github.io/xuanjian/
 
 <p>
   <a href="#平台支持">平台支持</a> •
