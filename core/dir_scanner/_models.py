@@ -32,6 +32,20 @@ class DirFinding:
     url: str
     detail: str
     evidence: str = ""
+    # ★ T8 (0923 v2)：内容校验结论 —— 决定这条发现能否进"已确认漏洞"
+    #   confirmed    内容指纹命中（强证据），可进已确认漏洞
+    #   needs_review 无指纹 / 指纹未命中 / 弱证据 → 只进"待复核"清单，不得直出 HIGH
+    # ★ 默认值刻意取 needs_review（fail-safe）：任何漏标 review_status 的构造点
+    #   都不该被当成"已确认"，否则会重演 0923 把误报写进银行客户报告的事故。
+    review_status: str = "needs_review"
+    # 证据质量："content_match"（强）/ "header_only"（弱）/ ""（无）
+    evidence_quality: str = ""
+    # 响应体哈希（与 DirEntry.body_hash 同源，用于事后复核与去重）
+    body_sha256: str = ""
+    # 命中的相对路径（便于按路径复核）
+    path: str = ""
+    # 降级原因（供报告端解释"为何这条没进已确认漏洞"）
+    review_reason: str = ""
 
 
 @dataclass
@@ -51,6 +65,10 @@ class DirScanResult:
     catch_all_detected: bool = False
     catch_all_hash: str = ""
     catch_all_rate: float = 0.0
+    # ★ T15 (0923 v2)：多簇兜底页证据 —— body_hash → 命中条数
+    #   实测 ics.aibank.com 同时存在 4113B 与 2569B 两个不同兜底体，
+    #   单基线 wildcard 检测只看一簇，另一簇会畅通无阻 → 必须按簇判定。
+    catch_all_clusters: dict = field(default_factory=dict)
     # ★ catch-all 响应体（用于相似度对比，过滤近似重复）
     catch_all_body: str = ""
     # ★ 早期 catch-all 中止：首批 API 路径扫描后检测到 catch-all，
@@ -105,8 +123,24 @@ class DirScanResult:
                 {
                     "vuln_type": f.vuln_type, "severity": f.severity,
                     "url": f.url, "detail": f.detail, "evidence": f.evidence[:300],
+                    # ★ T8 (0923 v2)：校验结论随产物落盘，供报告端按状态分流
+                    "review_status": getattr(f, "review_status", "needs_review"),
+                    "evidence_quality": getattr(f, "evidence_quality", ""),
+                    "body_sha256": getattr(f, "body_sha256", ""),
+                    "path": getattr(f, "path", ""),
+                    "review_reason": getattr(f, "review_reason", ""),
                 }
                 for f in self.findings
             ],
+            # ★ T15：多簇兜底页证据（供报告端解释"为何丢弃目录类发现"）
+            "catch_all_clusters": getattr(self, "catch_all_clusters", {}),
+            "verified_count": sum(
+                1 for f in self.findings
+                if getattr(f, "review_status", "") == "confirmed"
+            ),
+            "needs_review_count": sum(
+                1 for f in self.findings
+                if getattr(f, "review_status", "") != "confirmed"
+            ),
         }
 

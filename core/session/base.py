@@ -31,6 +31,52 @@ from core.prompts.phases import (
 
 log = get_logger("session")
 
+# ★ T14 (0923 v2)：事件镜像白名单 —— 只镜像"用户可见结论类"事件。
+#   刻意不含 message / thinking / tool_call 等高频流式输出，避免 events.jsonl 爆炸。
+_MIRROR_EVENT_TYPES = frozenset({
+    "system", "error", "phase", "vuln", "findings", "screenshot",
+    "report_reply_done",
+    "done", "task_partial", "task_unreachable", "task_failed", "task_aborted",
+    "task_stuck",
+})
+
+# 单行上限：events.jsonl 是 append-only 审计流，单行过大拖慢事后 grep / 解析
+_MIRROR_MAX_LINE = 4000
+
+
+def mirror_serialize(record: dict, max_line: int = _MIRROR_MAX_LINE) -> str:
+    """把镜像记录序列化成**一行合法 JSON**（T14 / P16）。
+
+    ★ 不能对 ``json.dumps(...)`` 的结果直接切片：切出来的行不是合法 JSON，
+    事后用 ``json.loads`` 审计时整行报废 —— 等于把审计记录写废，
+    与 P16「未通过校验的发现不丢数据、可事后复核」直接冲突。
+    正确做法是把超长部分压到 ``data`` 字段上，保证整行始终可解析。
+
+    Args:
+        record: 待写入记录（``ts`` / ``task_id`` / ``phase`` / ``type`` / ``data``）。
+        max_line: 单行字符上限。
+
+    Returns:
+        一行 JSON 文本（不含换行符）。
+    """
+    payload = json.dumps(record, ensure_ascii=False, default=str)
+    if len(payload) <= max_line:
+        return payload
+    rec = dict(record)
+    rec["truncated"] = True
+    _over = len(payload) - max_line
+    _d = rec.get("data")
+    if isinstance(_d, str):
+        _keep = max(0, len(_d) - _over - 64)   # 预留截断标记与转义开销
+        rec["data"] = _d[:_keep] + "…[truncated]"
+    else:
+        rec["data"] = str(_d)[:512] + "…[truncated]"
+    payload = json.dumps(rec, ensure_ascii=False, default=str)
+    if len(payload) > max_line:                # 其它字段本身超长的兜底
+        rec["data"] = "…[truncated]"
+        payload = json.dumps(rec, ensure_ascii=False, default=str)
+    return payload
+
 
 class AgentSessionBase:
     """分阶段渗透 Agent 会话 — 基类（核心状态 + 通用方法）。"""
@@ -317,6 +363,12 @@ class AgentSessionBase:
         self.tool_executor.set_session(self)
 
     def _event(self, event_type: str, data, full: str = "") -> str:
+        # ============================================================
+        # ★ T9 + T14 (0923 v2)：终态语义分流 + 事件镜像
+        #   这里是**唯一**的事件出口，所以两个横切关注点都收在这一处，
+        #   避免在 5 个 `yield self._event("done", ...)` 站点各改一遍。
+        # ============================================================
+        event_type = self._normalize_terminal_event(event_type)
         event = {"type": event_type, "data": data}
         if full:
             event["full"] = full
@@ -329,7 +381,74 @@ class AgentSessionBase:
                 f.write(payload + "\n")
         except Exception as e:
             log.warning("持久化对话历史失败 (task=%s): %s", self.task_id, e)
+        # ★ T14 (0923 v2)：服务端事件镜像。
+        #   修正前的裂缝：终端里"看得见"的发现（如「主动目录爆破发现 5 个
+        #   敏感信息泄露」）只推 SSE，agent.log 里出现 0 次 → 事后无法审计
+        #   "到底给用户看过什么"。0923 那次报告丢数据，若不是用户截图，
+        #   根本无从发现（那是运气，不是设计）。
+        #   镜像走 append-only jsonl，失败绝不影响主流程。
+        self._mirror_event(event)
         return f"data: {payload}\n\n"
+
+    # 终态事件名（五态）—— 与 web/server.py::terminal_events 保持一致
+    TERMINAL_EVENT_MAP = {
+        "done": "done",                       # completed
+        "task_partial": "task_partial",       # partial（有组未完成/覆盖有洞）
+        "task_unreachable": "task_unreachable",  # unreachable
+        "task_failed": "task_failed",         # failed
+        "task_aborted": "task_aborted",       # aborted
+    }
+
+    def _normalize_terminal_event(self, event_type: str) -> str:
+        """把 ``done`` 收窄成五态之一（T9 / 修 B4）。
+
+        修正前的问题：无论"扫完且确实没漏洞"还是"目标压根不可达"，最后都输出
+        ``DONE 扫描完成`` —— 两个语义在产品和 UI 上完全同形，
+        用户无法判断 `0 漏洞` 是真的干净还是根本没测。
+
+        规则：
+        - 目标不可达（``_target_unreachable``）→ ``task_unreachable``，且**不发 done**
+        - 有子 Agent 组未完成（``_browse_stuck_groups``）→ ``task_partial``
+        - 其余 → ``done``
+
+        只改写 ``done``，其他事件原样通过（避免误伤 task_failed/aborted）。
+        """
+        if event_type != "done":
+            return event_type
+        if getattr(self, "_target_unreachable", False):
+            return "task_unreachable"
+        if getattr(self, "_browse_stuck_groups", None):
+            return "task_partial"
+        return "done"
+
+    def _mirror_event(self, event: dict) -> None:
+        """把事件追加写入 ``data/logs/events.jsonl``（T14）。
+
+        只镜像"用户可见结论类"事件（system/vuln/error/终态），避免把
+        message/thinking 这类高频流式输出也灌进去导致文件爆炸。
+        """
+        try:
+            _etype = str(event.get("type", ""))
+            if _etype not in _MIRROR_EVENT_TYPES:
+                return
+            mirror_path = Path("data/logs") / "events.jsonl"
+            mirror_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "ts": time.time(),
+                "task_id": getattr(self, "task_id", ""),
+                "phase": getattr(self, "phase", ""),
+                "type": _etype,
+                "data": event.get("data"),
+            }
+            with open(mirror_path, "a", encoding="utf-8") as f:
+                f.write(mirror_serialize(record) + "\n")
+        except Exception:
+            # 镜像失败绝不影响主流程；但也不能完全静默 —— 打一条 debug 级日志
+            try:
+                log.debug("事件镜像写入失败 (task=%s)", getattr(self, "task_id", ""),
+                          exc_info=True)
+            except Exception:
+                pass
 
     @staticmethod
     def get_chat_history(task_id: str) -> list[dict]:

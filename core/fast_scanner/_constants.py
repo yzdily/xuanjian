@@ -262,6 +262,18 @@ SENSITIVE_PATH_FINGERPRINTS = {
     ".git/config": [r"\[core\]", r"\[remote\b"],
     ".git/head": [r"^ref:\s*refs/"],
     ".svn/entries": [r"^\d+\n", r"svn://", r"dir\n"],
+    # ★ T8 (0923 v2) 补全：原表缺下面这些 key，导致真实泄露只能拿到
+    #   header_only 弱证据（永远进不了"已确认漏洞"），而 SPA/JSON 兜底页
+    #   同样拿弱证据 → 只能靠 needs_review 兜。补上后：真泄露 →
+    #   content_match(confirmed)，兜底页 → 不匹配(不进 findings)。
+    ".git/index": [r"^DIRC"],                        # git index 魔数
+    ".git/logs": [r"^[0-9a-f]{40}\s"],               # reflog 行首 40 位 sha
+    ".svn/wc.db": [r"SQLite format 3"],
+    ".svn/format": [r"^\s*\d{1,2}\s*$"],
+    ".hg/requires": [r"^revlogv\d", r"^store\b"],
+    ".ds_store": [r"Bud1"],
+    "web-inf/web.xml": [r"<web-app", r"<\?xml"],
+    "web-inf/classes": [r"<web-app", r"<\?xml", r"<\?php"],
     # API 文档
     "swagger-ui.html": [r"swagger", r"SwaggerUI"],
     "api-docs": [r'"swagger"\s*:', r'"paths"\s*:', r'"openapi"\s*:'],

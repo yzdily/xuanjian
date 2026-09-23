@@ -6,6 +6,16 @@ group_by_risk_domain 是编排轨道 A 的按域分批派活入口：
 from __future__ import annotations
 
 from core.endpoint.risk_domain import group_by_risk_domain, tag_endpoints
+from core.endpoint.track_a import batch_groups_by_risk_domain, track_a_summary
+
+
+class _FP:
+    """最小 FeaturePoint 替身（_fp_to_endpoints 仅用 name/related_apis/page_url）。"""
+
+    def __init__(self, name, related_apis=(), page_url=""):
+        self.name = name
+        self.related_apis = list(related_apis)
+        self.page_url = page_url
 
 
 def test_tag_endpoints_attaches_risk_domain():
@@ -69,3 +79,36 @@ def test_tag_then_group_pipeline():
     groups = group_by_risk_domain(tagged)
     # 静态资源不应占满分组（其 risk_domain 独立）
     assert sum(len(v) for v in groups.values()) >= 3
+
+
+# ========== track_a_summary 直测（2026-09-23 Bug#2 回归钉）==========
+# 背景：track_a_summary 曾把 total_groups（已是 int）再套一层 len() → TypeError，
+# 被 apply_track_a 的 except 兜住降级，导致 Track A 按域派活「每次都降级、从未生效」；
+# 既有测试只断言源码字符串、从不执行本函数，故长期漏测。
+
+def test_track_a_summary_with_domains():
+    s = track_a_summary({"total_groups": 4, "dispatched_domains": ["authz", "inject"]})
+    assert "4 组" in s
+    assert "2 域" in s
+    assert "authz" in s and "inject" in s
+
+
+def test_track_a_summary_no_explicit_domain():
+    s = track_a_summary({"total_groups": 0, "dispatched_domains": []})
+    assert "未命中任何显式风险域" in s
+
+
+def test_batch_groups_by_risk_domain_stats_and_summary():
+    """端到端：分组 → stats → 摘要，全链路不抛（`total_groups` 必须是 int）。"""
+    fg = [(
+        "grp",
+        [
+            _FP("上传", related_apis=["POST http://x/upload"]),
+            _FP("列表", related_apis=["GET http://x/api/user/list"]),
+        ],
+    )]
+    new_groups, stats = batch_groups_by_risk_domain(fg, host="x")
+    assert isinstance(stats["total_groups"], int)
+    assert stats["total_groups"] == len(new_groups)
+    # 关键回归：摘要生成不得因 total_groups 是 int 而崩
+    assert "Track A" in track_a_summary(stats)

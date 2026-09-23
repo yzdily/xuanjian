@@ -251,7 +251,23 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
 
         if not self._persist_path.exists():
             return False
-        data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            # ★ 0923 v2：坏缓存不得炸掉会话恢复。
+            #   修正前这里直接 json.loads，异常会穿透到 _try_recover /
+            #   _resolve_sitemap（多处无 try 包裹）→ 一个损坏的 sitemap.json
+            #   就能让"恢复会话 / 断言"整条链路失败。
+            #   缓存文件是**可丢弃**的派生物，容错优先级高于严格性。
+            log.warning(
+                "sitemap 缓存损坏，已跳过恢复（不影响新扫描）: %s: %s",
+                self._persist_path.name, e,
+            )
+            return False
+        if not isinstance(data, dict):
+            log.warning("sitemap 缓存结构异常（顶层非对象），已跳过: %s",
+                        self._persist_path.name)
+            return False
         self.business_summary = data.get("business_summary", "")
         self.tech_stack = data.get("tech_stack", "")
         for k, v in data.get("pages", {}).items():

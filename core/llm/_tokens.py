@@ -178,13 +178,30 @@ class ContextLimitError(Exception):
     """输入 token 数估算超过模型上下文窗口时抛出。
 
     调用方（chat_loop / worker_agent）捕获后应触发 compress() 再重试。
+
+    ★ B2 修复 (0923 v2)：消息里必须打印**可用输入预算**（``available``），
+    而不是把整个 ``context_window`` 当成"可用"。
+    修正前 ``_client.py`` 传的是 ``context_window``，于是日志出现
+    「估算 15832 tokens > 可用 32768」——15832 < 32768，报错本身自相矛盾，
+    现场排查时完全无法理解。
+    真实预算是 ``int(context_window * _CONTEXT_PRECHECK_SAFETY) - max_tokens``
+    （例如 32768×0.6 − 4096 = 15564），这才是该和估算值比较的数。
     """
 
-    def __init__(self, estimated_tokens: int, context_window: int, model: str):
+    def __init__(self, estimated_tokens: int, context_window: int, model: str,
+                 available: int | None = None):
         self.estimated_tokens = estimated_tokens
         self.context_window = context_window
         self.model = model
+        # 兼容旧调用：未传 available 时退回 context_window（消息里会标注近似）
+        self.available_for_input = (
+            int(available) if available is not None else int(context_window)
+        )
+        _exact = available is not None
+        _hint = "" if _exact else "（近似：调用方未传安全系数后的真实预算）"
         super().__init__(
-            f"上下文超限: 估算 {estimated_tokens} tokens > 可用 "
-            f"{context_window} (model={model})"
+            f"上下文超限: 估算输入 {estimated_tokens} tokens > "
+            f"可用输入预算 {self.available_for_input} tokens{_hint} "
+            f"(模型 {model}，窗口 {context_window}；"
+            f"预算 = 窗口×安全系数 − max_tokens)"
         )

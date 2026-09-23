@@ -52,6 +52,14 @@ from ._report_phase import _enter_report_phase
 # Track A（§1.5 P0）按域派活：适配逻辑独立在 core/endpoint/track_a.py（D6 行数门 800）
 from core.endpoint.track_a import apply_track_a, worker_id_for  # noqa: E402
 
+# F2 认证探活：★ 必须模块级 import，禁止放进函数内 try ——
+#   否则 `from ... import AuthInvalidError` 会把该名绑定为函数局部变量，一旦 import 失败，
+#   `except AuthInvalidError` 解析异常类型名时抛 UnboundLocalError，并吞掉原始 ImportError。
+#   正确模块是单文件 core.auth_probe（core/auth/ 不是包，core/auth.py 是另一模块）；
+#   2026-09-23 真实任务崩溃即源于路径误写 core.auth.probe + try 内 import。
+from core.auth_probe import verify_auth_validity, AuthInvalidError  # noqa: E402
+
+
 async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None]:
     """Phase 2 核心：FastScanner + LLM WorkerAgent 双路径并行。"""
     from core.parallel.session_info import get_session_info
@@ -453,7 +461,7 @@ async def run_parallel_test(session: "AgentSession") -> AsyncGenerator[str, None
         # 每批次测试开始前，用 1 个已知有数据接口发 1 个请求做探活
         # 若 token 失效则提前报错，避免全批次 0 发现告警
         try:
-            from core.auth.probe import verify_auth_validity, AuthInvalidError
+            # verify_auth_validity / AuthInvalidError 已在模块顶部 import（见文件头 ★ 注释）
             _probe_api = session_info.get("baseline_api") if session_info else None
             # ★ 阶段 4-E1 修复（既有 bug）：原读 `session._current_credential`，而该字段
             #   在**全仓从未被赋值**（写入方用的是 `_inject_cookies` / `has_credentials`）

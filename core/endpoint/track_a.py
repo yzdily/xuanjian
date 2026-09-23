@@ -142,7 +142,7 @@ def track_a_summary(stats: dict) -> str:
     if not disp:
         return "🧭 Track A: 本批端点未命中任何显式风险域（全部走通用编排）"
     return (
-        f"🧭 Track A 按域派活: {len(stats['total_groups'])} 组 / "
+        f"🧭 Track A 按域派活: {stats['total_groups']} 组 / "
         f"{len(disp)} 域 → " + "、".join(disp)
     )
 

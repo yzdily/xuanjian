@@ -192,6 +192,16 @@ class BrowseWorker:
             # ★ P3 (2026-08-28) 死循环熔断：worker 启动后维护最近 URL host / page 列表
             # 上次 LLM 回复若有 browser_goto(browser_click 等) 触发的 url，跳过则记录
             # 同一 host 连续 N 轮 / 同一 page 连续 M 轮直接 abort
+            #
+            # ★ B1 修复 (0923 v2)：这里**只算原因，不抛异常**。
+            #   原实现把 `raise BrowseStuckError(...)` 放在 while 顶部（try 之外），
+            #   而本方法的 try 在下方（只覆盖 llm.chat），唯一 except 是 :315 ——
+            #   于是这个 raise 直接穿透 chat_loop 的 `async for evt in worker.run()`，
+            #   被 web/server.py 记成 `task_failed(uncaught_exception)`：
+            #   单组子 Agent 熔断 = 整个任务崩塌（0923 实测 d.citicaibank.cn 就这么死的）。
+            #   现在改为在 try 内抛出，由既有的 except BrowseStuckError 统一产出
+            #   browse_worker_stuck 事件 —— 单一出口，不重复构造事件。
+            _p3_reason = ""
             _last_url = getattr(self, "_p3_last_url", None) or ""
             if _last_url and round_num > 1:
                 from urllib.parse import urlparse as _p3_up
@@ -210,15 +220,15 @@ class BrowseWorker:
                 self._p3_page_history = _p3_page_history[-BROWSE_STUCK_PAGE_THRESHOLD:]
                 if (len(self._p3_host_history) >= BROWSE_STUCK_HOST_THRESHOLD
                         and len(set(self._p3_host_history)) == 1):
-                    raise BrowseStuckError(
-                        f"[{self.worker_id}] P3 熔断: 同一 host {_cur_host} "
-                        f"连续 {BROWSE_STUCK_HOST_THRESHOLD} 轮无进展，强制 abort"
+                    _p3_reason = (
+                        f"同一 host {_cur_host} 连续 "
+                        f"{BROWSE_STUCK_HOST_THRESHOLD} 轮无进展"
                     )
-                if (len(self._p3_page_history) >= BROWSE_STUCK_PAGE_THRESHOLD
+                elif (len(self._p3_page_history) >= BROWSE_STUCK_PAGE_THRESHOLD
                         and len(set(self._p3_page_history)) == 1):
-                    raise BrowseStuckError(
-                        f"[{self.worker_id}] P3 熔断: 同一 page {_last_url} "
-                        f"连续 {BROWSE_STUCK_PAGE_THRESHOLD} 轮无进展，强制 abort"
+                    _p3_reason = (
+                        f"同一 page {_last_url} 连续 "
+                        f"{BROWSE_STUCK_PAGE_THRESHOLD} 轮无进展"
                     )
 
             # ---- 双维度 STALE 检测 ----
@@ -306,6 +316,14 @@ class BrowseWorker:
             }
 
             try:
+                # ★ B1 修复 (0923 v2)：P3 熔断判定必须在 try 内抛出。
+                #   原先 raise 在 while 顶部（try 之外）→ 穿透 worker.run() 的
+                #   async for 消费端 → task_failed(uncaught_exception)，
+                #   单个子 Agent 卡死会让整个任务失败。
+                if _p3_reason:
+                    raise BrowseStuckError(
+                        f"[{self.worker_id}] P3 熔断: {_p3_reason}，强制 abort"
+                    )
                 messages = self.context.get_messages()
                 # ★ 2026-08-05：补 caller 埋点，此前 77% 的 LLM 调用 caller 为空无法追踪
                 response = await asyncio.to_thread(
@@ -314,6 +332,10 @@ class BrowseWorker:
                 )
             except BrowseStuckError as _p3_e:
                 # ★ P3 死循环熔断 (2026-08-28)：同一 host/page 连续多轮无进展
+                # ★ B1 修复 (0923 v2)：本分支现在是**唯一**的 stuck 出口
+                #   （顶部不再直接 raise），产出的 browse_worker_stuck 由
+                #   core/session/chat_loop.py 的消费分支处理为该组优雅收尾。
+                log.warning("[%s] P3 熔断退出: %s", self.worker_id, _p3_e)
                 yield {
                     "type": "browse_worker_stuck",
                     "worker": self.worker_id,
@@ -321,7 +343,6 @@ class BrowseWorker:
                     "host_history": list(getattr(self, "_p3_host_history", [])),
                     "page_history": list(getattr(self, "_p3_page_history", [])),
                 }
-                log.warning("[%s] P3 熔断退出: %s", self.worker_id, _p3_e)
                 break
             except Exception as e:
                 yield {

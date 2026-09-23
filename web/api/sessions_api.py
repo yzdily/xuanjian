@@ -391,16 +391,70 @@ async def subscribe_session(task_id: str):
 
 @router.get("/api/sessions/{task_id}/status")
 async def session_status(task_id: str):
-    """查询指定会话的运行状态。"""
+    """查询指定会话的运行状态。
+
+    ★ T7 (0923 v2)：新增 ``status``（五态）与 ``resumable`` / ``resume_phase``。
+
+    修正前的返回体只有 ``{running: bool, phase, task_id}``，而前端
+    ``resumeCurrentTask()`` 读 ``st.status === 'running'`` → 恒为 ``undefined``，
+    逻辑直接穿透。现在同时保留 ``running``（兼容旧调用方）并给出五态 ``status``。
+
+    五态判定来源是 ``scan_store``（权威），不是前端 LocalStorage 的
+    ``_targets.status`` —— 后者与后端根本不是一套体系（实测前端 36 个目标
+    仅对应后端 8 个会话）。
+    """
+    db_status = ""
+    resumable = False
+    resume_phase = ""
+    fail_reason = ""
+    try:
+        from core.scan_store import get_scan
+        _row = get_scan(task_id) or {}
+        db_status = _row.get("status", "") or ""
+        resumable = bool(_row.get("resumable", 0))
+        resume_phase = _row.get("resume_phase", "") or ""
+        fail_reason = _row.get("fail_reason", "") or ""
+    except Exception:
+        pass
+
     if task_id not in _sessions:
-        return {"running": False, "phase": "unknown"}
+        return {
+            "running": False, "phase": "unknown", "task_id": task_id,
+            "status": db_status or "unknown",
+            "resumable": resumable, "resume_phase": resume_phase,
+            "fail_reason": fail_reason,
+        }
     session = _sessions[task_id]
     bg = getattr(session, "_bg_task", None)
     running = bg is not None and not bg.done()
+
+    # 内存态优先（正在跑的任务 DB 里可能仍是 running）
+    if running:
+        status = "running"
+    elif db_status:
+        status = db_status
+    else:
+        status = "unknown"
+
+    # 可续跑判定：非运行中 + 有可复用产物（按 sitemap 已有成果推断断点阶段）
+    if not running and not resumable:
+        try:
+            from core.session.chat_loop import _infer_resume_stage
+            _stage = _infer_resume_stage(session)
+            if _stage != "explore" or getattr(session, "sitemap", None):
+                resumable = True
+                resume_phase = resume_phase or _stage
+        except Exception:
+            pass
+
     return {
         "running": running,
         "phase": session.phase,
         "task_id": task_id,
+        "status": status,
+        "resumable": resumable,
+        "resume_phase": resume_phase or session.phase,
+        "fail_reason": fail_reason,
     }
 
 
@@ -411,8 +465,31 @@ async def reset():
 
 
 @router.post("/api/stop")
-async def stop():
-    """停止当前任务。"""
+async def stop(request: Request = None):
+    """停止当前任务。
+
+    ★ T5 (0923 v2)：区分两种语义 —— 原实现把「暂停」和「停止」混在一个动作里
+    （前端 ``pauseCurrentTask()`` 调的就是本接口），用户无法"停一下再接着干"。
+
+    - ``mode="pause"``（默认）：**可续跑的中断**。保留 ``session.phase``，
+      写终态 ``aborted`` + ``resumable=1`` + ``resume_phase``，
+      下次「继续」能从断点阶段原地续跑。
+    - ``mode="stop"``：**彻底终止**。``phase`` 归 ``idle`` 并置
+      ``_resume_blocked``，下次「继续」不会复用断点（等于重开）。
+
+    请求体可省略（保持旧调用方兼容，默认按 ``pause`` 处理 —— 旧行为其实是
+    "不可续跑"，这里取更符合用户预期的可续跑语义，并在响应体里明示）。
+    """
+    _mode = "pause"
+    try:
+        if request is not None:
+            _body = await request.json()
+            _mode = (_body or {}).get("mode", "pause") or "pause"
+    except Exception:
+        _mode = "pause"
+    if _mode not in ("pause", "stop"):
+        _mode = "pause"
+
     session = get_session()
     _crawler = getattr(session, "_active_crawler", None)
     _crawl_task = getattr(session, "_active_crawl_task", None)
@@ -431,13 +508,114 @@ async def stop():
                 if wtask and not wtask.done():
                     wtask.cancel()
             _worker_tasks.clear()
+        _stopped_phase = getattr(session, "phase", "") or ""
         bg = getattr(session, "_bg_task", None)
         if bg and not bg.done():
             bg.cancel()
         if session.sitemap:
             session.sitemap.save()
+        try:
+            from core.scan_store import set_terminal_state
+            if _mode == "pause":
+                set_terminal_state(
+                    session.task_id, status="aborted", phase=_stopped_phase,
+                    reason="user_paused", resumable=True,
+                )
+            else:
+                set_terminal_state(
+                    session.task_id, status="aborted", phase=_stopped_phase,
+                    reason="user_stopped", resumable=False,
+                )
+        except Exception:
+            pass
+        if _mode == "pause":
+            # ★ 保留 phase —— 这是"可续跑"的关键；原实现无条件 phase="idle"，
+            #   导致下次「继续」走 idle 分支 → 回到 Phase 0 重爬。
+            session._resume_blocked = False
+            return {"status": "ok", "mode": "pause",
+                    "message": f"任务已暂停，可从 {_stopped_phase or '断点'} 阶段继续"}
         session.phase = "idle"
-        return {"status": "ok", "message": "任务已停止"}
+        session._resume_blocked = True
+        return {"status": "ok", "mode": "stop", "message": "任务已停止（不可续跑）"}
+
+
+@router.post("/api/tasks/{task_id}/resume")
+async def resume_task(task_id: str):
+    """★ T7 (0923 v2)：任务续跑的**权威裁决**接口（产品规则见 `0923_产品方案.md §3.3` R1-R5）。
+
+    ⚠️ 本接口**只做裁决，不做续跑**。
+    续跑的唯一实现是 `chat_loop._match_resume` + `advance_mixin._enter_phase`：
+    前端拿到 ``ok=True`` 后，向 ``/api/chat`` 发一条「继续」消息即可。
+    刻意**不**在这里再写一套"从断点开始跑"的逻辑 —— 0923 实测的教训恰恰是
+    同一语义存在两套实现且口径互不一致（idle 精确等值 vs 非 idle 子串模糊）。
+
+    判定优先级（先到先得）：
+      1. ``invalid_id``  —— task_id 不合规（路径穿越防护）
+      2. ``running``     —— 正在跑，无需继续
+      3. ``stopped``     —— 曾被「彻底停止」（``_resume_blocked``），断点已作废
+      4. ``not_loaded``  —— 会话不在内存（需先打开该会话）
+      5. ``ok``          —— 可续跑，返回 ``resume_phase``
+
+    Returns:
+        统一响应体 ``{"ok": bool, "reason": str, "message": str, ...}``。
+    """
+    if not validate_task_id(task_id):
+        return JSONResponse(
+            {"ok": False, "reason": "invalid_id", "message": "task_id 不合法"},
+            status_code=400,
+        )
+
+    # DB 侧事实（scans 表，权威 —— 前端 LocalStorage 的 _targets 与后端不是一套体系）
+    db_resumable = False
+    db_phase = ""
+    db_reason = ""
+    try:
+        from core.scan_store import get_scan
+        _row = get_scan(task_id) or {}
+        db_resumable = bool(_row.get("resumable", 0))
+        db_phase = _row.get("resume_phase", "") or ""
+        db_reason = _row.get("fail_reason", "") or ""
+    except Exception:
+        pass
+
+    session = _sessions.get(task_id)
+    if session is None:
+        return {
+            "ok": False, "reason": "not_loaded", "task_id": task_id,
+            "resumable": db_resumable, "resume_phase": db_phase,
+            "fail_reason": db_reason,
+            "message": ("该任务的会话不在内存中，请先在会话列表打开它再点「继续」"
+                        if db_resumable else
+                        "该任务不可续跑（无断点记录）"),
+        }
+
+    bg = getattr(session, "_bg_task", None)
+    if bg is not None and not bg.done():
+        return {
+            "ok": False, "reason": "running", "task_id": task_id,
+            "phase": getattr(session, "phase", ""),
+            "message": "任务正在运行中，无需继续",
+        }
+
+    if getattr(session, "_resume_blocked", False):
+        return {
+            "ok": False, "reason": "stopped", "task_id": task_id,
+            "message": "该任务已被「彻底停止」，断点已作废；请重新发起扫描",
+        }
+
+    try:
+        from core.session.chat_loop import _infer_resume_stage
+        _stage = _infer_resume_stage(session)
+    except Exception:
+        _stage = "explore"
+
+    _final_phase = db_phase or _stage
+    return {
+        "ok": True, "reason": "ok", "action": "resume", "task_id": task_id,
+        "phase": getattr(session, "phase", ""), "resume_phase": _final_phase,
+        "resumable": True,
+        "message": f"可续跑：将从 {_final_phase} 阶段原地恢复（复用已抓成果，不重爬）",
+    }
 
 
 @router.get("/api/status")

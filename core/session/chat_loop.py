@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import AsyncGenerator
@@ -38,6 +39,203 @@ from core.prompts.phase1_user import (
 )
 
 log = get_logger("session.chat_loop")
+
+
+# ============================================================
+# ★ 0923 v2：错误分型 + 终态落库（模块级工具）
+# ============================================================
+
+# ★ 分型规则位于 core.llm._failure（FOUNDATION 层），此处仅做**复用 + 别名导出**。
+#   为什么不下沉在这里：core.llm._preflight 也要用同一套分型，若定义在 core.session
+#   就会形成 core.llm → core.session 的反向依赖，违反 A1 分层契约
+#   （scripts/layer_lint.py 会硬拦）。
+from core.llm._failure import (            # noqa: E402
+    classify_llm_failure as _classify_llm_failure,
+    llm_failure_retryable as _llm_failure_retryable,
+)
+
+
+def _write_terminal_state(
+    task_id: str, *, status: str, phase: str = "",
+    reason: str = "", resumable: bool = False,
+) -> bool:
+    """安全写入任务终态（T13）。
+
+    所有终态点（LLM 失败 / 未捕获异常 / 用户停止 / 不可达）共用本函数。
+    必须"永不抛出" —— 终态写入失败不得反过来炸掉正在收尾的任务。
+
+    Returns:
+        True 表示写入成功（含 rowcount>0），False 表示失败（已记 warning）。
+    """
+    if not task_id:
+        return False
+    try:
+        from core.scan_store import set_terminal_state
+        _n = set_terminal_state(
+            task_id, status=status, phase=phase,
+            reason=reason, resumable=resumable,
+        )
+        if _n:
+            log.info("[终态] task=%s status=%s phase=%s resumable=%s reason=%s",
+                     task_id, status, phase, resumable, reason)
+        return bool(_n)
+    except Exception as e:
+        log.warning("[终态] 写入失败（不影响主流程）: task=%s status=%s err=%s",
+                    task_id, status, e)
+        return False
+
+
+# ============================================================
+# ★ P13 (0923 v2)：中断进度说明
+# ============================================================
+def build_partial_progress_note(phase: str, sitemap=None) -> str:
+    """生成"部分完成"进度说明（P13，产品决策见 `0923_产品方案.md §10.2`）。
+
+    为什么需要：preflight 只管**开跑前**。实测当日 `insufficient balance` 39 次
+    > `429` 6 次 —— 真正的拦路虎是余额，且它可能在扫描**途中**耗尽。
+    此时给用户一个把所有已抓产物都作废的 `FAIL` 是错的，用户需要的是
+    「已完成多少 + 怎么接着跑」。
+
+    本函数只做**纯字符串拼装**（无 IO、无异常），便于单测与复用。
+
+    Args:
+        phase: 中断时所处阶段（如 ``test`` / ``explore``）。
+        sitemap: 可选，用于统计已产出量；None 时省略产出数字。
+
+    Returns:
+        一行面向用户的中文说明。
+    """
+    _phase = (phase or "unknown").strip() or "unknown"
+    _n_api = _n_feat = 0
+    try:
+        if sitemap is not None:
+            _n_api = len(getattr(sitemap, "apis", []) or [])
+            _n_feat = len(getattr(sitemap, "features", []) or {})
+    except Exception:
+        _n_api = _n_feat = 0
+    _produced = f"已产出 API {_n_api} 个 / 功能点 {_n_feat} 个"
+    return (
+        f"已完成的成果已保留（{_produced}，停在 Phase {_phase}）。"
+        f"充值或更换 API Key 后点「继续」，将从 Phase {_phase} 原地续跑，不会重爬。"
+    )
+
+
+# ============================================================
+# ★ T6 (0923 v2)：resume 判定唯一入口
+# ============================================================
+# 用户主诉原话：「输入继续提示，我让继续你又扫其他目标的重头开始扫描」。
+# 实测"继续"在系统里有**两套**互不一致的判定：
+#   - chat_loop 的 idle 分支（原 :541-543）：精确等值，带任何后缀都不认
+#   - _detect_and_handle_resume_command（原 :223）：子串模糊，但只对非 idle 生效
+# 于是用户输入「继续测试跑完这个流程」时**两处都判不中**，落到 LLM intent →
+# 模型名 404 → 任务 FAIL。再加第三套只会重复"同一件事两套实现"的旧病，
+# 所以这里收敛成唯一入口，两处共用；前端命令表也用同一套前缀规则（见 index.html）。
+_RESUME_PREFIXES: tuple[str, ...] = (
+    "继续", "恢复", "接着", "续跑", "往下", "resume", "continue", "go on",
+)
+# 兼容「task_xxx 继续...」这种带任务号前缀的写法
+_RESUME_TASK_PREFIX_RE = re.compile(r"^task_[0-9a-zA-Z_]+\s+")
+# 允许的先导标点/空白（用户常打「/继续」「。继续」）
+_RESUME_LEAD_RE = re.compile(r"^[\s/，,。.、:：!！?？~]+")
+# 礼貌前缀：剥掉后仍能命中前缀才算（覆盖「请继续」「麻烦继续」「帮我继续」）
+# 按长度降序剥离，避免「请」先吃掉「请帮我」的「请」导致「帮我」残留。
+_RESUME_POLITE_PREFIXES: tuple[str, ...] = (
+    "麻烦帮我", "麻烦你", "请帮我", "麻烦", "帮我", "please", "请",
+)
+
+
+def _match_resume(user_message: str) -> bool:
+    """判定用户输入是否为"继续/恢复"类指令（**唯一入口**）。
+
+    采用"前缀命中"而非"精确等值"：覆盖「继续」「继续测试」「继续测试跑完这个流程」
+    「请继续」「继续吧」「resume 一下」「接着刚才那个」等口语写法。
+
+    Args:
+        user_message: 用户原始输入。
+
+    Returns:
+        True 表示应走 resume 路径。
+    """
+    s = (user_message or "").strip().lower()
+    if not s:
+        return False
+    s = _RESUME_TASK_PREFIX_RE.sub("", s)
+    s = _RESUME_LEAD_RE.sub("", s)
+    # 迭代剥离礼貌前缀（"麻烦帮我继续" 需要剥两层）
+    _changed = True
+    while _changed and s:
+        _changed = False
+        for _p in _RESUME_POLITE_PREFIXES:
+            if s.startswith(_p):
+                s = s[len(_p):]
+                s = _RESUME_LEAD_RE.sub("", s)
+                _changed = True
+                break
+    if not s:
+        return False
+    return any(s.startswith(_kw) for _kw in _RESUME_PREFIXES)
+
+
+# 阶段顺序（与 advance_mixin 的状态机一致）
+_PHASE_ORDER_TUPLE: tuple[str, ...] = ("explore", "analyze", "test", "report")
+
+
+def _infer_resume_stage(session) -> str:
+    """从 sitemap 已有产物推断"断点阶段"（T6 / 修 A3+A5）。
+
+    修正前的问题：即使用户成功命中 resume，代码也是「直接进入 Phase 0」
+    （原 :552 注释明写）—— 已抓到的 94 个 API / 493 个功能点被**从头重爬**，
+    用户心智是"接着刚才那份活干"，系统行为是"重头再来"。
+
+    推断依据（确定性规则，不引入 LLM 调用 —— 否则又添一个 429 面）：
+    - 无 API 且无功能点 → ``explore``（确实没干过活）
+    - 有 API 无功能点 → ``analyze``（Phase 1 未完成）
+    - 有功能点但无任何 checklist 结果 → ``analyze``
+    - 部分 checklist 有结果 → ``test``
+    - 全部有结果 → ``report``
+
+    Args:
+        session: AgentSession 实例（只需 ``sitemap`` 属性）。
+
+    Returns:
+        ``explore`` / ``analyze`` / ``test`` / ``report`` 之一。
+    """
+    sm = None
+    try:
+        sm = getattr(session, "sitemap", None)
+    except Exception:
+        # sitemap 属性本身可能抛（如懒加载失败）——本函数必须永不抛
+        return "explore"
+    # ★ 用户显式"停止"（非暂停）后不允许复用断点 —— 语义上等于重开。
+    try:
+        if getattr(session, "_resume_blocked", False):
+            return "explore"
+    except Exception:
+        pass
+    if sm is None:
+        return "explore"
+    try:
+        _apis = len(getattr(sm, "apis", {}) or {})
+        _features = getattr(sm, "features", {}) or {}
+        if not _features and not _apis:
+            return "explore"
+        if not _features:
+            return "analyze"
+        _tested = 0
+        for _fp in _features.values():
+            for _c in getattr(_fp, "checklist", []) or []:
+                _r = getattr(_c, "result", None)
+                # CheckResult.PENDING 视为未测
+                if _r is not None and getattr(_r, "name", "") != "PENDING":
+                    _tested += 1
+                    break
+        if _tested == 0:
+            return "analyze"
+        if _tested < len(_features):
+            return "test"
+        return "report"
+    except Exception:
+        return "explore"
 
 
 class ChatLoopMixin:
@@ -232,20 +430,15 @@ class ChatLoopMixin:
         - 重置 _nudge_count[self.phase] = 0（再给 3 次 nudge 机会）
         - 返回唤醒提示词让 caller 注入到 LLM 上下文并推给前端
 
-        复用 idle 阶段的关键词集合（含兜底子串匹配，覆盖"继续吧"/"继续测试吧"等口语）。
+        ★ T6 (0923 v2)：判定统一走模块级 ``_match_resume``（唯一入口）。
+        修正前本方法与 idle 分支各有一套关键词表，语义还不一致
+        （这里子串模糊、idle 那里精确等值）—— 「继续测试跑完这个流程」
+        在 idle 分支判不中，在这里又因为 phase 不是 analyze/test/explore 而返回 False。
+
         Returns:
             (handled, kick_msg) — handled=True 时 kick_msg 非空
         """
-        _resume_keywords = (
-            "继续", "resume", "go on", "continue", "继续扫描",
-            "继续测试", "恢复扫描", "恢复测试",
-        )
-        trimmed = user_message.strip().lower()
-        exact_match = trimmed in {kw.lower() for kw in _resume_keywords}
-        # 子串匹配：处理"请继续"/"继续吧"等自然语言
-        substring_match = any(kw.lower() in trimmed for kw in _resume_keywords if len(kw) <= 4)
-        is_resume = exact_match or substring_match
-        if not is_resume:
+        if not _match_resume(user_message):
             return False, ""
         if phase not in ("analyze", "test", "explore"):
             return False, ""
@@ -443,10 +636,10 @@ class ChatLoopMixin:
 
         # ---- idle 阶段：LLM 意图识别 ----
         if self.phase == "idle":
-            # ★ "继续"指令检测：如果用户发"继续"/"resume"且有之前的扫描目标，恢复扫描
-            _resume_keywords = ("继续", "resume", "继续扫描", "继续测试", "恢复扫描", "恢复测试", "go on", "continue")
-            _trimmed_lower = user_message.strip().lower()
-            _is_resume_cmd = any(_trimmed_lower == kw or _trimmed_lower == kw.lower() for kw in _resume_keywords)
+            # ★ "继续"指令检测（T6, 0923 v2）：统一走 _match_resume 前缀匹配。
+            #   修正前是精确等值（`_trimmed_lower == kw`）→ 用户输入
+            #   「继续测试跑完这个流程」不命中 → 落到 LLM intent → 任务 FAIL。
+            _is_resume_cmd = _match_resume(user_message)
             _prev_target = getattr(self, "target_url", "") or (self.sitemap.target if self.sitemap else "")
 
             if _is_resume_cmd and _prev_target:
@@ -483,6 +676,25 @@ class ChatLoopMixin:
                     log.info("恢复凭证: cookies=%s, auth=%s, has_credentials=True",
                              bool(_saved_cookies), bool(_saved_auth))
                     yield self._event("system", "✅ 已恢复登录凭证（Cookie/Auth），将使用已登录状态继续扫描")
+                # ★ T6 (0923 v2)：不再无条件"直接进入 Phase 0"。
+                #   修正前这里是 `_skip_intent = True` → 流程落到下方
+                #   `self.phase = "explore"` → **从 Phase 0 重爬**，
+                #   已抓到的 94 API / 493 功能点被白白丢掉（用户主诉 2「重头开始」）。
+                #   现在按 sitemap 已有产物推断断点阶段，能原地进入就原地进入。
+                _resume_stage = _infer_resume_stage(self)
+                if _resume_stage != "explore":
+                    yield self._event("system",
+                        f"🔁 断点续跑：已完成产物（API {len(self.sitemap.apis) if self.sitemap else 0} 个"
+                        f" / 功能点 {len(self.sitemap.features) if self.sitemap else 0} 个）"
+                        f"将直接复用，从 **{_resume_stage}** 阶段继续，不重爬。")
+                    _write_terminal_state(
+                        self.task_id, status="aborted", phase=_resume_stage,
+                        reason="resume_in_progress", resumable=True,
+                    )
+                    async for _evt in self._enter_phase(_resume_stage):
+                        yield _evt
+                    return
+                # 确实没有可复用产物 → 老实从 Phase 0 开始
                 # 直接进入 Phase 0（下方代码会执行 self.phase = "explore"）
                 _skip_intent = True
             else:
@@ -802,9 +1014,62 @@ class ChatLoopMixin:
                         model=self.llm.config.model if self.llm else "未配置")
             log.info("Phase 0 开始: 站点探索, metrics=%s", metrics.snapshot())
 
+            # ============================================================
+            # ★ T12 (0923 v2)：LLM 健康前置检查（在 Phase 0 之前）
+            #
+            # 0923 实测：5 次扫描里 3 次死在 LLM 层，且全是开跑前就能知道的事 ——
+            #   `404 not found the model`（爬到 493 个功能点之后才炸）
+            #   `insufficient balance`（39 次，重试完全无意义）
+            #   `organization max RPM: 3`
+            # 若 preflight 存在，用户会在第 5 秒拿到明确结论，省掉 ~55 分钟机时。
+            #
+            # 阻断型（模型名/账户/鉴权）→ 不进 Phase 0，终态 failed 且**不可重试**；
+            # 降级型（低 RPM / 窗口未知）→ 只提示建议，不打断。
+            # ============================================================
+            if self.llm is not None:
+                try:
+                    from core.llm import preflight_llm
+                    _pf = preflight_llm(self.llm.config)
+                except Exception as _pf_e:
+                    log.debug("preflight 执行异常（不影响主流程）: %s", _pf_e)
+                    _pf = {"ok": True, "blocking": False, "message": "", "suggestions": []}
+
+                for _sug in _pf.get("suggestions") or []:
+                    yield self._event("system", f"ℹ️ 开跑前提示：{_sug}")
+
+                if _pf.get("blocking"):
+                    yield self._event("system",
+                        f"❌ 开跑前检查未通过：{_pf.get('message')}")
+                    yield self._event("task_failed", json.dumps({
+                        "reason": _pf.get("kind", "preflight_blocked"),
+                        "phase": "explore",
+                        "message": _pf.get("message"),
+                        "retryable": False,
+                        "resumable": True,
+                        "blocking": True,
+                    }, ensure_ascii=False))
+                    _write_terminal_state(
+                        self.task_id, status="failed", phase="explore",
+                        reason=f"preflight_{_pf.get('kind', 'blocked')}",
+                        resumable=True,
+                    )
+                    return
+
             # ★ 目标可达性预检：重试 3 次，失败后切换被动侦察模式
             target_reachable = await self._probe_target_reachable(url)
             if not target_reachable:
+                # ★ T9 / B4 (0923 v2)：标记"目标不可达"。
+                #   标记后 _event 会把最终的 done 改写为 task_unreachable，
+                #   前端据此显示「未完成扫描」，不再与"扫完确实没漏洞"同形。
+                #   注意：这里**不中断流程**（仍继续被动侦察 + 后续阶段），
+                #   只是让终态语义变诚实 —— 避免"少扫了还报成功"。
+                self._target_unreachable = True
+                # ★ T13：终态先落一条 unreachable（后续若真跑完报告会覆盖为
+                #   completed/partial，但至少不会有"崩在 running"的窗口）
+                _write_terminal_state(
+                    self.task_id, status="unreachable", phase=self.phase,
+                    reason="target_unreachable", resumable=True,
+                )
                 yield self._event("system",
                     "⚠️ 目标不可达（重试 3 次均失败），切换到被动侦察 + 目录爆破模式")
                 # 被动侦察：信息收集 + dirsearch 风格目录爆破
@@ -1493,13 +1758,37 @@ class ChatLoopMixin:
                             f"目标可能是 SPA 单页应用或 catch-all 后端路由，dirscan 发现的端点可能无效{_abort_msg}")
                     # 敏感路径发现
                     if _dir_result.findings:
+                        # ★ T1 (0923 v2)：终端只是台账的**投影**，必须同步下沉。
+                        #   修正前的唯一断点：这里只 yield 到终端、从不写台账，
+                        #   而 core/sitemap/coverage.py 明确要读
+                        #   sitemap._dirscan_sensitive_vulns →
+                        #   于是出现「终端 5 条 HIGH，报告 0 漏洞」的全链路丢数据。
+                        #   同时 T8/T15 已把无内容证据的发现标为 needs_review，
+                        #   它们会被 coverage 的已确认漏洞过滤掉，但仍落盘可复核。
+                        from core.session.dir_finding_store import persist_dir_findings
+                        _n_persisted = persist_dir_findings(
+                            self.sitemap, _dir_result.findings,
+                            source="dirscan_active",
+                        )
+                        _n_conf = sum(
+                            1 for _f in _dir_result.findings
+                            if getattr(_f, "review_status", "") == "confirmed"
+                        )
+                        _n_pending = len(_dir_result.findings) - _n_conf
                         _sens = [
                             f"  [{f.severity.upper()}] {f.vuln_type} - {f.url}"
                             for f in _dir_result.findings[:10]
                         ]
                         yield self._event("system",
-                            f"🔴 主动目录爆破发现 {len(_dir_result.findings)} 个敏感信息泄露:\n"
+                            f"🔴 主动目录爆破发现 {len(_dir_result.findings)} 个敏感信息泄露"
+                            f"（已确认 {_n_conf} / 待复核 {_n_pending}，"
+                            f"台账 +{_n_persisted}）:\n"
                             + "\n".join(_sens))
+                        if _n_pending and not _n_conf:
+                            yield self._event("system",
+                                "⚠️ 上述发现**均未通过内容校验**（无响应体指纹命中），"
+                                "已仅记为「待复核」，不计入已确认漏洞 —— "
+                                "避免把 SPA/兜底页误判为真实泄露。")
                 except Exception as _dir_e:
                     log.debug("主动目录爆破失败（非致命）: %s", _dir_e)
 
@@ -1750,9 +2039,12 @@ class ChatLoopMixin:
 
                     # 串行执行每组子 Agent
                     from core.browse_worker import BrowseWorker
+                    # ★ B1b (0923 v2)：记录熔断/异常的组，供终态语义判定 partial
+                    _stuck_groups: list[str] = []
                     for i, group in enumerate(menu_groups):
+                        _group_name = group.get("name", f"group{i+1}")
                         yield self._event("phase",
-                            f"Phase 1a: 子 Agent [{i+1}/{len(menu_groups)}]「{group['name']}」"
+                            f"Phase 1a: 子 Agent [{i+1}/{len(menu_groups)}]「{_group_name}」"
                             f"（{group['page_count']} 页面, {group['tab_count']} Tab）")
 
                         worker = BrowseWorker(
@@ -1765,39 +2057,117 @@ class ChatLoopMixin:
                             extra_scope=crawl_result.get("extra_scope", []) if crawl_result else [],
                         )
 
-                        async for evt in worker.run():
-                            evt_type = evt.get("type", "")
-                            if evt_type == "browse_worker_message":
-                                yield self._event("message",
-                                    f"[{worker.worker_id}] {evt.get('content', '')}")
-                            elif evt_type == "browse_worker_tool":
-                                tool_str = evt.get('tool', '')
-                                yield self._event("tool_call",
-                                    f"[{worker.worker_id}] {tool_str}")
-                            elif evt_type == "browse_worker_tool_result":
-                                content = evt.get('content', '')
-                                if content:
+                        # ★ B1b (0923 v2)：单组子 Agent 出任何问题都不得炸掉整个任务。
+                        #   修正前：worker.run() 在 try 外 raise（上游已修），且此处
+                        #   `async for` 无任何兜底 → 异常穿透到 web/server.py 的
+                        #   except，记成 task_failed(uncaught_exception)：
+                        #   其余组与主流程全部丢失。实测 d.citicaibank.cn 15:50 即因此崩溃。
+                        #   设计目标：该组标记 stuck，其余组与主流程继续 → 任务终态 partial。
+                        #
+                        # ★ T11 (0923 v2)：按 **group 维度**统计产出，避免"子 Agent
+                        #   LLM 报错却报『✅ 完成（1 轮）』"的静默降级。
+                        #   修正前只统计全局 API 数，其它路径（如 Phase 1 的
+                        #   _sync_all_flows_to_sitemap）加 API 会掩盖本组零产出。
+                        _group_apis_before = len(self.sitemap.apis) if self.sitemap else 0
+                        _w_errors = 0
+                        try:
+                            async for evt in worker.run():
+                                evt_type = evt.get("type", "")
+                                if evt_type == "browse_worker_message":
+                                    yield self._event("message",
+                                        f"[{worker.worker_id}] {evt.get('content', '')}")
+                                elif evt_type == "browse_worker_tool":
+                                    tool_str = evt.get('tool', '')
+                                    yield self._event("tool_call",
+                                        f"[{worker.worker_id}] {tool_str}")
+                                elif evt_type == "browse_worker_tool_result":
+                                    content = evt.get('content', '')
+                                    if content:
+                                        yield self._event("system",
+                                            f"[{worker.worker_id}] {content}")
+                                elif evt_type == "browse_worker_screenshot":
+                                    ss_name = evt.get('name', 'screenshot')
+                                    yield self._event("screenshot",
+                                        f"/api/screenshot/{ss_name}")
+                                elif evt_type == "browse_worker_reasoning":
+                                    content = evt.get('content', '')
+                                    if any(kw in content for kw in
+                                        ('✅', '❌', '页面', 'Tab', '菜单', '按钮',
+                                         'API', 'proxy_get_traffic', '完成', '下一个')):
+                                        yield self._event("thinking",
+                                            f"[{worker.worker_id}] {content}")
+                                elif evt_type == "browse_worker_error":
+                                    # ★ T11 (0923 v2)：累计本组错误数。
+                                    #   修正前这里只打个"⚠️ 出错"，紧接着
+                                    #   browse_worker_done 又报"✅ 完成（1 轮）"
+                                    #   —— 实测 11:25/11:26 就是这样把 LLM 404
+                                    #   静默降级成"成功"，用户完全不知道这组白跑了。
+                                    _w_errors += 1
                                     yield self._event("system",
-                                        f"[{worker.worker_id}] {content}")
-                            elif evt_type == "browse_worker_screenshot":
-                                ss_name = evt.get('name', 'screenshot')
-                                yield self._event("screenshot",
-                                    f"/api/screenshot/{ss_name}")
-                            elif evt_type == "browse_worker_reasoning":
-                                content = evt.get('content', '')
-                                if any(kw in content for kw in
-                                    ('✅', '❌', '页面', 'Tab', '菜单', '按钮',
-                                     'API', 'proxy_get_traffic', '完成', '下一个')):
-                                    yield self._event("thinking",
-                                        f"[{worker.worker_id}] {content}")
-                            elif evt_type == "browse_worker_error":
-                                yield self._event("system",
-                                    f"⚠️ [{worker.worker_id}] 出错: {evt.get('error', '')}")
-                            elif evt_type == "browse_worker_done":
-                                rounds = evt.get("rounds", 0)
-                                yield self._event("system",
-                                    f"✅ [{worker.worker_id}]「{group['name']}」完成"
-                                    f"（{rounds} 轮）")
+                                        f"⚠️ [{worker.worker_id}] 出错({_w_errors}): "
+                                        f"{evt.get('error', '')}")
+                                elif evt_type == "browse_worker_stuck":
+                                    # ★ B1b：原先消费端**没有这个 case**，
+                                    #   P3 熔断事件被静默丢弃 → 用户既看不到熔断，
+                                    #   也不知道有多少组没跑完。
+                                    _stuck_groups.append(_group_name)
+                                    yield self._event("system",
+                                        f"⛔ [{worker.worker_id}]「{_group_name}」卡死熔断，"
+                                        f"本组已优雅跳过（其余组与主流程继续）: "
+                                        f"{evt.get('error', '')}")
+                                elif evt_type == "browse_worker_done":
+                                    rounds = evt.get("rounds", 0)
+                                    # ★ T11：按 group 维度核算本组净产出。
+                                    _group_gained = (
+                                        len(self.sitemap.apis) if self.sitemap else 0
+                                    ) - _group_apis_before
+                                    if _w_errors and _group_gained <= 0:
+                                        # 有错误 + 零产出 = 实质失败，不能报"完成"
+                                        _stuck_groups.append(_group_name)
+                                        yield self._event("system",
+                                            f"⛔ [{worker.worker_id}]「{_group_name}」"
+                                            f"历经 {_w_errors} 次错误、新增 0 个 API，"
+                                            f"判定为**未完成**（不再伪装成成功）；"
+                                            f"覆盖缺口已记入报告。")
+                                    else:
+                                        _extra = (
+                                            f"，新增 {_group_gained} 个 API"
+                                            if _group_gained > 0 else ""
+                                        )
+                                        _warn = (
+                                            f"（含 {_w_errors} 次可恢复错误）"
+                                            if _w_errors else ""
+                                        )
+                                        yield self._event("system",
+                                            f"✅ [{worker.worker_id}]「{_group_name}」完成"
+                                            f"（{rounds} 轮{_extra}）{_warn}")
+                        except asyncio.CancelledError:
+                            # 用户主动停止：必须原样上抛，交给 server.py 记 aborted
+                            raise
+                        except Exception as _w_e:
+                            _stuck_groups.append(_group_name)
+                            log.warning(
+                                "[%s] 子 Agent 异常已收敛（不再炸任务）: %s",
+                                worker.worker_id, _w_e, exc_info=True,
+                            )
+                            yield self._event("system",
+                                f"⛔ [{worker.worker_id}]「{_group_name}」异常退出，"
+                                f"本组已跳过（其余组与主流程继续）: {str(_w_e)[:200]}")
+
+                    if _stuck_groups:
+                        # 去重但保序（同一个组可能既报 error 又报 done）
+                        _uniq: list[str] = []
+                        for _g in _stuck_groups:
+                            if _g not in _uniq:
+                                _uniq.append(_g)
+                        _stuck_groups = _uniq
+                        self._browse_stuck_groups = list(_stuck_groups)
+                        _preview = ", ".join(f"「{g}」" for g in _stuck_groups[:5])
+                        _more = "…" if len(_stuck_groups) > 5 else ""
+                        yield self._event("system",
+                            f"⚠️ 本次有 {len(_stuck_groups)} 组子 Agent 未完成"
+                            f"（{_preview}{_more}）；任务整体继续，"
+                            f"相关覆盖缺口将记入报告（终态为 partial）。")
 
                     yield self._event("system",
                         f"🎯 所有 {len(menu_groups)} 组子 Agent 操作完成，"
@@ -2130,14 +2500,65 @@ class ChatLoopMixin:
                             break
 
                 if not _retried_ok:
-                    yield self._event("system", f"LLM 调用出错: {e}，发送消息可重试")
+                    # ★ B5 (0923 v2)：错误文案必须分型。
+                    #   修正前所有 LLM 失败都提示"发送消息可重试" —— 但 404（模型名
+                    #   不存在）、余额不足、401 都是**配置性错误，重试无意义**，
+                    #   用户被引导去做一个必然失败的动作。
+                    _reason_kind, _user_msg = _classify_llm_failure(str(e))
+                    _retryable = _reason_kind in ("llm_rate_limit", "llm_network")
+
+                    # ★ P13 (0923 v2)：运行中**余额/账户类**错误 → 终态 ``partial``，
+                    #   不是 ``failed``。产品决策见 `0923_产品方案.md §10.2`。
+                    #   理由：preflight 只覆盖开跑前；余额在扫描途中耗尽时，把已抓到的
+                    #   API / 功能点全部作废（failed）是错的，用户要的是
+                    #   「已完成多少 + 怎么接着跑」。实测 `insufficient balance` 39 次
+                    #   > `429` 6 次 —— 这才是真正的拦路虎。
+                    #   注意：429 属 ``llm_rate_limit``（可自愈），走下面的 failed 分支
+                    #   是刻意的 —— 重试已在上面的 while 里跑满。
+                    if _reason_kind == "llm_account":
+                        _note = build_partial_progress_note(self.phase, self.sitemap)
+                        yield self._event("system", f"⚠️ {_user_msg}")
+                        yield self._event("system", f"📌 {_note}")
+                        yield self._event("task_partial", json.dumps({
+                            "reason": _reason_kind,
+                            "phase": self.phase,
+                            "round": round_num,
+                            "error": str(e)[:300],
+                            "message": _user_msg,
+                            "progress": _note,
+                            "retryable": False,
+                            "resumable": True,
+                        }, ensure_ascii=False))
+                        # 终态落库为 partial（T13 的同一落库通道）
+                        _write_terminal_state(
+                            self.task_id,
+                            status="partial",
+                            phase=self.phase,
+                            reason=_reason_kind,
+                            resumable=True,
+                        )
+                        _exit_reason = "llm_account_partial"
+                        break
+
+                    yield self._event("system", f"LLM 调用出错: {_user_msg}")
                     yield self._event("task_failed", json.dumps({
-                        "reason": "llm_error",
+                        "reason": _reason_kind,
                         "phase": self.phase,
                         "round": round_num,
                         "error": str(e)[:300],
-                        "message": "LLM API 调用失败，发送消息可重试",
+                        "message": _user_msg,
+                        "retryable": _retryable,
+                        "resumable": True,
                     }, ensure_ascii=False))
+                    # ★ T13 (0923 v2)：终态落库 —— 修正前 llm_error 只发 SSE 事件，
+                    #   scans.status 永久停在 running（实测 31 条残留）。
+                    _write_terminal_state(
+                        self.task_id,
+                        status="failed",
+                        phase=self.phase,
+                        reason=_reason_kind,
+                        resumable=True,
+                    )
                     _exit_reason = "llm_error"
                     break
 

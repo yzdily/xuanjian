@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from typing import Any
 
@@ -17,6 +18,90 @@ from core.llm._context import get_current_task
 from core.log import get_logger
 
 log = get_logger("llm")
+
+
+# ============================================================
+# ★ T10 (0923 v2)：进程级令牌桶（最小调用间隔限速）
+# ============================================================
+class _TokenBucket:
+    """按 RPM 强制**最小调用间隔**的进程级限速器。
+
+    为什么需要：0923 实测该 API key 所属组织全局上限仅 **3 请求/分钟**，
+    而一次扫描会并发发出大量 LLM 调用（主循环 + analyze + judge +
+    harm_validation + 报告）→ 必然撞满 → 429 → ``task_failed(llm_error)``。
+
+    ``LLM_SCAN_MAX_WORKERS=3`` 只限制"同时并发数"，**不限制速率**：
+    3 个并发各自快速往返，1 秒内也能打出 6+ 次调用。必须补速率维度。
+
+    RPM 来源优先级：环境变量 ``XUANJIAN_LLM_RPM`` > 显式 ``configure()`` > 不限速(0)。
+
+    Notes:
+        - 采用单调时钟（``time.monotonic``），不受系统时间跳变影响。
+        - 已知局限：进程级。若将来多 worker/多进程部署，需换成外部共享限速
+          （Redis 令牌桶等）。当前部署为单进程 + ``task_queue(max_concurrent=3)``，
+          进程级成立。
+    """
+
+    def __init__(self, rpm: float = 0.0):
+        self._lock = threading.Lock()
+        self._rpm = max(0.0, float(rpm or 0))
+        self._next_at = 0.0
+
+    def configure(self, rpm: float) -> None:
+        """设置 RPM（0 = 不限速）。"""
+        with self._lock:
+            self._rpm = max(0.0, float(rpm or 0))
+            self._next_at = 0.0
+
+    @property
+    def rpm(self) -> float:
+        with self._lock:
+            return self._rpm
+
+    @property
+    def min_interval(self) -> float:
+        """相邻两次调用的最小间隔（秒）；0 表示不限速。"""
+        with self._lock:
+            return (60.0 / self._rpm) if self._rpm > 0 else 0.0
+
+    def acquire(self) -> float:
+        """阻塞到允许发起下一次调用。
+
+        Returns:
+            实际等待秒数（0 表示无需等待）。
+        """
+        with self._lock:
+            if self._rpm <= 0:
+                return 0.0
+            interval = 60.0 / self._rpm
+            now = time.monotonic()
+            wait = max(0.0, self._next_at - now)
+            self._next_at = max(now, self._next_at) + interval
+        if wait > 0:
+            time.sleep(wait)
+        return wait
+
+
+def _resolve_rpm_from_env() -> float:
+    """从 ``XUANJIAN_LLM_RPM`` 读取 RPM（非法值按不限速处理并告警）。"""
+    raw = (os.environ.get("XUANJIAN_LLM_RPM") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        log.warning("XUANJIAN_LLM_RPM 取值非法(%r)，按不限速处理", raw)
+        return 0.0
+
+
+# 模块级单例：所有 LLMClient 实例共享，才能真正限住全局速率
+_llm_rate_limiter = _TokenBucket(_resolve_rpm_from_env())
+
+
+def get_llm_rate_limiter() -> "_TokenBucket":
+    """获取进程级 LLM 限速器（供 preflight / 测试访问）。"""
+    return _llm_rate_limiter
+
 
 class LLMClient:
     """统一的 LLM 调用客户端，屏蔽 OpenAI/Anthropic/DeepSeek 协议差异。"""
@@ -233,7 +318,14 @@ class LLMClient:
                 caller or "?", estimated_input, available_for_input,
                 context_window, self.config.model,
             )
-            raise _llm.ContextLimitError(estimated_input, context_window, self.config.model)
+            # ★ B2 修复 (0923 v2)：把 available_for_input 一并传出。
+            #   原先只传 context_window，导致错误消息出现
+            #   「估算 15832 > 可用 32768」这种自相矛盾的文案。
+            raise _llm.ContextLimitError(
+                estimated_input, context_window, self.config.model,
+                available=available_for_input,
+            )
+
 
         # ★ 并发隔离：关键 caller（如 harm_validation）使用独立信号量，
         # 避免与扫描阶段 LLM 调用互相挤占 org concurrency 上限导致 429。
@@ -244,6 +336,13 @@ class LLMClient:
         try:
             last_exc: Exception | None = None
             for attempt in range(max_retries + 1):
+                # ★ T10 (0923 v2)：令牌桶限速 —— 在真正发请求前阻塞到允许的时刻。
+                #   放在重试循环内（而非外层）是因为重试同样是一次真实调用，
+                #   也占组织 RPM 配额。
+                _waited = _llm_rate_limiter.acquire()
+                if _waited > 0.5:
+                    log.debug("[%s] LLM 限速等待 %.1fs（RPM=%.0f）",
+                              caller or "?", _waited, _llm_rate_limiter.rpm)
                 try:
                     if self.config.provider == "anthropic":
                         resp = self._chat_anthropic(messages, tools, temperature, max_tokens, caller)
@@ -261,25 +360,34 @@ class LLMClient:
                     # 不可重试错误直接抛出（交给上层 fallback）
                     if not self._is_retryable_error(exc):
                         raise
-                    # ★ 自适应退避：取 max(Retry-After, 指数退避)，
+                    # ★ 自适应退避：取 max(Retry-After, 指数退避, 令牌桶最小间隔)，
                     # 服务端明确告知冷却时间时以服务端为准，避免窗口内反复撞限流。
-                    # 抖动幅度从 0.5 扩大到 1.0，降低多 worker 同步重试撞限流概率。
+                    # ★ T10 (0923 v2)：补上 min_interval 这一项 —— 修正前只有
+                    #   `max(Retry-After, 2**attempt)`，对 3 RPM 的 key 形同虚设：
+                    #   服务端回 Retry-After: 1 时只等 1s，而真实需要 20s（60/3）。
                     import random
                     exp_backoff = (2 ** attempt) + random.uniform(0, 1.0)
                     retry_after = self._extract_retry_after(exc)
+                    _floor = _llm_rate_limiter.min_interval
                     if retry_after is not None:
                         # 上限 120s，给 429 更充分冷却时间（原 60s 在高并发下仍会撞限流）
-                        backoff = min(max(retry_after, exp_backoff), 120.0)
+                        backoff = min(max(retry_after, exp_backoff, _floor), 120.0)
                         log.warning(
-                            "LLM 调用失败（第 %d/%d 次），服务端 Retry-After=%.1fs，%0.1fs 后重试: %s",
-                            attempt + 1, max_retries, retry_after, backoff, str(exc)[:200],
+                            "LLM 调用失败（第 %d/%d 次），服务端 Retry-After=%.1fs"
+                            "（限速下限 %.1fs），%0.1fs 后重试: %s",
+                            attempt + 1, max_retries, retry_after, _floor,
+                            backoff, str(exc)[:200],
                         )
                     else:
-                        backoff = exp_backoff
+                        backoff = max(exp_backoff, _floor)
                         log.warning(
                             "LLM 调用失败（第 %d/%d 次），%0.1fs 后重试: %s",
                             attempt + 1, max_retries, backoff, str(exc)[:200],
                         )
+                    # 退避结束后重置令牌桶，避免"退避 + 限速"双重等待
+                    if _floor > 0:
+                        with _llm_rate_limiter._lock:
+                            _llm_rate_limiter._next_at = time.monotonic() + backoff
                     time.sleep(backoff)
             # 理论上不会走到这里
             raise last_exc  # type: ignore[misc]

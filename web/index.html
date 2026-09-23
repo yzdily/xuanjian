@@ -3594,6 +3594,11 @@ async function stopTaskSilently() {
 }
 
 // 恢复暂停的目标扫描
+// ★ T5'' (0923 v3)：暂停目标的「恢复」= **续跑其绑定任务**（复用断点），不新建会话。
+//   修正前它调 startScanForTarget() → 丢弃 target.taskId + POST /api/stop + POST /api/sessions/new
+//   → 从 Phase 0 重扫。运行级复现（scripts `_verify_resume_entry.py`），点 ▶ 的真实请求序列：
+//     修正前 = /api/models/preflight → /api/stop → /api/sessions/new（重头）
+//     改走 resumeTaskById 后 = POST /api/tasks/{id}/resume（续跑）
 function resumeTarget(id) {
   const t = _targets.find(x => x.id === id);
   if (!t) return;
@@ -3601,7 +3606,16 @@ function resumeTarget(id) {
     toast('只能恢复已暂停的目标', 'warn');
     return;
   }
-  // 改回空闲状态再启动扫描
+  if (t.taskId) {
+    // 有绑定任务 → 续跑（复用断点，不重爬）
+    t.status = 'running';
+    saveTargets();
+    renderTargets();
+    updateTargetStats();
+    resumeTaskById(t.taskId);
+    return;
+  }
+  // 无绑定任务（从未扫描 / 已被「彻底停止」）→ 才走真·重扫
   t.status = 'idle';
   saveTargets();
   renderTargets();
@@ -3642,8 +3656,16 @@ function updateTargetStats() {
 
 // ==================== 扫描控制 ====================
 async function startScanFromHeader() {
-  const idleTargets = _targets.filter(t => t.status === 'idle' || t.status === 'paused');
+  // ★ T5'' (0923 v3)：只挑「空闲」目标。暂停中的目标不再被「开始扫描」当新任务重扫
+  //   （那会丢弃断点、从 Phase 0 重来）—— 它们应由「恢复/继续」续跑（resumeTarget / resumeCurrentTask）。
+  const idleTargets = _targets.filter(t => t.status === 'idle');
   if (idleTargets.length === 0) {
+    const pausedCount = _targets.filter(t => t.status === 'paused').length;
+    if (pausedCount > 0) {
+      toast(`有 ${pausedCount} 个已暂停的目标，请点该目标行的「▶」从断点继续`, 'warn');
+      addTerminalLine('warn', 'SCAN', `有 ${pausedCount} 个已暂停的目标：请用「恢复/继续」续跑，避免从头重扫。`);
+      return;
+    }
     openAddTargetModal();
     return;
   }
@@ -3656,10 +3678,69 @@ async function startScanFromHeader() {
   }
 }
 
+// ★ T12 (0923 v2)：开跑前的模型健康检查（preflight）。
+//   为什么需要：0923 当日 5 次扫描里 **3 次**死在 LLM 层，而且全是**开跑前就能
+//   知道的事** —— 模型名 404 / `insufficient balance`（39 次，比 429 的 6 次更致命）/
+//   组织 RPM 仅 3。原本要爬完 95 个 JS 文件、493 个功能点之后才暴露，
+//   用户还会被提示"可重试"（对一个必然失败的动作重试）。
+//   约定：接口本身失败 → **降级放行**（绝不因为健康检查挡住用户），但明确告知已跳过。
+//   ⚠️ 缓存策略：批量扫描会对**每个目标**各调一次 startScanForTarget，
+//     而 preflight 是一次**真实 API 调用** —— 不做缓存会把同一件事重复做 N 遍。
+//     规则：只缓存"非阻断"结果（阻断结果不缓存，否则用户改完配置 60s 内仍被拦）。
+let _pfCache = { at: 0, res: null };
+const _PF_TTL_MS = 60000;
+
+async function preflightModelHealth() {
+  const _now = Date.now();
+  if (_pfCache.res && (_now - _pfCache.at) < _PF_TTL_MS) return _pfCache.res;
+  let _res;
+  try {
+    const resp = await fetch('/api/models/preflight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!resp.ok) {
+      _res = { ok: true, blocking: false, skipped: true, message: '健康检查接口不可用，已跳过' };
+    } else {
+      _res = await resp.json();
+    }
+  } catch (e) {
+    _res = { ok: true, blocking: false, skipped: true, message: '健康检查未执行（网络异常），已跳过' };
+  }
+  // 只缓存可放行的结果；阻断型每次都重新探测（用户改配置后应立即生效）
+  if (_res && _res.blocking !== true && _res.skipped !== true) {
+    _pfCache = { at: _now, res: _res };
+  }
+  return _res;
+}
+
 async function startScanForTarget(target) {
+  // ★ T12：开跑前健康检查 —— 阻断型问题（模型名 / Key / 余额）不留到"爬到一半"才炸
+  toast('正在检查模型可用性…', 'info');
+  addTerminalLine('system', 'PREFLIGHT', '正在检查模型可用性…');
+  const _pf = await preflightModelHealth();
+  if (_pf.blocking) {
+    addTerminalLine('error', 'PREFLIGHT', `⛔ 已阻止开跑：${_pf.message}`);
+    (_pf.suggestions || []).forEach(s => addTerminalLine('warn', 'PREFLIGHT', '· ' + s));
+    addScanLog('error', '模型不可用，已阻止开跑: ' + _pf.message);
+    toast('模型不可用，已阻止开跑：' + _pf.message, 'error');
+    return; // 刻意不改 target.status —— 留在 idle，用户改完配置即可再点
+  }
+  if (_pf.skipped) {
+    addTerminalLine('warn', 'PREFLIGHT', _pf.message + '，将继续扫描');
+  } else if (_pf.ok === false) {
+    // 非阻断型（限流 / 网络）：允许开跑，但必须预警
+    addTerminalLine('warn', 'PREFLIGHT', `⚠️ ${_pf.message}（可自愈，将继续扫描）`);
+  } else {
+    addTerminalLine('success', 'PREFLIGHT', `✅ ${_pf.message || '模型健康'}`);
+  }
+  (_pf.suggestions || []).forEach(s => addTerminalLine('warn', 'PREFLIGHT', '· ' + s));
+
   target.status = 'running';
   if (target.taskId) {
-    // 暂停后恢复：通知后端恢复此 task
+    // ★ 本函数 = 「新建扫描」（重扫）。若该目标此前有绑定任务，先停掉其后台任务并解绑，
+    //   避免旧任务残留；「续跑断点」不走这里 —— 见 resumeTarget() → resumeTaskById()。
     try { await fetch('/api/stop', { method: 'POST' }); } catch(e) {}
     target.taskId = null;
   }
@@ -3774,6 +3855,25 @@ async function startScanForTarget(target) {
   }
 }
 
+// ★ P14 (0923 v2)：任务终态（五态）→ UI 的**唯一**映射表。
+//   产品方案 §10.3 P14 要求：五态与前端状态"有且仅有一个映射表"，
+//   新增/修改终态展示**必须改这里**，不得再开分支。
+//   五态来源：后端 core/session/base.py::TERMINAL_EVENT_MAP（权威），
+//   前端只做展示层映射，不自己推断语义。
+//   - done             扫描完成且确实没漏洞
+//   - task_partial     部分完成（有组未完成 / 余额中断）→ 成果已保留，可续跑
+//   - task_unreachable 目标不可达 → 0 漏洞**不代表干净**
+//   - task_failed      配置性失败（模型名/Key/网络）
+//   - task_aborted     用户中断（暂停可续跑 / 停止不可续跑）
+//   targetStatus: 写回本地目标列表的展示态（null = 保持既有行为，不改）
+const TERMINAL_STATE_UI = {
+  'done':             { tag: 'success', label: 'DONE',    text: '扫描完成',                 targetStatus: null,      scanLevel: 'success' },
+  'task_partial':     { tag: 'warn',    label: 'PARTIAL', text: '部分完成（成果已保留，可续跑）', targetStatus: 'paused',  scanLevel: 'warn' },
+  'task_unreachable': { tag: 'error',   label: 'UNREACH', text: '目标不可达（0 漏洞 ≠ 安全）',   targetStatus: 'error',   scanLevel: 'error' },
+  'task_failed':      { tag: 'error',   label: 'FAIL',    text: '任务失败',                 targetStatus: 'error',   scanLevel: 'error' },
+  'task_aborted':     { tag: 'warn',    label: 'ABORT',   text: '任务已中断',               targetStatus: 'paused',  scanLevel: 'warn' },
+};
+
 function handleScanEvent(event, target) {
   const type = event.type || '';
   const data = event.data || '';
@@ -3797,19 +3897,29 @@ function handleScanEvent(event, target) {
   } else if (type === 'vuln') {
     if (settings.realtimeVulnPush !== false) addVulnFromEvent(event);
     addTerminalLine('warn', 'VULN', `[${event.severity || '未知'}] ${event.vuln_type || ''}: ${data}`);
-  } else if (type === 'done') {
-    addTerminalLine('success', 'DONE', '扫描完成');
-    addScanLog('success', '扫描完成');
-  } else if (type === 'task_failed') {
-    addTerminalLine('error', 'FAIL', data);
-    addScanLog('error', '任务失败: ' + data);
-    target.status = 'error';
   } else if (type === 'task_stuck') {
+    // 中间态（非终态）：任务被 nudge 判定卡住，后续可由「继续」唤醒
     addTerminalLine('warn', 'STUCK', data);
     addScanLog('warn', '任务卡住: ' + data);
-  } else if (type === 'task_aborted') {
-    addTerminalLine('warn', 'ABORT', '任务已中断');
-    addScanLog('warn', '任务中断');
+  } else if (TERMINAL_STATE_UI[type]) {
+    // ★ P14 (0923 v2)：终态统一走映射表 —— 补上原先缺失的 task_partial /
+    //   task_unreachable（此前前端只有 done/failed/aborted 三个分支，
+    //   另外两种终态落到这里会被静默丢弃，用户看到任务"卡住不动"）。
+    const _ui = TERMINAL_STATE_UI[type];
+    let _extra = data || '';
+    if (type === 'task_partial') {
+      // P13：余额中断时 data 是 JSON，需拆出 message + 进度说明
+      try {
+        const _o = JSON.parse(data);
+        _extra = [_o.message, _o.progress].filter(Boolean).join('｜');
+      } catch (e) { /* 非 JSON 则原样展示 */ }
+      addScanLog('warn', '任务部分完成: ' + _extra);
+      toast('任务部分完成，成果已保留。可点「继续」从断点续跑', 'warn');
+    } else {
+      addScanLog(_ui.scanLevel, _ui.text + (data ? ': ' + data : ''));
+    }
+    addTerminalLine(_ui.tag, _ui.label, _extra ? `${_ui.text} · ${_extra}` : _ui.text);
+    if (_ui.targetStatus) target.status = _ui.targetStatus;
   }
 
   // 更新进度
@@ -3900,9 +4010,18 @@ async function pauseCurrentTask(runningTarget) {
   runningTarget = runningTarget || _targets.find(t => t.status === 'running');
   _pauseInProgress = true;
   if (currentAbort) currentAbort.abort();
-  try { await fetch('/api/stop', { method: 'POST' }); } catch(e) {}
+  // ★ T5' (0923 v2)：明确告知后端这是"暂停"（可续跑）而不是"停止"（终止）。
+  //   后端 mode=pause 会保留 session.phase 并写 resumable=1；
+  //   修正前无 mode 参数，后端会把 phase 归 idle → 下次「继续」回到 Phase 0 重爬。
+  try {
+    await fetch('/api/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'pause' }),
+    });
+  } catch (e) { /* 网络抖动：本地状态照常收敛 */ }
   if (runningTarget) {
     runningTarget.status = 'paused';
+    // 保留 taskId —— 这是「继续」能续跑当前任务的绑定依据
     finishScan(runningTarget, true);
   } else {
     // 仅终端聊天流（无 _targets 状态）：手动收敛 UI 与标志
@@ -3917,8 +4036,103 @@ async function pauseCurrentTask(runningTarget) {
     const ti = document.getElementById('terminalInput');
     if (ti) ti.disabled = false;
   }
-  addTerminalLine('warn', 'PAUSE', '任务已暂停');
+  addTerminalLine('warn', 'PAUSE', '任务已暂停（可从断点继续）');
   _pauseInProgress = false;
+}
+
+// ★ T5' (0923 v2)：彻底终止（不可续跑）。
+//   与「暂停」的区别：后端 mode=stop 会把 session.phase 归 idle 并置 _resume_blocked，
+//   下次「继续」不会复用断点。
+async function stopCurrentTask() {
+  if (currentAbort) currentAbort.abort();
+  try {
+    await fetch('/api/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'stop' }),
+    });
+  } catch (e) { /* 忽略 */ }
+  const t = _targets.find(x => x.status === 'running') || null;
+  isStreaming = false;
+  currentAbort = null;
+  if (t) {
+    t.status = 'idle';
+    saveTargets();
+    renderTargets();
+    updateTargetStats();
+  }
+  const stopBtn = document.getElementById('stopBtn');
+  const scanBtn = document.getElementById('scanBtn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  if (scanBtn) scanBtn.style.display = 'inline-flex';
+  const ti = document.getElementById('terminalInput');
+  if (ti) ti.disabled = false;
+  const sb = document.getElementById('terminalSendBtn');
+  if (sb) sb.disabled = false;
+  setStatus('idle', '已停止');
+  addTerminalLine('warn', 'STOP', '任务已停止（不可续跑）');
+}
+
+// ★ T5' (0923 v2/v3)：续跑**指定任务**的唯一实现（不新建会话、不换目标）。
+//   为什么抽成 resumeTaskById：v2 只在终端命令入口收口，「目标列表 ▶」那条入口
+//   仍各自调 startScanForTarget → 又去新建会话从头扫（用户主诉复现）。
+//   v3 把两个入口统一到这里 —— 不要再各写一套（R1-R5，产品方案 §3）：
+//   绑定任务、从断点阶段起、幂等、容错输入、前后端一致（统一交后端裁决，前端不猜语义）。
+async function resumeTaskById(taskId) {
+  if (isStreaming) {
+    toast('任务正在运行中，无需继续', 'warn');
+    return;
+  }
+  if (!taskId) {
+    addTerminalLine('warn', 'RESUME', '当前没有可继续的任务（未绑定会话）。请先新建任务或从会话列表选择一个任务。');
+    toast('当前没有可继续的任务', 'warn');
+    return;
+  }
+  // ★ T7 (0923 v2)：先向后端要**权威裁决**（POST /api/tasks/{id}/resume），
+  //   前端不自己猜语义（R5）。该接口只裁决不执行，真正的续跑仍由随后的
+  //   「继续」消息 → 后端 _match_resume + _enter_phase 原地恢复。
+  let dec = null;
+  try {
+    const r = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST' });
+    if (r.ok) dec = await r.json();
+  } catch (e) { /* 裁决接口不可用 → 回落到下面的 status 判定 */ }
+  if (dec) {
+    if (!dec.ok) {
+      addTerminalLine('warn', 'RESUME', dec.message || '当前不可续跑');
+      toast(dec.message || '当前不可续跑', 'warn');
+      return;
+    }
+    const _phase = dec.resume_phase || '断点';
+    addTerminalLine('system', 'RESUME',
+      `🔁 ${dec.message || ('从 ' + _phase + ' 阶段续跑当前任务（复用已抓成果，不重爬）')}`);
+    const _input = document.getElementById('terminalInput');
+    if (_input) _input.value = '继续';
+    await sendTerminalMessage();
+    return;
+  }
+
+  // 回落路径：裁决接口不可用时的兜底（保持旧行为）
+  let st = null;
+  try {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(taskId)}/status`);
+    if (resp.ok) st = await resp.json();
+  } catch (e) { /* 状态查询失败不阻塞续跑尝试 */ }
+  if (st && st.running) {
+    toast('任务正在运行中，无需继续', 'warn');
+    return;
+  }
+  const phase = (st && (st.resume_phase || st.phase)) || '断点';
+  addTerminalLine('system', 'RESUME',
+    `🔁 从 ${phase} 阶段续跑当前任务（复用已抓成果，不重爬）`);
+  // 把"继续"作为消息发给**当前会话** —— 复用既有 /api/chat 流式链路，
+  // 后端 _match_resume + _enter_phase 负责从断点阶段原地恢复。
+  const input = document.getElementById('terminalInput');
+  if (input) input.value = '继续';
+  await sendTerminalMessage();
+}
+
+// 终端命令 / 输入框入口：续跑当前绑定任务（唯一实现见 resumeTaskById）
+async function resumeCurrentTask() {
+  return resumeTaskById(currentTaskId);
 }
 
 function addScanLog(level, message) {
@@ -4855,17 +5069,49 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // 智能终端命令解析器：先识别本地命令并立即执行，不送进 LLM 流
+//
+// ★ T5' (0923 v2)：修正三处
+//  1. 「继续/恢复」不再绑到 startScanFromHeader()（那会新建会话从头扫别的目标）
+//     —— 这是用户主诉「我让继续你又扫其他目标的重头开始扫描」的直接根因。
+//  2. 「暂停」与「停止」拆成两个动作（后端 /api/stop 支持 mode=pause|stop）。
+//  3. resume 判定改为**前缀匹配**，且规则与后端 core/session/chat_loop.py
+//     的 _match_resume 保持一致 —— 修正前这里是归一后全等比对，
+//     「继续测试跑完这个流程」在前端也判不中（实测）。
+const RESUME_PREFIXES = ['继续', '恢复', '接着', '续跑', '往下', 'resume', 'continue', 'go on'];
+const RESUME_POLITE_PREFIXES = ['麻烦帮我', '麻烦你', '请帮我', '麻烦', '帮我', 'please', '请'];
+
+function matchResumeCommand(msg) {
+  let s = (msg || '').trim().toLowerCase()
+    .replace(/^task_[0-9a-zA-Z_]+\s+/, '')
+    .replace(/^[\s/，,。.、:：!！?？~]+/, '');
+  if (!s) return false;
+  let changed = true;
+  while (changed && s) {
+    changed = false;
+    for (const p of RESUME_POLITE_PREFIXES) {
+      if (s.startsWith(p)) {
+        s = s.slice(p.length).replace(/^[\s/，,。.、:：!！?？~]+/, '');
+        changed = true;
+        break;
+      }
+    }
+  }
+  return RESUME_PREFIXES.some(p => s.startsWith(p));
+}
+
 async function handleTerminalCommand(msg) {
   const cmd = msg.toLowerCase().replace(/^[\s\/]+/, '').replace(/[\s。！]+$/, '');
+  // ★ 先判 resume（前缀匹配），必须在下面精确匹配表之前
+  if (matchResumeCommand(msg)) { await resumeCurrentTask(); return true; }
   const map = [
-    { keys: ['暂停', '停止', 'stop', 'pause'], fn: () => pauseCurrentTask() },
-    { keys: ['继续', '恢复', 'resume', 'continue'], fn: () => startScanFromHeader() },
+    { keys: ['暂停', 'pause'], fn: () => pauseCurrentTask() },
+    { keys: ['停止', '终止', 'stop'], fn: () => stopCurrentTask() },
     { keys: ['扫描', '开始扫描', '开始', 'start', 'go'], fn: () => startScanFromHeader() },
     { keys: ['新建任务', '新建', 'new', 'newtask'], fn: () => newTaskFromSidebar() },
     { keys: ['清空', '清除', 'clear', 'cls'], fn: () => clearTerminal() },
     { keys: ['帮助', '命令', 'help', '?'], fn: () => {
       addTerminalLine('system', 'INFO',
-        '可用命令：暂停/停止、继续/恢复、扫描/开始、新建任务、清空、帮助');
+        '可用命令：继续/恢复（断点续跑当前任务）、暂停（可续跑）、停止（终止）、扫描/开始、新建任务、清空、帮助');
     }},
   ];
   for (const entry of map) {
@@ -4949,8 +5195,15 @@ async function sendTerminalMessage() {
           if (type === 'assistant') addTerminalLine('assistant', 'AI', data);
           else if (type === 'system') addTerminalLine('system', 'INFO', data);
           else if (type === 'vuln') addTerminalLine('warn', 'VULN', `[${event.severity || ''}] ${event.vuln_type || ''}: ${data}`);
-          else if (type === 'done') addTerminalLine('success', 'DONE', '完成');
-          else if (type === 'task_failed') addTerminalLine('error', 'FAIL', data);
+          else if (TERMINAL_STATE_UI[type]) {
+            // ★ P14：终态展示统一走唯一映射表（与 handleScanEvent 同一张表）
+            const _ui2 = TERMINAL_STATE_UI[type];
+            let _ex2 = data || '';
+            if (type === 'task_partial') {
+              try { const _o = JSON.parse(data); _ex2 = [_o.message, _o.progress].filter(Boolean).join('｜'); } catch (e) { /* 非 JSON 原样 */ }
+            }
+            addTerminalLine(_ui2.tag, _ui2.label, _ex2 ? `${_ui2.text} · ${_ex2}` : _ui2.text);
+          }
           // 关键词检测已关闭：避免将 AI 消息中提到的漏洞关键词误判为真实漏洞
         } catch (e) {}
       }

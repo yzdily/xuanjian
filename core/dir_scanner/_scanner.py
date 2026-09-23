@@ -26,6 +26,15 @@ from ._constants import (
     _SPA_SHELL_PATTERN,
 )
 from ._models import DirEntry, DirFinding, DirScanResult
+from ._finding_policy import (
+    CATCH_ALL_MIN_CLUSTER,
+    CATCH_ALL_MIN_RATE,
+    CATCH_ALL_MIN_TOTAL,
+    apply_catch_all_veto,
+    classify_sensitive_entry,
+    close_abandoned_coroutines as _close_abandoned_coroutines,
+    compute_catch_all_clusters,
+)
 from ._wordlist import _is_api_priority, build_tech_aware_wordlist
 
 log = get_logger("dir_scanner")
@@ -235,6 +244,10 @@ class DirectoryScanner:
                     "可能为 SPA 前端路由或 catch-all 后端路由",
                     _max_count, len(result.entries), _rate * 100,
                 )
+        # ★ T15 (0923 v2)：多簇兜底页检测 + 目录类发现强制降级。
+        #   策略与理由见 _finding_policy.apply_catch_all_veto 的 docstring ——
+        #   核心是"用 body_hash 簇证据，而不是 wildcard_detected"。
+        apply_catch_all_veto(result, log=log)
         log.info(
             "[DirScan] 完成: target=%s 请求=%d 发现=%d 敏感=%d 递归目录=%d "
             "耗时=%.1fs host_unreachable=%s wildcard=%s waf=%s timeout=%s "
@@ -426,6 +439,7 @@ class DirectoryScanner:
                     # catch-all 确认 → 跳过所有非 API 路径
                     result.early_abort_count = len(other_candidates)
                     other_candidates = []
+                    _close_abandoned_coroutines(tasks)
                     break
 
         # ★ 阶段 2: 扫描非 API 路径（仅在未触发早期 catch-all 时）
@@ -439,8 +453,9 @@ class DirectoryScanner:
                 # 持续检查 catch-all
                 if level == 1 and self._check_catch_all_early(result, on_progress):
                     # 计算剩余未扫描路径数
-                    remaining = sum(1 for t in tasks if not t.done())
-                    result.early_abort_count += remaining
+                    _pending = [t for t in tasks if not t.done()]
+                    result.early_abort_count += len(_pending)
+                    _close_abandoned_coroutines(_pending)
                     break
 
     def _build_candidates(self) -> list[str]:
@@ -483,17 +498,12 @@ class DirectoryScanner:
                 self._similarity_filtered += 1
                 return
         result.entries.append(entry)
-        # 敏感路径分类
-        for keyword, vtype, severity in SENSITIVE_PATTERNS:
-            if keyword in entry.path.lower():
-                result.findings.append(DirFinding(
-                    vuln_type=vtype, severity=severity, url=entry.url,
-                    detail=f"目录扫描发现敏感路径: {entry.path} "
-                           f"(HTTP {entry.status}, {entry.length}B, {entry.content_type})",
-                    evidence=f"GET {entry.url} -> {entry.status} "
-                             f"{entry.content_type} | title={entry.title or '-'}",
-                ))
-                break
+        # ★ T8 (0923 v2)：敏感路径判定必须带内容证据（策略见 _finding_policy.py）。
+        #   修正前命中路径关键字即出 high、零响应体验证 → 三站产出同一批 5 条 HIGH，
+        #   实测 100% 误报，且目标全为银行（= 对金融机构报假漏洞的合规事故）。
+        _finding = classify_sensitive_entry(entry, SENSITIVE_PATTERNS)
+        if _finding is not None:
+            result.findings.append(_finding)
 
     async def _probe(self, url: str, headers: dict, tag: str = "") -> DirEntry | None:
         """发送单个 GET 请求，返回 DirEntry。失败/熔断返回 None。"""

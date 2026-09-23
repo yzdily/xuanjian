@@ -42,6 +42,34 @@ from web._paths import WEB_ROOT, PROJECT_ROOT  # noqa: F401
 
 log = get_logger("server")
 
+
+def _set_terminal(task_id: str, *, status: str, phase: str = "",
+                  reason: str = "", resumable: bool = False) -> None:
+    """把任务真实终态写入 scan_store（T13，修 D5）。
+
+    为什么集中成一处：终态点分散在 chat_loop（llm_error / unreachable）、
+    本文件（aborted / uncaught_exception）、报告阶段（completed / partial），
+    共用入口才能保证"永不抛出"这一约束不被某处漏掉 ——
+    终态写入失败绝不允许反过来炸掉正在收尾的任务。
+
+    Args:
+        task_id: 任务 ID。
+        status: 五态之一（completed / partial / unreachable / failed / aborted）。
+        phase: 终态时的阶段。
+        reason: 原因（截断由 scan_store 负责）。
+        resumable: 是否可从断点续跑。
+    """
+    try:
+        from core.scan_store import set_terminal_state
+        if set_terminal_state(task_id, status=status, phase=phase,
+                              reason=reason, resumable=resumable):
+            log.info("[终态] task=%s status=%s phase=%s resumable=%s",
+                     task_id, status, phase, resumable)
+    except Exception as e:
+        log.warning("[终态] 写入失败（不影响主流程）: task=%s status=%s err=%s",
+                    task_id, status, e)
+
+
 # ★ 启动消息缓冲：收集模块级初始化结果，最终输出一条摘要日志
 # 原逻辑每个子模块挂载都输出一条 INFO，每次重启产生 15+ 行重复日志
 _startup_msgs: list[str] = []
@@ -70,6 +98,23 @@ async def _startup_task_queue_worker():
         log.debug("后台任务队列 worker 已通过 startup 钩子启动")
     except Exception as _ex:
         log.warning("任务队列 worker 启动失败（非致命）: %s", _ex)
+
+
+@app.on_event("startup")
+async def _startup_backfill_stale_scans():
+    """★ T16 (0923 v2)：启动时回填历史残留的 running 任务。
+
+    背景：实测 scans 表 running=31 / finished=32，最早残留 2026-07-31。
+    只修"新路径写终态"清不掉存量，而存量会让仪表盘统计、删除护栏、
+    「继续」候选判定全部失去依据。本钩子幂等，可重复执行。
+    """
+    try:
+        from core.scan_store import mark_stale_running
+        _n = mark_stale_running(max_age_hours=6.0)
+        if _n:
+            log.info("[startup] 已回填 %d 条残留 running 任务为 failed", _n)
+    except Exception as _ex:
+        log.warning("[startup] 残留任务回填失败（非致命）: %s", _ex)
 
 
 # ============================================================
@@ -638,7 +683,8 @@ async def chat(request: Request):
 
     async def producer():
         # ★ 跟踪 chat() 是否已显式发出过结束事件（done / task_failed / task_stuck / task_aborted）
-        terminal_events = {"done", "task_failed", "task_stuck", "task_aborted"}
+        terminal_events = {"done", "task_partial", "task_unreachable",
+                           "task_failed", "task_stuck", "task_aborted"}
         terminal_seen = False
 
         try:
@@ -711,22 +757,37 @@ async def chat(request: Request):
                     log.warning("[task:%s] 发送 done 事件失败: %s", task_id, e)
         except asyncio.CancelledError:
             log.info("[task:%s] 后台任务被停止", task_id)
+            # ★ T13 (0923 v2)：用户主动停止 → 终态 aborted 且可续跑。
+            #   修正前只发 SSE 事件，scans.status 永久停在 running（实测 31 条残留）。
+            _set_terminal(
+                task_id, status="aborted",
+                phase=getattr(session, "phase", ""),
+                reason="user_aborted", resumable=True,
+            )
             try:
                 await eq.put(session._event("system", "任务已停止"))
                 await eq.put(session._event("task_aborted", json.dumps({
                     "reason": "user_aborted",
-                    "message": "任务已被用户中断，发送消息可继续",
+                    "message": "任务已被用户中断，可从断点继续",
+                    "resumable": True,
                 }, ensure_ascii=False)))
             except Exception as e:
                 log.warning("[task:%s] 发送 task_aborted 事件失败: %s", task_id, e)
         except Exception as e:
             log.error("[task:%s] 后台任务异常: %s", task_id, e, exc_info=True)
+            # ★ T13 (0923 v2)：未捕获异常 → 终态 failed（可续跑）。
+            _set_terminal(
+                task_id, status="failed",
+                phase=getattr(session, "phase", ""),
+                reason=f"uncaught_exception: {str(e)[:200]}", resumable=True,
+            )
             try:
                 await eq.put(session._event("system", f"错误: {e}"))
                 await eq.put(session._event("task_failed", json.dumps({
                     "reason": "uncaught_exception",
                     "error": str(e)[:300],
-                    "message": "后台任务异常，发送消息可重试",
+                    "message": "后台任务异常，可从断点继续",
+                    "resumable": True,
                 }, ensure_ascii=False)))
             except Exception as eq_err:
                 log.warning("[task:%s] 发送 task_failed 事件失败: %s", task_id, eq_err)

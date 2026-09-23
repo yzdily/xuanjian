@@ -559,6 +559,39 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
     # 持久化扫描完成状态
     from core.scan_store import finish_scan as _finish_scan, upsert_vuln
     _finish_scan(session.task_id, metrics=metrics.snapshot())
+    # ★ T13/T9 (0923 v2)：把"完成"细分为 completed / partial。
+    #   finish_scan 只写死 status='finished'，无法表达"跑完了但有几组没完成"。
+    #   判定依据（按优先级）：目标不可达 > 有子 Agent 组未完成 > 覆盖有洞 > completed。
+    try:
+        _final_status = "completed"
+        _final_reason = ""
+        if getattr(session, "_target_unreachable", False):
+            _final_status, _final_reason = "unreachable", "target_unreachable"
+        else:
+            _stuck = list(getattr(session, "_browse_stuck_groups", []) or [])
+            if _stuck:
+                _final_status = "partial"
+                _final_reason = f"{len(_stuck)} 组子 Agent 未完成: {', '.join(_stuck[:5])}"
+            else:
+                try:
+                    _cov = session.sitemap.get_coverage() if session.sitemap else {}
+                    _pending = int(_cov.get("dirscan_needs_review", 0) or 0)
+                    _not_tested = int(_cov.get("not_tested", 0) or 0)
+                    if _pending or _not_tested:
+                        _final_status = "partial"
+                        _final_reason = (
+                            f"未覆盖功能点 {_not_tested} 个；"
+                            f"待复核目录类发现 {_pending} 条"
+                        )
+                except Exception:
+                    pass
+        from core.scan_store import set_terminal_state as _set_ts
+        _set_ts(
+            session.task_id, status=_final_status, phase="report",
+            reason=_final_reason, resumable=(_final_status != "completed"),
+        )
+    except Exception as _ts_e:
+        log.warning("终态细分写入失败（不影响报告）: %s", _ts_e)
     # 同步漏洞到 scan_store
     if session.sitemap:
         for fp in session.sitemap.features.values():

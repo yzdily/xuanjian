@@ -36,10 +36,24 @@ async def note_add(type: str, content: str, task_id: str = "default") -> str:
     filepath = _get_task_file(type, task_id)
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # ★ 去标识化（合规铁律）：笔记会回流进报告与知识库，落盘前必须脱敏。
+    #   0923 实测违规：info 笔记里写入了真实客户名「中信百信银行」。
+    content = _redact(content)
+    task_id = _redact(task_id)
+
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(f"\n## [{timestamp}]\n\n{content}\n\n---\n")
 
     return f"已记录 [{type}] 笔记到 {filepath}"
+
+
+def _redact(text: str) -> str:
+    """落盘前脱敏；脱敏模块不可用时按原样返回（不阻断记录）。"""
+    try:
+        from core.redaction import redact_text
+        return redact_text(text)
+    except Exception:
+        return text
 
 
 @mcp.tool()

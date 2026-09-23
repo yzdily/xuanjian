@@ -192,18 +192,16 @@ class ExplorePhaseMixin:
                     "detail": f"{f.vuln_type}: {f.detail}",
                     "severity": f.severity,
                 })
-                # ★ 同步写入 sitemap 的 DirScan 漏洞列表，确保在 get_coverage 中上报
-                if self.sitemap:
-                    try:
-                        self.sitemap._dirscan_sensitive_vulns.append({
-                            "vuln_type": f.vuln_type,
-                            "severity": f.severity or "high",
-                            "url": f.url,
-                            "detail": f.detail,
-                            "source": "dirscan",
-                        })
-                    except Exception:
-                        pass
+
+            # ★ T1 (0923 v2)：用唯一入口**批量**写入台账（循环外调一次，避免 O(n²)）。
+            #   原实现把 `append` 连同属性访问一起包在 try/except: pass 里，
+            #   AttributeError 会被静默吞掉 → 被动路径同样会静默丢数据。
+            #   新入口显式区分"不可用"并记 WARNING，且统一 fail-safe 默认值。
+            from core.session.dir_finding_store import persist_dir_findings
+            _persisted = persist_dir_findings(
+                self.sitemap, dir_result.findings, source="dirscan_passive",
+            )
+            dir_summary["persisted_to_ledger"] = _persisted
 
             _log.info(
                 "目录扫描完成: 发现 %d 个路径, %d 个敏感泄露 (请求 %d, 耗时 %.1fs, "

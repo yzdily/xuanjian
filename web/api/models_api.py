@@ -38,6 +38,58 @@ async def list_models():
     return {"models": models, "current": session.llm.config.name if session.llm else ""}
 
 
+# ==================== ★ T12 (0923 v2) 模型健康前置检查 ====================
+
+@router.post("/api/models/preflight")
+async def models_preflight(request: Request):
+    """开跑前模型健康检查（修 C1/B3）。
+
+    为什么需要：0923 实测 5 次扫描里 3 次死在 LLM 层，且全是开跑前就能知道的事
+    （模型名 404 / 余额不足 39 次 / 组织 RPM 仅 3）。这些原本要在爬完
+    95 个 JS 文件、493 个功能点之后才暴露。
+
+    请求体（可选）：
+        ``{"config_name": "..."}`` —— 指定要检查的模型；缺省用当前会话模型。
+
+    返回：
+        - ``ok`` / ``blocking`` / ``kind`` / ``message``
+        - ``suggestions``：降级建议（低 RPM、窗口未知等）
+        - ``rpm``：生效的组织 RPM（来自 ``XUANJIAN_LLM_RPM``）
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    _name = (body or {}).get("config_name", "") or ""
+
+    config = None
+    if _name:
+        for c in _pool.configs:
+            if c.name == _name:
+                config = c
+                break
+    if config is None:
+        session = get_session()
+        config = session.llm.config if session.llm else (
+            next((c for c in _pool.configs if c.is_primary), None)
+            or (_pool.configs[0] if _pool.configs else None)
+        )
+
+    try:
+        from core.llm import preflight_llm
+        # preflight 是一次真实 API 调用（耗时数秒），放线程池避免阻塞事件循环
+        result = await asyncio.to_thread(preflight_llm, config)
+    except Exception as e:
+        log.warning("preflight 调用失败: %s", e, exc_info=True)
+        return JSONResponse(
+            {"ok": False, "blocking": False, "kind": "unknown",
+             "message": f"健康检查本身失败（不影响扫描）: {e}"},
+            status_code=200,
+        )
+    return result
+
+
 @router.get("/api/screenshot/{name}")
 async def get_screenshot(name: str):
     """返回截图文件（data/reports/{name}.png）。"""

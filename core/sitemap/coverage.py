@@ -37,6 +37,24 @@ def _canonical_vuln_type_for_dedup(fp: FeaturePoint, vuln_type: str) -> str:
     return vuln_type
 
 
+def _dirscan_row_to_vuln(row: dict) -> dict:
+    """把 DirScan 台账行转成统一的 vuln_list 条目（T8b，唯一转换入口）。
+
+    为什么要抽出来：台账在 ``get_coverage`` 与 ``get_coverage_matrix`` 有**两个**
+    消费点，字段映射若各写一份必然漂移（0923 的教训就是"同一件事两套实现"）。
+    """
+    return {
+        "feature": "DirScan 敏感发现",
+        "vuln_type": row.get("vuln_type", "info_disclosure"),
+        "detail": row.get("detail", ""),
+        "severity": row.get("severity", "high"),
+        "status": "confirmed",
+        "source": "dirscan",
+        "evidence": row.get("evidence", ""),
+        "url": row.get("url", ""),
+    }
+
+
 def _normalize_vuln_key(fp: FeaturePoint, vuln_type: str) -> str:
     """归一化漏洞去重 key。
 
@@ -182,9 +200,21 @@ class CoverageMixin:
         total_deduped = len(seen_api_keys)
 
         if total == 0:
-            return {"total": 0, "total_deduped": 0, "tested": 0, "coverage": 0, "vulns": 0,
-                    "vuln_items": 0, "vuln_list": [],
+            # ★ T8b (0923 v2)：**有目录类发现但无功能点**时也必须上报。
+            #   修正前这里直接早退、vuln_list 恒为空 —— 而"目标不可达 / 只有被动
+            #   侦察"的场景恰恰就是 0 功能点（实测 119.253.84.35 即如此），
+            #   此时目录类发现会被整体吞掉。
+            from core.sitemap.dir_findings import split_by_review as _split_by_review
+            _dr_conf, _dr_pend = _split_by_review(
+                getattr(self, "_dirscan_sensitive_vulns", []) or []
+            )
+            _dr_list = [_dirscan_row_to_vuln(dv) for dv in _dr_conf]
+            return {"total": 0, "total_deduped": 0, "tested": 0, "coverage": 0,
+                    "vulns": len(_dr_list),
+                    "vuln_items": len(_dr_list), "vuln_list": _dr_list,
                     "checks_total": 0, "checks_done": 0, "deferred": deferred_count,
+                    "dirscan_confirmed": len(_dr_conf),
+                    "dirscan_needs_review": len(_dr_pend),
                     "phase_status": getattr(self, "phase_status", ""),
                     "termination_reason": getattr(self, "termination_reason", ""),
                     "fast_scanner_stats": getattr(self, "_fast_scanner_stats", None) or {},}
@@ -235,19 +265,23 @@ class CoverageMixin:
                         })
 
         # ★ 纳入 DirScan 敏感发现为已确认漏洞（info_disclosure 类型）
+        #
+        # ★ T8b (0923 v2)：只有通过**内容指纹校验**的发现才能记为 confirmed。
+        #   修正前这里无条件 status="confirmed"��而 dir_scanner 当时零内容验证
+        #   → 三站（sjcj/ics/citicaibank，均为银行）产出一字不差的 5 条 HIGH
+        #   全被当作"已确认漏洞"。实测该 5 条为 100% 误报（目标存在多簇兜底页）。
+        #   判定统一走 core.sitemap.dir_findings（唯一入口，避免两套实现）。
+        from core.sitemap.dir_findings import split_by_review as _split_by_review
         dirscan_vulns = getattr(self, "_dirscan_sensitive_vulns", []) or []
-        for dv in dirscan_vulns:
+        _dir_conf_rows, _dir_pending_rows = _split_by_review(dirscan_vulns)
+        dirscan_confirmed = len(_dir_conf_rows)
+        dirscan_pending = len(_dir_pending_rows)
+        for dv in _dir_conf_rows:
             norm_key = f"dirscan_{dv.get('url', '')}"
-            if norm_key not in seen_vulns:
-                seen_vulns.add(norm_key)
-                vuln_list.append({
-                    "feature": f"DirScan 敏感发现",
-                    "vuln_type": dv.get("vuln_type", "info_disclosure"),
-                    "detail": dv.get("detail", ""),
-                    "severity": dv.get("severity", "high"),
-                    "status": "confirmed",
-                    "source": "dirscan",
-                })
+            if norm_key in seen_vulns:
+                continue
+            seen_vulns.add(norm_key)
+            vuln_list.append(_dirscan_row_to_vuln(dv))
 
         return {
             "total": total,
@@ -259,6 +293,10 @@ class CoverageMixin:
             "vuln_features": vulns,
             "vuln_items": len(vuln_list),
             "vuln_list": vuln_list,
+            # ★ T8b (0923 v2)：目录类发现的"已确认 / 待复核"计数，
+            #   供报告端显式声明"另有 N 条未通过内容校验"
+            "dirscan_confirmed": dirscan_confirmed,
+            "dirscan_needs_review": dirscan_pending,
             "checks_total": checks_total,
             "checks_done": checks_done,
             "deferred": deferred_count,
@@ -335,7 +373,10 @@ class CoverageMixin:
     def get_coverage_matrix(self) -> str:
         """生成动态多级功能清单 + 测试覆盖矩阵。"""
         if not self.features:
-            return "暂无功能点数据"
+            # ★ T8b (0923 v2)：无功能点不等于没有结论 —— "目标不可达 / 仅被动侦察"
+            #   的场景就是 0 功能点，此时目录类发现仍必须可见。
+            _extra = self._render_dirscan_section()
+            return "暂无功能点数据" + (f"\n{_extra}" if _extra else "")
 
         lines = ["## 测试覆盖矩阵\n"]
         lines.append("图例: 🔴=存在漏洞  ✅=已测无漏洞  🟡=需人工确认  ⬜=未测  ➖=不适用\n")
@@ -450,21 +491,48 @@ class CoverageMixin:
                      f"{cov['checks_done']}/{cov['checks_total']} 项测试完成, "
                      f"发现 {vuln_count} 个漏洞")
 
-        # ★ 附加 DirScan 敏感发现（被动侦察阶段确认的信息泄露）
-        dirscan_vulns = getattr(self, "_dirscan_sensitive_vulns", []) or []
-        if dirscan_vulns:
-            lines.append("\n### 🔴 DirScan 敏感发现（信息泄露）\n")
-            lines.append("| 漏洞类型 | 严重度 | URL | 详情 |")
-            lines.append("|----------|--------|-----|------|")
-            for dv in dirscan_vulns:
-                vuln_type = dv.get("vuln_type", "info_disclosure")
-                severity = dv.get("severity", "high")
-                url = dv.get("url", "")
-                detail = (dv.get("detail", "") or "")[:80]
-                lines.append(f"| {vuln_type} | {severity} | {url} | {detail} |")
-            lines.append("")
+        # ★ 附加 DirScan 敏感发现（T8b：唯一渲染入口，两条路径共用）
+        _dr_section = self._render_dirscan_section()
+        if _dr_section:
+            lines.append(_dr_section)
 
         return "\n".join(lines)
+
+    def _render_dirscan_section(self) -> str:
+        """渲染「DirScan 敏感发现」区块（T8b 唯一渲染入口）。
+
+        ★ 为什么必须唯一：台账有两个消费点（``get_coverage`` 与
+        ``get_coverage_matrix``）。修正前矩阵视图零状态过滤，直接把台账全部行
+        渲染成「🔴 DirScan 敏感发现」表格 —— 即使 ``get_coverage()`` 已过滤掉
+        未验证发现，报告矩阵仍会把误报印出来。
+
+        输出分两段：
+        - 已通过内容校验的发现 → 正常表格
+        - 未通过校验的发现 → 只出**计数声明**，不进"已确认漏洞"，提示不得直接交付
+        """
+        from core.sitemap.dir_findings import split_by_review as _split_by_review
+        rows = getattr(self, "_dirscan_sensitive_vulns", []) or []
+        confirmed, pending = _split_by_review(rows)
+        out: list[str] = []
+        if confirmed:
+            out.append("\n### 🔴 DirScan 敏感发现（已通过内容校验）\n")
+            out.append("| 漏洞类型 | 严重度 | URL | 详情 |")
+            out.append("|----------|--------|-----|------|")
+            for dv in confirmed:
+                out.append(
+                    f"| {dv.get('vuln_type', 'info_disclosure')} "
+                    f"| {dv.get('severity', 'high')} "
+                    f"| {dv.get('url', '')} "
+                    f"| {(dv.get('detail', '') or '')[:80]} |"
+                )
+            out.append("")
+        if pending:
+            out.append(
+                f"\n> ⚠️ 另有 **{len(pending)}** 条目录类发现**未通过内容校验**"
+                f"（无响应体指纹命中，疑似 SPA/兜底页），已移入待复核清单，"
+                f"**不计入已确认漏洞**，不得直接对外交付。\n"
+            )
+        return "\n".join(out)
 
     def get_feature_checklist_for_llm(self, feature_id: str) -> str:
         """获取某功能点的 checklist（给 LLM 看）。"""

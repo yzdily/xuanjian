@@ -88,6 +88,9 @@ from core.llm._config import (
 )
 from core.llm._client import LLMClient
 from core.llm._pool import LLMPool
+# ★ T10/T12 (0923 v2)：进程级令牌桶限速器 + 开跑前健康检查
+from core.llm._client import get_llm_rate_limiter
+from core.llm._preflight import preflight_llm
 
 __all__ = [
     # public
@@ -98,6 +101,8 @@ __all__ = [
     "set_current_task", "reset_current_task", "get_current_task",
     "register_llm_caller_pool", "load_llm_configs", "save_llm_configs",
     "mask_api_key",
+    # ★ 0923 v2（T10 限速 / T12 preflight）
+    "get_llm_rate_limiter", "preflight_llm",
     # private (re-exported for back-compat with business code / tests)
     "_monitor", "_response_cache", "_parse_sse_chat_payload",
     "_MODEL_NAME_CORRECTIONS", "_parse_xml_tool_calls", "_normalize_provider",

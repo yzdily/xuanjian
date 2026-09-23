@@ -6,6 +6,7 @@ ScanStore — SQLite 扫描结果索引层。
 
 表结构：
 - scans: 扫描任务元数据（task_id / target / status / metrics / created_at）
+  ★ 0923 v2（T16）追加 4 列：phase_status / fail_reason / resumable / resume_phase
 - vulns: 漏洞摘要（task_id / feature_id / vuln_type / severity / status / url）
 """
 
@@ -26,6 +27,28 @@ _DB_PATH = _PROJECT_ROOT / "data" / "scan_store.db"
 
 # ★ 并发写入保护：全局锁，序列化所有写操作
 _write_lock = threading.Lock()
+
+# ================================================================
+# ★ T16 (0923 v2)：终态语义常量
+# ================================================================
+# 产品方案 §2.2 的五态终态；'finished' 为历史遗留值，读取端仍需兼容。
+TERMINAL_STATUSES: tuple[str, ...] = (
+    "completed",    # 完整走完 Phase 0→3
+    "partial",      # 走完了但有组未执行/未覆盖
+    "unreachable",  # 目标不可达，仅被动侦察
+    "failed",       # 环境/配置类硬失败，可重试
+    "aborted",      # 用户主动停止
+)
+LEGACY_FINISHED = "finished"
+
+# 可由 set_terminal_state 写入的可选列（白名单 —— upsert_scan 会把这些 kwargs
+# 直接当列名拼进 SQL，所以列必须先在 _migrate_columns 里建好）
+_SCAN_OPTIONAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("phase_status", "TEXT DEFAULT ''"),
+    ("fail_reason", "TEXT DEFAULT ''"),
+    ("resumable", "INTEGER DEFAULT 0"),
+    ("resume_phase", "TEXT DEFAULT ''"),
+)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -53,6 +76,37 @@ def _ensure_conn() -> sqlite3.Connection:
     return _state.conn
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> bool:
+    """幂等加列（T16）。
+
+    为什么需要它：``upsert_scan`` 的 UPDATE 分支把 kwargs **直接当列名**拼 SQL
+    （见下方 ``sets.append(f"{k} = ?")``），所以任何新字段都必须先在物理表里存在，
+    否则写终态时会抛 ``sqlite3.OperationalError: no such column``。
+
+    Returns:
+        True 表示本次真的新建了列；False 表示列已存在（无需变更）。
+    """
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if col in cols:
+        return False
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    conn.commit()
+    return True
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> int:
+    """对已存在的库补齐终态元数据列（幂等，可重复调用）。
+
+    Returns:
+        本次新增的列数（0 = 已是最新 schema）。
+    """
+    added = 0
+    for col, decl in _SCAN_OPTIONAL_COLUMNS:
+        if _ensure_column(conn, "scans", col, decl):
+            added += 1
+    return added
+
+
 def _init_db(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS scans (
@@ -64,7 +118,12 @@ def _init_db(conn: sqlite3.Connection) -> None:
             metrics_json TEXT DEFAULT '{}',
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
-            finished_at REAL
+            finished_at REAL,
+            -- ★ 0923 v2（T16）终态元数据；老库由 _migrate_columns 补齐
+            phase_status TEXT DEFAULT '',
+            fail_reason TEXT DEFAULT '',
+            resumable INTEGER DEFAULT 0,
+            resume_phase TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS vulns (
@@ -86,6 +145,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_vulns_type ON vulns(vuln_type);
     """)
     conn.commit()
+    # ★ T16：老库补列（CREATE TABLE IF NOT EXISTS 不会改已存在的表结构）
+    _migrate_columns(conn)
 
 
 # ================================================================
@@ -106,6 +167,19 @@ def upsert_scan(task_id: str, target: str, **kwargs) -> None:
                     sets.append("metrics_json = ?")
                     vals.append(json.dumps(v, ensure_ascii=False))
                 else:
+                    # ★ T16：白名单过滤 —— 本分支把 key 直接当列名拼 SQL，
+                    #   未登记的 key 会抛 no such column。静默跳过并告警，
+                    #   避免一个笔误打死整条终态写入链路。
+                    _known = {"status", "scan_mode", "model", "target", "finished_at"}
+                    _known |= {c for c, _ in _SCAN_OPTIONAL_COLUMNS}
+                    if k not in _known:
+                        try:
+                            from core.log import get_logger
+                            get_logger(__name__).warning(
+                                "[scan_store] upsert_scan 忽略未知列: %s", k)
+                        except Exception:
+                            pass
+                        continue
                     sets.append(f"{k} = ?")
                     vals.append(v)
             vals.append(task_id)
@@ -137,6 +211,104 @@ def finish_scan(task_id: str, metrics: dict | None = None) -> None:
                 (now, now, task_id),
             )
         conn.commit()
+
+
+# ================================================================
+# ★ T16 (0923 v2)：真实终态写入
+# ================================================================
+
+def set_terminal_state(
+    task_id: str,
+    *,
+    status: str,
+    phase: str = "",
+    reason: str = "",
+    resumable: bool = False,
+    metrics: dict | None = None,
+) -> int:
+    """写入任务真实终态（修 D5：失败/中断任务不再永久停在 ``running``）。
+
+    ★ 为什么不扩 ``finish_scan``：``finish_scan(task_id, metrics)`` 已被
+    ``core/parallel/_orch_phases/_report_phase.py`` 与 ``core/task_queue.py`` 调用，
+    且硬编码 ``status='finished'``。改签名会静默破坏这两处；因此新增独立函数，
+    ``finish_scan`` 保持原样。
+
+    Args:
+        task_id: 任务 ID。必须已由 ``upsert_scan`` 建行（本函数只 UPDATE，不 INSERT，
+            避免生成 target 为空的幽灵记录）。
+        status: 五态之一（``TERMINAL_STATUSES``）或历史值 ``'finished'``。
+        phase: 终态时的阶段名（explore / analyze / test / report）。
+        reason: 失败/中断原因（截断 300 字符）。
+        resumable: 是否可从 ``resume_phase`` 续跑。
+        metrics: 可选指标快照，写入 ``metrics_json``。
+
+    Returns:
+        受影响行数（0 = 无该 task_id 记录，已记 warning）。
+
+    Raises:
+        ValueError: status 不在允许集合内（防止拼写错误写入不可读状态）。
+    """
+    if status not in TERMINAL_STATUSES and status != LEGACY_FINISHED:
+        raise ValueError(
+            f"非法终态 {status!r}，允许: {TERMINAL_STATUSES} / {LEGACY_FINISHED!r}"
+        )
+    conn = _ensure_conn()
+    now = time.time()
+    sets = [
+        "status = ?", "updated_at = ?", "finished_at = ?",
+        "phase_status = ?", "fail_reason = ?", "resumable = ?", "resume_phase = ?",
+    ]
+    vals: list = [
+        status, now, now, phase or "", str(reason)[:300],
+        1 if resumable else 0, phase if resumable else "",
+    ]
+    if metrics is not None:
+        sets.append("metrics_json = ?")
+        vals.append(json.dumps(metrics, ensure_ascii=False))
+    vals.append(task_id)
+    with _write_lock:
+        cur = conn.execute(f"UPDATE scans SET {', '.join(sets)} WHERE task_id = ?", vals)
+        conn.commit()
+        rowcount = cur.rowcount
+    if rowcount == 0:
+        try:
+            from core.log import get_logger
+            get_logger(__name__).warning(
+                "[scan_store] 终态写入未命中记录（task_id 未 upsert 过）: %s status=%s",
+                task_id, status,
+            )
+        except Exception:
+            pass
+    return rowcount
+
+
+def mark_stale_running(max_age_hours: float = 6.0) -> int:
+    """把"卡死在过去"的 ``running`` 任务回填为 ``failed``（T16，修 D5 存量）。
+
+    ★ 为什么必须有：实测 ``data/scan_store.db`` 中 ``running = 31`` / ``finished = 32``，
+    最早残留 2026-07-31 —— 只修"新路径写终态"永远清不掉存量，且这些残留会让
+    仪表盘统计、删除护栏、「继续」候选判定全部失去依据。
+
+    进程启动时调用一次即可（幂等）。
+
+    Args:
+        max_age_hours: ``updated_at`` 早于该小时数仍为 running 的，判为残留。
+
+    Returns:
+        被回填的行数（0 = 没有残留）。
+    """
+    conn = _ensure_conn()
+    now = time.time()
+    cutoff = now - max(0.0, max_age_hours) * 3600.0
+    with _write_lock:
+        cur = conn.execute(
+            "UPDATE scans SET status = 'failed', resumable = 0, "
+            "fail_reason = 'stale_running_backfilled', updated_at = ? "
+            "WHERE status = 'running' AND updated_at < ?",
+            (now, cutoff),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def upsert_vuln(task_id: str, feature_id: str, vuln_type: str, **kwargs) -> None:

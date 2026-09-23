@@ -263,3 +263,53 @@ class AdvancePhaseMixin:
 
         elif self.phase == "report":
             yield self._event("done", "渗透测试完成，报告已生成")
+
+    # ★ 阶段顺序（供断点续跑使用）
+    _PHASE_PREDECESSOR = {"analyze": "explore", "test": "analyze"}
+
+    async def _enter_phase(self, stage: str) -> AsyncGenerator[str, None]:
+        """幂等地"进入"某阶段（区别于 ``_advance_phase`` 的"推进到下一阶段"）。
+
+        ★ T6 (0923 v2)。为什么必须新增这个方法：
+
+        ``_advance_phase(summary)`` 的语义是「**当前**阶段完成 → 进入**下一**阶段」，
+        它按 ``self.phase`` 分支。所以若 ``self.phase`` 已经等于想恢复的阶段，
+        调用它只会**跳过该阶段**直奔下一阶段 —— 补丁照抄会直接走错流程。
+
+        断点续跑需要的是"原地进入"某阶段，因此这里显式把 ``self.phase`` 置为
+        该阶段的**前驱**，再复用既有的 ``_advance_phase`` 转移逻辑
+        —— 不复制阶段初始化代码，避免两套实现漂移。
+
+        Args:
+            stage: 目标阶段，``explore`` / ``analyze`` / ``test`` / ``report``。
+
+        Yields:
+            事件字符串（与 ``_advance_phase`` 一致）。
+        """
+        if stage not in ("explore", "analyze", "test", "report"):
+            stage = "explore"
+        _prev = self.phase
+        log.info("断点进入阶段: %s → %s", _prev, stage)
+        yield self._event("system", f"🔁 进入 {stage} 阶段（断点续跑）")
+
+        if stage == "explore":
+            # Phase 0 的入口在 chat_loop，调用方负责落到那里；这里不改状态
+            self.phase = "explore"
+            return
+
+        if stage == "report":
+            from core.parallel import _enter_report_phase
+            self.phase = "test"
+            async for _evt in _enter_report_phase(self):
+                yield _evt
+            return
+
+        _pred = self._PHASE_PREDECESSOR.get(stage)
+        if _pred:
+            self.phase = _pred
+            async for _evt in self._advance_phase(f"断点续跑：进入 {stage} 阶段"):
+                yield _evt
+            return
+        # 兜底：状态异常时不静默，明确告知
+        log.warning("未知断点阶段 %r，回落到 explore", stage)
+        self.phase = "explore"

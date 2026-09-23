@@ -30,7 +30,8 @@ _BURP_PASSIVE_QUEUE_LIMIT = 15
 
 async def _do_scan(session, eq, task_id, intent, packet, user_message):
     """执行实际的单包漏洞检测逻辑。"""
-    terminal_events = {"done", "task_failed", "task_stuck", "task_aborted"}
+    terminal_events = {"done", "task_partial", "task_unreachable",
+                           "task_failed", "task_stuck", "task_aborted"}
     terminal_seen = False
     try:
         log.info("[burp][task:%s] 单包检测开始", task_id)
