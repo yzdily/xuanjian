@@ -17,6 +17,86 @@ from core.sitemap.constants import (
 log = logging.getLogger("pentest_agent.sitemap")
 
 
+# ★ 924-S5b：§6 API 表「来源」列的中文标签（discovered_by / source_type → 中文）。
+_API_SOURCE_CN = {
+    # discovered_by
+    "real_flow": "真实流量",
+    "phase2_flow": "真实流量",
+    "mitmproxy": "真实流量",
+    "crawler_flow": "爬虫流量",
+    "crawler": "爬虫流量",
+    "browse_worker": "主动浏览",
+    "active_browse": "主动浏览",
+    "dir_scan": "目录扫描",
+    "dir_scanning": "目录扫描",
+    "dir_scan_active": "目录扫描·探针",
+    "js_static": "JS 静态分析",
+    "js_analysis": "JS 静态分析",
+    "api_doc": "接口文档",
+    "doc": "接口文档",
+    "menu_api": "菜单推断",
+    "inferred": "规则推断",
+    "fast_scanner": "快速扫描",
+    "supplemental": "补测推测",
+    "unknown": "未标注",
+    # source_type
+    # （与 discovered_by 重叠的键值相同，合并书写）
+}
+
+
+def _api_source_cn(api) -> str:
+    """API 端点「来源」列的中文标签；未知来源回显原始值（诚实而非误标）。"""
+    try:
+        from core.sitemap.surface_classify import ep_attr
+    except Exception:  # pragma: no cover
+        return "未标注"
+    _db = str(ep_attr(api, "discovered_by", "") or "")
+    if _db:
+        return _API_SOURCE_CN.get(_db, _db)
+    _st = str(ep_attr(api, "source_type", "") or "")
+    return _API_SOURCE_CN.get(_st, "未标注")
+
+
+# ★ 924-S5b：§6 API 表「来源」列的中文标签（discovered_by / source_type → 中文）。
+_API_SOURCE_CN = {
+    # discovered_by
+    "real_flow": "真实流量",
+    "phase2_flow": "真实流量",
+    "mitmproxy": "真实流量",
+    "crawler_flow": "爬虫流量",
+    "crawler": "爬虫流量",
+    "browse_worker": "主动浏览",
+    "active_browse": "主动浏览",
+    "dir_scan": "目录扫描",
+    "dir_scanning": "目录扫描",
+    "dir_scan_active": "目录扫描·探针",
+    "js_static": "JS 静态分析",
+    "js_analysis": "JS 静态分析",
+    "api_doc": "接口文档",
+    "doc": "接口文档",
+    "menu_api": "菜单推断",
+    "inferred": "规则推断",
+    "fast_scanner": "快速扫描",
+    "supplemental": "补测推测",
+    "unknown": "未标注",
+    # source_type
+    # （与 discovered_by 重叠的键值相同，合并书写）
+}
+
+
+def _api_source_cn(api) -> str:
+    """API 端点「来源」列的中文标签；未知来源回显原始值（诚实而非误标）。"""
+    try:
+        from core.sitemap.surface_classify import ep_attr
+    except Exception:  # pragma: no cover
+        return "未标注"
+    _db = str(ep_attr(api, "discovered_by", "") or "")
+    if _db:
+        return _API_SOURCE_CN.get(_db, _db)
+    _st = str(ep_attr(api, "source_type", "") or "")
+    return _API_SOURCE_CN.get(_st, "未标注")
+
+
 class ReportMixin:
     """实时报告 + 已证明漏洞报告的渲染与持久化。"""
 
@@ -36,6 +116,38 @@ class ReportMixin:
             for api in fp.related_apis:
                 apis.add(api)
         return len(apis)
+
+    def _collect_ghost_api_keys(self) -> set[str]:
+        """幽灵端点反查：返回被标 ``[GHOST-ENDPOINT]``/SKIPPED 功能的 related_apis 键集合。
+
+        §6 API 表据此给对应行加 ``[GHOST-404]`` 角标 —— 幽灵端点（liveness 检测
+        实测不可达）不是真实业务面，不应与真实端点同等对待。
+        键格式与 ``self.apis`` 一致（``"METHOD url"``）。
+        """
+        _ghost: set[str] = set()
+        _features = getattr(self, "features", None) or {}
+        for _fp in getattr(_features, "values", lambda: [])():
+            if self._fp_is_ghost(_fp):
+                for _api in getattr(_fp, "related_apis", None) or []:
+                    if _api:
+                        _ghost.add(_api)
+        return _ghost
+
+    def _collect_ghost_api_keys(self) -> set[str]:
+        """幽灵端点反查：返回被标 ``[GHOST-ENDPOINT]``/SKIPPED 功能的 related_apis 键集合。
+
+        §6 API 表据此给对应行加 ``[GHOST-404]`` 角标 —— 幽灵端点（liveness 检测
+        实测不可达）不是真实业务面，不应与真实端点同等对待。
+        键格式与 ``self.apis`` 一致（``"METHOD url"``）。
+        """
+        _ghost: set[str] = set()
+        _features = getattr(self, "features", None) or {}
+        for _fp in getattr(_features, "values", lambda: [])():
+            if self._fp_is_ghost(_fp):
+                for _api in getattr(_fp, "related_apis", None) or []:
+                    if _api:
+                        _ghost.add(_api)
+        return _ghost
 
     def _report_path(self) -> Path:
         report_dir = Path("data/reports")
@@ -64,7 +176,12 @@ class ReportMixin:
         # ★ 优化.md 建议3：补合规章节 — 传入扫描范围信息
         _page_count = self._count_pages() if hasattr(self, "_count_pages") else 0
         _api_count = self._count_apis() if hasattr(self, "_count_apis") else 0
-        _scan_scope = f"共 {_page_count} 个页面、{_api_count} 个 API 接口"
+        # ★ AuthorizedScope 契约打标（924 §4.2）：proven 报告同样带授权资产 + 指纹
+        _scan_scope = (
+            f"共 {_page_count} 个页面、{_api_count} 个 API 接口；"
+            f"授权资产 {getattr(self.scope, 'describe', lambda: '')()}；"
+            f"作用域指纹 {self.scope.fingerprint()}"
+        )
         content = render_proven_only(
             hv_result,
             target=getattr(self, "target", "") or "",
@@ -82,15 +199,35 @@ class ReportMixin:
                         self._proven_report_path(), e)
         return content
 
-    def _render_execution_quality_summary(self) -> list[str]:
-        """生产级执行摘要：让报告明确展示测试完整性与 API 消耗。"""
+    def get_execution_quality(self) -> dict:
+        """生产级执行摘要指标（**唯一权威实现**）。
+
+        ★ 924（task_1790223312_c75b16）：聊天流的 Phase 3 提示与报告正文
+        此前**各算一套**——chat 用 feature 级 ``coverage``（该任务 = 50.0%），
+        报告用 checklist 级「真实完成」（该任务 = 1/51 = 2.0%）。
+        同一份产物出现两个互相矛盾的"覆盖率"，用户无法判断到底扫了多少。
+        现在两处都调本方法，口径只有一份。
+
+        Returns:
+            ``{"total_checks","real_completed","completion_rate",
+            "skipped","skipped_rate","vulnerable","needs_review","not_vuln",
+            "pending","excluded_out_of_scope","excluded_ghost"}``
+        """
         total_checks = 0
-        pending = []
-        skipped = []
+        pending: list[tuple] = []
+        skipped: list[tuple] = []
         needs_review = 0
         vulnerable = 0
         not_vuln = 0
+        excluded_out_of_scope = 0
+        excluded_ghost = 0
         for fp in self.features.values():
+            if self._fp_out_of_scope(fp):
+                excluded_out_of_scope += len(fp.checklist)
+                continue
+            if self._fp_is_ghost(fp):
+                excluded_ghost += len(fp.checklist)
+                continue
             for c in fp.checklist:
                 total_checks += 1
                 if c.result == CheckResult.PENDING:
@@ -104,24 +241,52 @@ class ReportMixin:
                 elif c.result == CheckResult.NOT_VULN:
                     not_vuln += 1
 
-        # ★ 真实完成 = 已测试（vulnerable + needs_review + not_vuln），不含 SKIPPED
-        # SKIPPED 是"跳过"而非"完成"，原来把 SKIPPED 算进 completed 导致
-        # Fast 模式 98.6% 完成的空心假象。
-        # ★ 0 功能点/0 checklist 时完成率=0%（原为 100%，产生"100%完成 0漏洞"的空心假象）
+        # ★ 真实完成 = 已测试（vulnerable + needs_review + not_vuln），不含 SKIPPED。
+        # SKIPPED 是"跳过"而非"完成"；把 SKIPPED 算进 completed 会出现
+        # 「Fast 模式 98.6% 完成」的空心假象。0 checklist 时完成率取 0%。
         real_completed = vulnerable + needs_review + not_vuln
-        completion_rate = (real_completed / total_checks * 100) if total_checks else 0.0
-        skipped_rate = (len(skipped) / total_checks * 100) if total_checks else 0.0
+        return {
+            "total_checks": total_checks,
+            "real_completed": real_completed,
+            "completion_rate": (real_completed / total_checks * 100) if total_checks else 0.0,
+            "skipped": len(skipped),
+            "skipped_rate": (len(skipped) / total_checks * 100) if total_checks else 0.0,
+            "vulnerable": vulnerable,
+            "needs_review": needs_review,
+            "not_vuln": not_vuln,
+            "pending": len(pending),
+            # ★ 924：保留明细供补测队列渲染（不能只给计数）
+            "pending_items": pending,
+            "skipped_items": skipped,
+            "excluded_out_of_scope": excluded_out_of_scope,
+            "excluded_ghost": excluded_ghost,
+        }
+
+    def _render_execution_quality_summary(self) -> list[str]:
+        """生产级执行摘要：让报告明确展示测试完整性与 API 消耗。"""
+        q = self.get_execution_quality()
+        total_checks = q["total_checks"]
+        len_skipped = q["skipped"]
+        pending = q["pending_items"]
+        skipped = q["skipped_items"]
+        needs_review = q["needs_review"]
+        vulnerable = q["vulnerable"]
+        not_vuln = q["not_vuln"]
+        completion_rate = q["completion_rate"]
+        skipped_rate = q["skipped_rate"]
+        excluded_out_of_scope = q["excluded_out_of_scope"]
+        excluded_ghost = q["excluded_ghost"]
         lines = ["### 1.2 生产级执行摘要", ""]
         lines.append("| 指标 | 数量 |")
         lines.append("|------|------|")
         lines.append(f"| Checklist 总数 | {total_checks} |")
-        lines.append(f"| 真实完成 | {real_completed} |")
+        lines.append(f"| 真实完成 | {q['real_completed']} |")
         lines.append(f"| 完成率 | {completion_rate:.1f}% |")
-        lines.append(f"| 跳过 | {len(skipped)} ({skipped_rate:.1f}%) |")
+        lines.append(f"| 跳过 | {len_skipped} ({skipped_rate:.1f}%) |")
         lines.append(f"| 已确认漏洞 | {vulnerable} |")
         lines.append(f"| 疑似待确认 | {needs_review} |")
         lines.append(f"| 已确认安全 | {not_vuln} |")
-        lines.append(f"| 未完成 | {len(pending)} |")
+        lines.append(f"| 未完成 | {pending} |")
 
         scripted_stats = getattr(self, "_scripted_scan_stats", None) or {}
         if scripted_stats:
@@ -151,7 +316,7 @@ class ReportMixin:
         # ★ 高跳过率诊断：跳过率 > 80% 时显示原因分析和建议
         # 避免"98.6% 完成 0 漏洞"的空心假象误导用户
         if skipped_rate > 80.0 and total_checks > 0:
-            lines.append(f"> 🔴 **高跳过率告警**：{skipped_rate:.1f}% 的测试项被跳过（{len(skipped)}/{total_checks}），真实完成率仅 {completion_rate:.1f}%。")
+            lines.append(f"> 🔴 **高跳过率告警**：{skipped_rate:.1f}% 的测试项被跳过（{len_skipped}/{total_checks}），真实完成率仅 {completion_rate:.1f}%。")
             _term_reason = getattr(self, "termination_reason", "") or ""
             _waf_blocked = getattr(self, "_waf_blocked", False) or getattr(self, "_waf_blocked_global", False)
             _diag_causes: list[str] = []
@@ -165,18 +330,61 @@ class ReportMixin:
             lines.append(f"> **建议**：切换到 STANDARD/DEEP 模式重新扫描，或提供有效登录凭据以覆盖需认证的接口。")
             lines.append("")
 
+        if excluded_out_of_scope or excluded_ghost:
+            lines.append(f"> 🔒 **作用域隔离**：已排除 {excluded_out_of_scope} 项越界资产检查、{excluded_ghost} 项幽灵端点检查——这些内容不属于授权目标，不计入本报告结论（详见排除清单）。")
+            lines.append("")
+
         if pending:
             lines.append(f"> ⚠️ 仍有 {len(pending)} 项未完成。报告可用于阶段性审阅，但不应声明为完整测试。")
             lines.append("")
+
+            # ★ 924（task_1790223312_c75b16）：未测项**按成因分类**。
+            #   此前矩阵与摘要统一显示"⬜ 待测"，用户无法区分
+            #   「没来得及测」/「worker 崩了」/「该端点根本不可达」/「缺凭证」——
+            #   而这三类的处置动作完全不同（补测 / 换模型重跑 / 忽略 / 补凭证）。
+            _term_reason_now = getattr(self, "termination_reason", "") or ""
+            _cause_counts: dict[str, int] = {}
+            _worker_crash = sum(
+                1 for _fp, _c in skipped
+                if "worker 异常退出" in (getattr(_c, "detail", "") or ""))
+            if _worker_crash:
+                _cause_counts["worker 异常退出（LLM 崩溃/超时/网络）"] = _worker_crash
+            _ghost_skipped = sum(1 for _fp, _c in skipped if self._fp_is_ghost(_fp))
+            if _ghost_skipped:
+                _cause_counts["幽灵端点（实测不可达，无需补测）"] = _ghost_skipped
+            _other_skipped = len(skipped) - _worker_crash - _ghost_skipped
+            if _other_skipped > 0:
+                _cause_counts["其他主动跳过"] = _other_skipped
+            _no_cred = len(pending) if any(
+                _k in (_term_reason_now or "") for _k in ("凭证", "登录", "未授权")) else 0
+            if _no_cred:
+                _cause_counts["缺有效凭证（需补登录态后重测）"] = _no_cred
+            _unknown = len(pending) - _no_cred
+            if _unknown > 0:
+                _cause_counts["尚未执行"] = _unknown
+            if _cause_counts:
+                lines.append("**未完成项成因分类**：")
+                lines.append("")
+                for _k, _v in sorted(_cause_counts.items(), key=lambda kv: -kv[1]):
+                    lines.append(f"- {_k}: {_v} 项")
+                lines.append("")
+
             priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            # ★ 泄漏⑤修复（924 复盘）：补测队列排除幽灵端点（从未发过测试请求的 fp）
+            # 与越界资产 —— 此前只按 result==pending 收集 + priority 排序，导致
+            # 已标 [GHOST-ENDPOINT]/skipped 的 fp_5 被顶到队列第 1 位。
             pending_sorted = sorted(
-                pending,
+                (item for item in pending if not self._fp_is_ghost(item[0])),
                 key=lambda item: (
                     priority_rank.get(getattr(item[0].priority, "value", "medium"), 2),
                     item[0].id,
                     item[1].vuln_type,
                 ),
             )
+            _ghost_dropped = len(pending) - len(pending_sorted)
+            if _ghost_dropped:
+                lines.append(f"> （已从队列剔除 {_ghost_dropped} 项幽灵端点，其 checklist 从未实际执行）")
+                lines.append("")
             lines.append("**优先补测队列（最多 20 项）**：")
             lines.append("")
             for fp, c in pending_sorted[:20]:
@@ -206,26 +414,66 @@ class ReportMixin:
             f"|------|------|",
             f"| 目标 | {self.target} |",
             f"| 任务 ID | {self.task_id} |",
+            # ★ AuthorizedScope 契约打标（924 §4.2）：封面固定渲染授权资产清单
+            #   （仅 target + 显式 extra_scope），越界内容只进"排除清单"不计结论。
+            f"| 授权资产 | {getattr(self.scope, 'describe', lambda: '')()} |",
+            f"| 作用域指纹 | `{self.scope.fingerprint()}` |",
             f"| 业务类型 | {self.business_summary or '待分析'} |",
             f"| 技术栈 | {self.tech_stack or '待识别'} |",
             f"| 页面数 | {self._count_pages()} |",
             f"| API 端点 | {self._count_apis()} |",
             f"| 功能点 | {cov.get('total_deduped', cov['total'])} |",
             f"| 测试进度 | {cov['checks_done']}/{cov['checks_total']} 项完成 |",
-            f"| 发现漏洞 | {cov['vulns']} 个（含疑似 {sum(1 for v in cov.get('vuln_list', []) if v.get('status') == 'suspected')}） |",
+            # ★ 924（task_1790223312_c75b16）：头条只计**可入结论**的漏洞。
+            #   弱证据（header_only：仅响应头、无响应体/行为证据）单列，
+            #   不再与真漏洞混在一个数字里 —— 该任务头条曾写"发现 1 个漏洞"，
+            #   实际唯一一条是 `server: nginx/1.18.0`，proven 报告已判 0 已证明。
+            f"| 发现漏洞 | {cov.get('vulns_accepted', cov['vulns'])} 个"
+            f"（其中疑似 {sum(1 for v in cov.get('vuln_list', []) if v.get('status') == 'suspected')}） |",
             f"",
         ]
 
-        # ★ PM-1: 可测性覆盖率透明化 — 业务 API ≤ 2 或功能点=0 时显示红色横幅
+        # ★ PM-1: 可测性覆盖率透明化 — 真实业务 API ≤ 2 或功能点=0 时显示红色横幅
         # 避免"扫描完成 0 漏洞"的空心假象误导用户（zhenduan 诊断①空心扫描）
-        _pm1_business_apis = sum(
-            1 for a in (getattr(self, "apis", {}) or {}).values()
-            if isinstance(a, dict) and a.get("discovered_by") != "dirscan"
-        )
+        #
+        # ★ 924 修复：原实现写 `isinstance(a, dict)`，而 `self.apis` 存的是
+        #   `APIEndpoint` **对象** → 计数恒为 0 → 横幅"业务 API 仅 0 个"**永远显示**。
+        #   横幅一旦恒真就变成"狼来了"，读者学会忽略它。现改走唯一权威分类器，
+        #   并把探针/推测/静态/未验证拆开列，让"为什么是 0"自解释。
+        from core.sitemap.surface_classify import classify_api_surface
+
+        _surf = classify_api_surface(getattr(self, "apis", None))
+        _pm1_business_apis = _surf["business"]
         _pm1_feat_cnt = cov.get('total_deduped', cov['total'])
         if _pm1_feat_cnt == 0 or _pm1_business_apis <= 2:
-            lines.append(f"> 🔴 **可测性覆盖率不足**：业务 API 仅 {_pm1_business_apis} 个，功能点 {_pm1_feat_cnt} 个。")
-            lines.append(f"> 本次扫描覆盖严重不足，0 漏洞不代表目标安全，建议补充凭证后重测或更换扫描模式。")
+            lines.append(
+                f"> 🔴 **可测性覆盖率不足**：真实业务 API 仅 {_pm1_business_apis} 个"
+                f"（探针 {_surf['probe']} / 未验证推测 {_surf['speculative']} / "
+                f"静态资源 {_surf['static']} / 其他未验证 {_surf['unverified']}，"
+                f"共 {_surf['total']} 个），功能点 {_pm1_feat_cnt} 个。")
+            lines.append(f"> 本次扫描覆盖严重不足，0 漏洞不代表目标安全。")
+            lines.append(f"")
+
+        # ★ 924（§7 的代码化）：**凭证 / 匿名面显式声明**。
+        #   本任务 `login_status={}`、无凭证，登录后才会出现的业务接口一个都不在范围内 ——
+        #   这是"真实业务 API = 0"的根因，必须在报告里直说，并把**唯一能改变量级的动作**
+        #   （补凭证重爬）写成可执行下一步，否则用户会误以为"重跑一次就好了"。
+        _has_cred = bool(getattr(self, "_has_credentials", False))
+        _login_ok = bool(getattr(self, "login_status", None))
+        if not _has_cred or not _login_ok:
+            _why = "未提供登录凭证" if not _has_cred else "提供了凭证但登录未成功"
+            lines.append(f"> 🔴 **本次为「仅匿名面」扫描**：{_why}。"
+                         f"登录后才会出现的业务接口**完全不在测试范围内**。")
+            lines.append(f"> 👉 **下一步（唯一能改变结论量级的动作）**：到「设置 → 认证」"
+                         f"补充目标账号 / Cookie / Token，然后重新扫描。"
+                         f"**不补凭证时，重跑不会改善覆盖率**。")
+            lines.append(f"")
+
+        # ★ 924：弱证据条目单独声明（否则读者会以为头条数字全是真漏洞）
+        _weak_n = int(cov.get("vulns_weak_evidence", 0) or 0)
+        if _weak_n > 0:
+            lines.append(f"> ℹ️ 另有 {_weak_n} 条**弱证据条目未计入头条**（仅响应头等 header_only 证据，"
+                         f"需结合已知 CVE 或响应体证据才能定性，详见 §3 漏洞详情）。")
             lines.append(f"")
 
         # ★ 终止原因横幅：Fast 模式 / 降级模式等情况下在报告头部醒目提示
@@ -245,12 +493,49 @@ class ReportMixin:
             lines.append(f"> 流量不完整可能影响补测覆盖度，请审慎评估本次测试结果。")
             lines.append(f"")
 
+        # ★ 924-S5a：LLM 空解析 / 熔断横幅 — 主循环连发空响应时，报告必须
+        # 显式宣告「结果不可用」，防止「0 已证明漏洞」被误读为「目标安全」。
+        #（实证 task_1790223312_c75b16：模型返回非标准流 → 危害验证 6 次调用全空
+        #  → 19 候选 0 接受 → proven 报告「0 已证明漏洞」，用户看到"扫完了、基本安全"。）
+        _llm_low_quality = False
+        _llm_streak = 0
+        _llm_th = 3
+        _llm_health = None
+        try:
+            from core.llm._health import get_llm_health_stats as _llm_health_stats
+            _llm_health = _llm_health_stats() or {}
+        except Exception:
+            _llm_health = None
+        if _llm_health:
+            _llm_streak = int(_llm_health.get("streak", 0) or 0)
+            _llm_th = int(_llm_health.get("threshold", 3) or 3)
+            _llm_tripped = bool(_llm_health.get("tripped", False))
+            _llm_low_quality = _llm_tripped or (_llm_th > 0 and _llm_streak >= _llm_th)
+        if _llm_low_quality:
+            _llm_total = int((_llm_health or {}).get("total_empty", 0) or 0)
+            _llm_last = str((_llm_health or {}).get("last_caller", "") or "") or "?"
+            lines.append(
+                f"> 🔴 **本次结果不可用**：主循环 LLM 连续 {_llm_streak}/{_llm_th} 次"
+                f"返回空解析（累计 {_llm_total} 次，最近调用方: {_llm_last}）。"
+            )
+            lines.append(
+                f"> **0 已证明漏洞 ≠ 目标安全，本次结论不可用于交付**。"
+                f"模型流式返回与本系统不兼容，重试与上下文压缩均无效，"
+                f"请到「设置 → 模型」更换标准 OpenAI 兼容模型后重跑。"
+            )
+            lines.append(f"")
+
         # ★ PM-2: 能力降级清单 — 汇总本次扫描中失效的关键能力及影响
         # 让用户一眼看到"哪些关键环节失效了"，而非只看末尾"扫描完成"
         _pm2_degradations: list[str] = []
         if _traffic_degraded:
             _pm2_degradations.append(
                 f"- **mitmproxy 流量抓取降级**：{_traffic_degraded_reason or '代理不可用'} → 补测覆盖度可能不足"
+            )
+        if _llm_low_quality:
+            _pm2_degradations.append(
+                f"- **LLM 空响应熔断**：模型连续 {_llm_streak} 次返回空解析 → "
+                f"LLM 驱动的推理/危害验证环节失效，本次结果不可用于交付"
             )
         # harm_validation 失败标记（Phase 2.6 错误时由 orchestrator 写入）
         _harm_err = getattr(self, "_harm_validation_error", "") or ""
@@ -509,11 +794,29 @@ class ReportMixin:
         if self.apis:
             lines.append("## 6. API 端点清单")
             lines.append("")
-            lines.append("| 方法 | URL | 需认证 |")
-            lines.append("|------|-----|--------|")
+            # ★ 924-S5b：来源列 + 角标（探针 / 幽灵 / 未验证推测）。
+            #   实测 task_1790223312_c75b16：`GET /..;/actuator/env` 与真实端点
+            #   并列且共享一个 🔴，读者会把 🔴 归因到 actuator —— 角标消除误读，
+            #   让读者只把无角标行当成已确认的真实业务面。
+            lines.append("| 方法 | URL | 需认证 | 来源 |")
+            lines.append("|------|-----|--------|------|")
+            _ghost_api_keys = self._collect_ghost_api_keys()
             for key, api in sorted(self.apis.items()):
                 auth = "是" if api.auth_required else "否"
-                lines.append(f"| {api.method} | {api.url} | {auth} |")
+                _badges = []
+                try:
+                    from core.sitemap.surface_classify import api_source_label
+                    _lbl = api_source_label(f"{api.method} {api.url}", self.apis)
+                    if _lbl:
+                        _badges.append(_lbl)
+                except Exception:
+                    pass
+                if key in _ghost_api_keys and "[GHOST-404]" not in _badges:
+                    _badges.append("[GHOST-404]")
+                _url_cell = api.url + (" " + " ".join(_badges) if _badges else "")
+                lines.append(
+                    f"| {api.method} | {_url_cell} | {auth} | {_api_source_cn(api)} |"
+                )
             lines.append("")
 
         report_content = "\n".join(lines)
@@ -575,8 +878,17 @@ class ReportMixin:
 
         vuln_details = []
         review_details = []
+        excluded_oos_details: list[tuple] = []  # ★ 泄漏③修复：越界资产发现 → 排除清单
         for fp in self.features.values():
             for c in fp.checklist:
+                # ★ v2 修复：越界 host 的发现不进漏洞详情，只进"排除清单"
+                if self._fp_out_of_scope(fp):
+                    if c.result in (CheckResult.VULNERABLE, CheckResult.NEEDS_REVIEW):
+                        excluded_oos_details.append((fp, c))
+                    continue
+                # 幽灵端点（liveness 判死）不作为漏洞输出
+                if self._fp_is_ghost(fp) and c.result == CheckResult.VULNERABLE:
+                    continue
                 if c.result == CheckResult.VULNERABLE:
                     key = _make_dedup_key(fp, c)
                     if key not in _seen_vuln_keys:
@@ -587,6 +899,18 @@ class ReportMixin:
                     if key not in _seen_review_keys:
                         _seen_review_keys.add(key)
                         review_details.append((fp, c))
+
+        # ★ 越界资产排除清单：透明披露，但不计入结论、不提供复现细节
+        if excluded_oos_details:
+            lines.append("## ⚠️ 排除清单：非授权资产发现（不计入本报告结论）")
+            lines.append("")
+            lines.append("> 以下发现来自授权范围之外的资产（爬取阶段跟链越界），**不属于本次授权测试目标**，")
+            lines.append("> 不计入漏洞统计，也不应据此对下述资产做任何测试。仅作透明披露，供用户确认作用域设置。")
+            lines.append("")
+            for fp, c in excluded_oos_details[:20]:
+                _oos_url = fp.related_apis[0] if fp.related_apis else (fp.page_url or "")
+                lines.append(f"- `{fp.id}` {fp.name} / {c.vuln_type} / {_oos_url}")
+            lines.append("")
 
         if vuln_details or review_details:
             lines.append("## 3. 漏洞详情")
@@ -916,6 +1240,24 @@ class ReportMixin:
         if not csp_analyses:
             return
 
+        # ★ 泄漏③修复（924 复盘）：CSP 分析只针对授权 host，
+        # f5.com 等跟链越界资产的 CSP 不应出现在 r.aibank.com 的报告里。
+        from urllib.parse import urlparse as _urlparse
+        authorized = self._authorized_hosts()
+        filtered: dict = {}
+        for host, csp in csp_analyses.items():
+            try:
+                _h = (_urlparse(f"https://{host}" if "://" not in str(host) else str(host)).hostname or "").lower()
+            except ValueError:
+                _h = str(host).lower()
+            if not authorized or not _h or _h in authorized or any(
+                _h.endswith("." + h) or h.endswith("." + _h) for h in authorized if h
+            ):
+                filtered[host] = csp
+        if not filtered:
+            return
+        csp_analyses = filtered
+
         lines.append("## 3.6 CSP / 响应头安全策略分析")
         lines.append("")
         lines.append(f"扫描了 **{len(csp_analyses)} 个 host** 的 CSP 配置。")
@@ -963,7 +1305,12 @@ class ReportMixin:
         lines.append("")
 
         priority_order = {Priority.CRITICAL: 0, Priority.HIGH: 1, Priority.MEDIUM: 2, Priority.LOW: 3}
-        sorted_features = sorted(self.features.values(), key=lambda f: priority_order.get(f.priority, 9))
+        # ★ 泄漏③修复：功能点详情章节只渲染授权资产，越界/幽灵 fp 不再列出
+        sorted_features = sorted(
+            (f for f in self.features.values()
+             if not self._fp_out_of_scope(f) and not self._fp_is_ghost(f)),
+            key=lambda f: priority_order.get(f.priority, 9),
+        )
 
         modules: OrderedDict[str, list[FeaturePoint]] = OrderedDict()
         for fp in sorted_features:

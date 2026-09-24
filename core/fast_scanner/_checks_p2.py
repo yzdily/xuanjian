@@ -70,17 +70,49 @@ WS_UPGRADE_HEADERS = ("upgrade", "connection")
 SAML_RESPONSE_MARKER = "samlresponse"
 SAML_ASSERTION_MARKERS = ("<saml:Assertion", "<samlp:Response", "NameID")
 
-# 子域接管判定关键字（CNAME 指向未注册服务）
-SUBDOMAIN_TAKEOVER_MARKERS = (
-    "there is no app configured",
-    "no such bucket",
-    "the specified bucket does not exist",
-    "doesn't exist",
+# 子域接管判定关键字（CNAME 指向未注册服务的**服务商默认页专属文案**）。
+#
+# ★ 924 重写（task_1790223312_c75b16）：
+#   旧表里混进了 `"404 not found"` 与 `"doesn't exist"` 这类**通用错误页文案**，
+#   而目标站自己的 nginx 404 页正文就是 `<title>404 not found</title>` ——
+#   于是任何返回 404 的深路径都会被判成 🟠高危「子域接管 body_confirmed」。
+#   实测 proven 报告里 V-ORPHAN-4/11/15 三条假高危全部由 `"404 not found"` 命中产生，
+#   这个"body_confirmed"标的是 404 页，是完全虚假的强证据。
+#
+#   新原则：**只保留有服务商辨识度的默认页文案**（零通用词）。
+#   形如 `(marker, vendor)`，vendor 用于生成可读的处置建议。
+SUBDOMAIN_TAKEOVER_MARKERS: tuple[str, ...] = (
+    "there is no app configured",           # Heroku
+    "no such bucket",                       # AWS S3 / GCS
+    "the specified bucket does not exist",  # AWS S3
+    "the requested bucket does not exist",  # AWS S3
+    "fastly error",                         # Fastly
+    "unknown domain",                       # Fastly / CDN 未绑定域名页
+    "this site is not configured",          # 通用托管平台
+    "no site configured",                   # 通用托管平台
+    "repository not found",                 # GitHub Pages（旧版 404 文案）
+)
+
+#: marker → 服务商名（生成处置建议用）
+SUBDOMAIN_TAKEOVER_VENDORS: dict[str, str] = {
+    "there is no app configured": "Heroku",
+    "no such bucket": "AWS S3 / GCS",
+    "the specified bucket does not exist": "AWS S3",
+    "the requested bucket does not exist": "AWS S3",
+    "fastly error": "Fastly",
+    "unknown domain": "Fastly / CDN",
+    "this site is not configured": "通用托管平台",
+    "no site configured": "通用托管平台",
+    "repository not found": "GitHub Pages",
+}
+
+#: 通用错误页特征 —— 命中即说明这是站点自己的错误页，不构成子域接管证据。
+#: 与上面"服务商专属文案"互斥判定，作为第二道保险。
+GENERIC_ERROR_PAGE_HINTS: tuple[str, ...] = (
     "404 not found",
-    "herokucdn.com",
-    "github.io",
-    "surge.sh",
-    "netlify.com",
+    "page not found",
+    "not found</title>",
+    "the requested url was not found",
 )
 
 # 依赖混淆判定：内部包名 + 公网存在
@@ -519,11 +551,41 @@ class _ChecksP2:
     # ============================================================
     # 12. 子域接管
     # ============================================================
+    @staticmethod
+    def _is_root_level_url(url: str) -> bool:
+        """URL 是否指向**裸域 / 根路径**（子域接管只可能在 host 层成立）。
+
+        子域接管是 DNS/CNAME 层面问题：``sub.example.com`` 的 CNAME 指向了
+        某个已下线的第三方服务，于是访问该 host 的**根**会落到服务商默认页。
+        它跟"某个深路径返回什么"没有任何关系 ——
+        对 ``/audit/x``、``/QueryLogin`` 这类路径做此判定在语义上就是错的。
+        """
+        try:
+            from urllib.parse import urlsplit
+            _p = urlsplit(url).path or "/"
+        except Exception:
+            return False
+        return _p in ("", "/")
+
     async def _check_subdomain_takeover(self, target: ScanTarget) -> list[VulnFinding]:
         """子域接管（CWE-915）：CNAME 指向未注册的第三方服务。
 
-        检测：请求目标，观察响应是否含子域接管特征页。
+        ★ 924 重写。必须**同时**满足下列全部条件才成立：
+
+        1. **只在裸域 / 根路径判定** —— 深路径直接返回空（子域接管是 host 层问题）；
+        2. 响应 ``status_code == 200`` —— 服务商默认页是 200；4xx 是普通错误页；
+        3. 命中**服务商专属**默认页文案（``SUBDOMAIN_TAKEOVER_MARKERS``）；
+        4. 未命中通用错误页特征（``GENERIC_ERROR_PAGE_HINTS``）—— 第二道保险。
+
+        修掉的真实误报：旧实现只做 `marker in text` 子串匹配，而表里含
+        `"404 not found"` —— 目标站自己的 nginx 404 页就长这样，于是
+        ``/audit/FinanTransAudit`` 等 404 路径被标 🟠高危「子域接管」
+        （proven 报告 V-ORPHAN-4/11/15）。
         """
+        # 条件 1：只对裸域 / 根路径判定
+        if not self._is_root_level_url(target.url):
+            return []
+
         resp = await self._request(
             target.method, target.url,
             headers={**target.auth_headers, **target.headers},
@@ -531,19 +593,35 @@ class _ChecksP2:
         )
         if not resp:
             return []
+
+        # 条件 2：只认 200
+        if getattr(resp, "status_code", 0) != 200:
+            return []
+
         text = (resp.text or "").lower()
-        for marker in SUBDOMAIN_TAKEOVER_MARKERS:
-            if marker in text:
-                return [VulnFinding(
-                    vuln_type="子域接管", severity="high", url=target.url,
-                    method=target.method,
-                    detail=f"响应含子域接管特征 '{marker}'，"
-                           "CNAME 可能指向未注册服务（CWE-915）",
-                    evidence=text[:300], payload="",
-                    fix_suggestion="移除悬空 CNAME，或在第三方服务注册该域名",
-                    evidence_quality="body_confirmed", rule_tag="SubTake",
-                )]
-        return []
+        if not text:
+            return []
+
+        # 条件 3：命中服务商专属文案
+        hit = next((m for m in SUBDOMAIN_TAKEOVER_MARKERS if m in text), None)
+        if not hit:
+            return []
+
+        # 条件 4：排除"这就是站点自己的通用错误页"
+        if any(h in text for h in GENERIC_ERROR_PAGE_HINTS):
+            return []
+
+        _vendor = SUBDOMAIN_TAKEOVER_VENDORS.get(hit, "第三方托管服务")
+        return [VulnFinding(
+            vuln_type="子域接管", severity="high", url=target.url,
+            method=target.method,
+            detail=f"根路径响应命中 {_vendor} 默认页特征 '{hit}'，"
+                   "CNAME 可能指向未注册/已下线的服务（CWE-915）",
+            evidence=text[:300], payload="",
+            fix_suggestion=f"核对该域名的 CNAME 记录；若指向已释放的 {_vendor} 资源，"
+                           "请移除悬空 CNAME 或重新注册该资源",
+            evidence_quality="body_confirmed", rule_tag="SubTake",
+        )]
 
     # ============================================================
     # 13. 依赖混淆

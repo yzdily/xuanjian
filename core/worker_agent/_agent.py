@@ -112,6 +112,8 @@ class WorkerAgent(_WorkerAgentHelpers):
 
         self.completed = False
         self.error: str | None = None
+        # ★ 924：上下文预算可行性（由 _ensure_context_fits 设置）
+        self._context_feasible: bool = True
         self._done_reject_count = 0
 
         # ★ 反内卷保护：跟踪同一接口连续测试次数 + 连续轮数无 checklist_mark
@@ -146,6 +148,27 @@ class WorkerAgent(_WorkerAgentHelpers):
         # 增加 max_rounds：多功能点组需要更多轮次
         max_rounds = WORKER_MAX_ROUNDS * max(len(self.features), 1)
 
+        # ★ 924：开跑前先断言「固定开销 < 可用输入预算」，不成立则按优先级裁剪 system 块。
+        #   实测（task_1790223312_c75b16）固定开销 17351 > 预算 15564，
+        #   **第一次调用就超限**；而 compress() 不碰 system_messages，
+        #   所以旧的"压缩后重试"是 no-op → worker 直接死、36 项 checklist 全跳。
+        _fit = self._ensure_context_fits(tools)
+        if _fit.get("shrunk") and _fit.get("ok"):
+            _s = _fit["shrunk"]
+            yield {"type": "worker_note", "worker": self.worker_id, "feature": self.group_name,
+                   "note": (f"上下文固定开销超预算，已裁剪 {_s.get('dropped', 0)} 个 system 块自救"
+                            f"（{_s.get('before')} → {_s.get('after')} tokens，"
+                            f"预算 {_fit.get('budget')}）")}
+        elif not _fit.get("ok", True):
+            _msg = (f"固定开销 {_fit.get('before')} tokens 超出模型 "
+                    f"`{_fit.get('model')}` 的可用输入预算 {_fit.get('budget')} tokens，"
+                    f"且裁剪 system 块后仍超限。请更换上下文窗口 ≥64K 的模型后重试。")
+            self.error = _msg
+            log.error("[%s] 上下文预算不可行，放弃执行: %s", self.worker_id, _msg)
+            yield {"type": "worker_error", "worker": self.worker_id,
+                   "feature": self.group_name, "error": _msg}
+            return
+
         # ★ 跟踪当前正在测试的功能点，切换时压缩上下文
         _prev_feature_id = self.features[0].id if self.features else None
 
@@ -178,10 +201,23 @@ class WorkerAgent(_WorkerAgentHelpers):
                     timeout=_LLM_CALL_TIMEOUT,
                 )
             except ContextLimitError as cle:
-                # ★ Token 预检超限 → 自动压缩上下文后重试一次
-                log.warning("[%s] 上下文超限，自动压缩后重试: 估算 %d tokens > 窗口 %d",
-                            self.worker_id, cle.estimated_tokens, cle.context_window)
+                # ★ 924 修正：超限重试前必须**先重算固定开销并裁剪 system 块**。
+                #   原实现只调 compress()（只压 history、不碰 system_messages），
+                #   实测压缩前后估算值一位不差 → 重试必然再失败。
+                log.warning("[%s] 上下文超限: 估算 %d > 可用 %s（模型 %s）。"
+                            "先裁剪 system 块再重试（compress 对 system 无效）",
+                            self.worker_id, cle.estimated_tokens,
+                            getattr(cle, "available", "?"), cle.model)
                 self.context.compress()
+                _fit2 = self._ensure_context_fits(tools, reserve_ratio=0.8)
+                if not _fit2.get("ok", True):
+                    self.error = (
+                        f"上下文持续超限，且裁剪 system 块后仍不可行"
+                        f"（固定开销 {_fit2.get('before')} > 预算 {_fit2.get('budget')}）")
+                    log.error("[%s] %s", self.worker_id, self.error)
+                    yield {"type": "worker_error", "worker": self.worker_id,
+                           "feature": self.group_name, "error": self.error}
+                    break
                 messages = self.context.get_messages()
                 try:
                     response = await asyncio.wait_for(
@@ -189,7 +225,7 @@ class WorkerAgent(_WorkerAgentHelpers):
                         timeout=_LLM_CALL_TIMEOUT,
                     )
                 except Exception as e_inner:
-                    log.error("[%s] 压缩后重试仍失败: %s", self.worker_id, e_inner)
+                    log.error("[%s] 裁剪后重试仍失败: %s", self.worker_id, e_inner)
                     self.error = str(e_inner)
                     yield {"type": "worker_error", "worker": self.worker_id,
                            "feature": self.group_name, "error": f"上下文超限: {e_inner}"}

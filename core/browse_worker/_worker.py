@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import AsyncGenerator, TYPE_CHECKING
 
 from core.llm import LLMClient, Message, parse_tool_call_arguments
-from core.context import ContextManager
+from core.context import (
+    ContextManager,
+    SYSTEM_PRIORITY_CRITICAL,
+)
 from core.tools import build_browse_worker_tools
 from core.tool_executor import ToolExecutor
 from core.config import MAX_TOOL_RESULT, REPEAT_TOOL_THRESHOLD
@@ -71,6 +75,10 @@ class BrowseWorker:
         self.has_credentials = has_credentials
         self.extra_scope = extra_scope or []  # 关联域名白名单
         self.ledger = BrowseTaskLedger(self.group.get("menus") or [])
+        # ★ 924：操作 SOP 是否缺失（由 _init_context 设置；缺失时不静默）
+        self._sop_missing: bool = False
+        # ★ 924：上下文预算可行性（由 _ensure_context_fits 设置）
+        self._context_feasible: bool = True
 
         self.context = ContextManager(llm=self.llm, compress_mode="browse")
         self.tool_executor = ToolExecutor(
@@ -84,10 +92,16 @@ class BrowseWorker:
     def _init_context(self):
         """构建子 Agent 的独立上下文。"""
         # 基础 prompt
-        prompts_dir = Path(__file__).parent / "prompts"
+        # ★ 924 修复（task_1790223312_c75b16）：原为 `Path(__file__).parent / "prompts"`
+        #   → 指向 `core/browse_worker/prompts/`，**该目录根本不存在**。
+        #   `browse_sop.md` 实际在 `core/prompts/browse_sop.md`（core/prompts/）。
+        #   实测后果：`browse_1` 在**没有任何操作手册**的情况下跑了 2.8 秒即"完成"，
+        #   而日志只留一条 `WARNING ... 不影响主流程` —— 典型的静默降级。
+        prompts_dir = Path(__file__).parent.parent / "prompts"
         if (prompts_dir / "solver.md").exists():
             self.context.add_system(
-                (prompts_dir / "solver.md").read_text(encoding="utf-8")
+                (prompts_dir / "solver.md").read_text(encoding="utf-8"),
+                kind="prompt:solver", priority=SYSTEM_PRIORITY_CRITICAL,
             )
 
         # Phase 1 角色定义
@@ -102,7 +116,8 @@ class BrowseWorker:
         self.context.add_system(
             load_prompt("browse_worker_group")
             + f"{self.sitemap.to_summary()}"
-            + f"{scope_hint}"
+            + f"{scope_hint}",
+            kind="prompt:group-role", priority=SYSTEM_PRIORITY_CRITICAL,
         )
 
         # 生成本组 checklist
@@ -111,11 +126,19 @@ class BrowseWorker:
 
         # ★ 2026-05-26：操作 SOP 外移到 core/prompts/browse_sop.md，路径 A/B 共用
         # 同一份操作规约 + 表单填值规范 + 防死循环策略，避免散落不同文件难维护
+        # ★ 924：缺失不再静默 —— 升级为 error 级日志 + 可见事件 + 可选硬失败。
+        sop_text = ""
         try:
             sop_text = (prompts_dir / "browse_sop.md").read_text(encoding="utf-8")
         except Exception as _e:
-            log.warning("加载 browse_sop.md 失败（不影响主流程）: %s", _e)
-            sop_text = ""
+            _msg = (f"加载 browse_sop.md 失败: {_e}（查找路径 {prompts_dir}）。"
+                    f"浏览器子 Agent 将缺少操作规约（选器策略/表单填值/防死循环），"
+                    f"表现为「秒完成、零操作」。请检查 core/prompts/browse_sop.md 是否存在。")
+            self._sop_missing = True
+            if str(os.environ.get("XUANJIAN_STRICT_PROMPTS", "")).strip().lower() in ("1", "true", "on", "yes"):
+                log.error("[BROWSE] %s（XUANJIAN_STRICT_PROMPTS=1，硬失败）", _msg)
+                raise RuntimeError(_msg)
+            log.error("[BROWSE] %s", _msg)
 
         # ★ 2026-05-25：checklist + 工具说明 + 操作规约 全部放进 system message
         # 原因：ContextManager.compress() 只压缩 history（user/assistant/tool），不动 system_messages。
@@ -150,7 +173,8 @@ class BrowseWorker:
             "3. 连续操作多个页面都没有产生新的业务 API\n\n"
             "禁止因某个页面按钮难点击就推断所有页面都如此，每个页面独立判断。\n\n"
             "## 操作 Checklist（起步入口，selector 已标出。操作过程中自行扩展）\n\n"
-            f"{checklist}"
+            f"{checklist}",
+            kind="prompt:task-and-sop", priority=SYSTEM_PRIORITY_CRITICAL,
         )
 
         # user message 只留"开工"指令，简短 → 即使被压缩也无所谓
@@ -160,6 +184,21 @@ class BrowseWorker:
             f"把发现的任何新页面入口都加入操作列表。"
             f"所有可见页面和交互元素都操作完毕、无新 API 产生后，调用 phase_complete。"
         )
+
+    def _ensure_context_fits(self, tools: list[dict] | None = None,
+                             *, reserve_ratio: float = 0.9) -> dict:
+        """断言「固定开销 < 可用输入预算」；不成立则按优先级裁剪 system 块。
+
+        ★ 924：实现见 ``core/context_budget.ensure_context_fits``（与
+        worker_agent 共用）。browse_worker 的 system 里塞了 SOP（8.5KB）
+        + 工具说明 + checklist + 页面账本，同样可能一开始就超预算。
+        """
+        from core.context_budget import ensure_context_fits
+        _model = getattr(getattr(self.llm, "config", None), "model", "") or ""
+        _stats = ensure_context_fits(self.context, _model, tools,
+                                     reserve_ratio=reserve_ratio, who=self.worker_id)
+        self._context_feasible = bool(_stats.get("ok", True))
+        return _stats
 
     async def run(self) -> AsyncGenerator[dict, None]:
         """运行子 Agent 直到完成或超时。"""
@@ -185,6 +224,21 @@ class BrowseWorker:
         _checklist_done_count = 0  # 累计检测到的 ✅ 数量
         # ★ 工具白名单：BrowseWorker 专用，砍掉 evaluate / js_* / sitemap_* / proxy_send 等
         worker_tools = build_browse_worker_tools()
+
+        # ★ 924：开跑前做预算可行性断言（同 worker_agent）
+        _fit = self._ensure_context_fits(worker_tools)
+        if not _fit.get("ok", True):
+            log.error("[%s] 上下文预算不可行，放弃本组操作: %s", self.worker_id, _fit)
+            yield {"type": "browse_worker_done", "worker": self.worker_id,
+                   "group": self.group["name"], "rounds": 0, "completed": False,
+                   "error": (f"固定开销 {_fit.get('before')} > 预算 {_fit.get('budget')}，"
+                             f"裁剪后仍超限；请更换窗口 ≥64K 的模型")}
+            return
+        if _fit.get("shrunk") and _fit.get("ok"):
+            _s = _fit["shrunk"]
+            log.warning("[%s] 已裁剪 %d 个 system 块以使上下文可行（%s → %s）",
+                        self.worker_id, _s.get("dropped", 0),
+                        _s.get("before"), _s.get("after"))
 
         while round_num < BROWSE_WORKER_MAX_ROUNDS and not completed:
             round_num += 1

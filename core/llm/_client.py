@@ -311,7 +311,8 @@ class LLMClient:
         # 超限时抛 ContextLimitError，调用方应捕获后 compress() 再重试
         estimated_input = _llm.estimate_messages_tokens(messages, tools)
         context_window = _llm.get_model_context_window(self.config.model)
-        available_for_input = int(context_window * _llm._CONTEXT_PRECHECK_SAFETY) - max_tokens
+        # ★ 924：预算公式收敛到 _tokens.available_input_budget（单一权威实现）
+        available_for_input = _llm.available_input_budget(self.config.model, max_tokens)
         if estimated_input > available_for_input:
             log.warning(
                 "[%s] Token 预检超限: 估算 %d tokens > 可用 %d (window=%d, model=%s)",
@@ -489,6 +490,8 @@ class LLMClient:
                 raise
 
         elapsed = time.time() - t0
+        # ★ 924：记录原始响应体积，供空解析诊断（仅 SSE 文本有意义）
+        _raw_len = len(resp) if isinstance(resp, (str, bytes)) else 0
         resp = _llm._parse_sse_chat_payload(resp)
 
         # ★ D8 防御：非标准/截断 SSE 响应可能返回空 choices（或根本不是 chat 结构）。
@@ -503,9 +506,32 @@ class LLMClient:
                 error="LLM 返回空 choices（非标准/截断响应）",
                 req_summary=req_summary, resp_summary=str(resp)[:300],
             )
+            # ★ 924：空 choices 属于同一失败形态，计入空解析熔断
+            if _llm._health.record_empty_parse(self.config.model, caller=caller or "", raw_len=_raw_len):
+                raise _llm._health.LLMEmptyResponseError(
+                    self.config.model, _llm._health.empty_parse_streak(),
+                    caller=caller or "", raw_len=_raw_len)
             raise ValueError("LLM 返回空 choices：非标准或截断的响应，无法解析首选项")
         choice = _choices[0]
         msg = choice.message
+
+        # ★ 924（task_1790223312_c75b16）：空响应熔断。
+        #   实测 `wuwen` 返回非标准 SSE → 降级解析后 0 content / 0 tool_calls，
+        #   调用方拿到"合法的空响应"后按正常路径继续 → 主 Agent 空转 4 轮被强制推进、
+        #   业务理解降级、危害验证 6 次全废、proven 报告 0 已证明 —— 而用户看到的是
+        #   「扫完了、基本安全」。这里把静默失败升级为**显式异常**，
+        #   让"没扫成"不再与"扫完确实没漏洞"同形。见 core/llm/_health.py。
+        if _llm._health.looks_empty(msg):
+            if _llm._health.record_empty_parse(self.config.model, caller=caller or "",
+                                               raw_len=_raw_len):
+                log.error("[%s] 空响应熔断：模型 %s 连续 %d 次返回空响应，中止调用",
+                          caller or "?", self.config.model,
+                          _llm._health.empty_parse_streak())
+                raise _llm._health.LLMEmptyResponseError(
+                    self.config.model, _llm._health.empty_parse_streak(),
+                    caller=caller or "", raw_len=_raw_len)
+        else:
+            _llm._health.record_ok_parse(self.config.model)
 
         # 提取响应摘要
         resp_summary = (msg.content or "")[:300]

@@ -310,6 +310,14 @@ class FlowRecorder:
         record = {
             "id": f"flow_{uuid.uuid4().hex[:8]}",
             "timestamp": time.time(),
+            # ★ 泄漏④修复（924 复盘）：流量记录带 task_id，消费端可按任务过滤，
+            # 消除跨任务串扰隐患。task_id 由启动方通过环境变量传入。
+            "task_id": os.getenv("XUANJIAN_TASK_ID", "") or "",
+            # ★ AuthorizedScope 契约打标（924 §4.2）：流量证据带作用域指纹，
+            #   与 task_id 同机制（XUANJIAN_SCOPE_FINGERPRINT 环境变量）。
+            #   注意：mitmproxy 常驻进程场景下读端过滤仍是主要防线
+            #   （packet_merger / supplemental_test_agent 的 target 过滤）。
+            "scope_fingerprint": os.getenv("XUANJIAN_SCOPE_FINGERPRINT", "") or "",
             "method": flow.request.method,
             "url": url,
             "request_headers": _redact_headers(dict(flow.request.headers)),

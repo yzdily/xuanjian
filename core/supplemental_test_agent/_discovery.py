@@ -446,6 +446,13 @@ async def discover_apis_from_dirscan(
         if _is_non_business_path(entry.path):
             continue
 
+        # ★ 924：路径归一化探针（..;/ ;/ %2e）疑似命中兜底页 → 不当作新 API。
+        #   这类路径的"存活"是绕网关构造的结果（实测 ..;/actuator/env 稳定返回
+        #   站点兜底体 200/2569B），当作真实端点会污染补测队列与期望矩阵。
+        if getattr(entry, "probe_suspected_catch_all", False):
+            stats["dirscan_probe_skipped"] = stats.get("dirscan_probe_skipped", 0) + 1
+            continue
+
         # 构造 _DiscoveredAPI（复用 flows 的数据结构）
         flow_like = {
             "method": "GET",

@@ -431,6 +431,14 @@ class FeatureGenMixin:
                                 api_key: str, vulns: list[str],
                                 priority: Priority | None = None) -> FeaturePoint | None:
         """创建一个原子级功能点。"""
+        # ★ 泄漏②修复（924 复盘）：作用域闸门 — 越界 host 不建功能点。
+        # 此前 feature_gen 全程只 urlparse 取 PATH，从不校验 host，
+        # 导致 f5.com 等跟链越界资产被整包建成 fp_*（task_1790219173 案例）。
+        for _u in (page_url, api_key.split(" ", 1)[-1] if api_key else ""):
+            if _u and "://" in _u and not self._host_in_scope(_u):
+                log.info("作用域闸门: 拒绝越界功能点 host=%s name=%s",
+                         urlparse(_u).netloc, name[:40])
+                return None
         name = name.strip()[:50]
         if len(name) < 2 or len(desc) < 4:
             return None
@@ -979,6 +987,13 @@ class FeatureGenMixin:
                     requires_auth: bool = False,
                     deferred: bool = False,
                     module: str = "") -> FeaturePoint | None:
+        # ★ 泄漏②修复（924 复盘）：公开建点入口同样过作用域闸门
+        _check_urls = [page_url or ""] + [a.split(" ", 1)[-1] for a in (related_apis or [])]
+        for _u in _check_urls:
+            if _u and "://" in _u and not self._host_in_scope(_u):
+                log.info("作用域闸门: add_feature 拒绝越界功能点 host=%s name=%s",
+                         urlparse(_u).netloc, name[:40])
+                return None
         # 名称校验
         name = name.strip()
         description = (description or "").strip()

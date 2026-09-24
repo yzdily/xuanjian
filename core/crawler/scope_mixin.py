@@ -122,7 +122,7 @@ class ScopeMixin:
         相比 infer_extra_scope（启动期 + 登录后调用一次）：
         - 不依赖 Cookie 域，靠流量统计 + 品牌识别
         - 已知关联域已经在 self.extra_scope 中，会被跳过 → 只返回"新增"
-        - 命中策略与 infer_extra_scope 一致（≥3 次通行 / ≥1 次同公司）
+        - 命中策略与 infer_extra_scope 一致（★ 924 修复：仅同公司体系晋升，≥3 次不再无差别通行）
         """
         from collections import Counter
         api_domain_count: Counter = Counter()
@@ -153,23 +153,35 @@ class ScopeMixin:
                 api_domain_count[d] += 1
 
         new_scope: set[str] = set()
+        # ★ AuthorizedScope 契约统一（924 §4.2）：逃生门模式判定单一来源
+        from core.scope_contract import is_extended_mode
+        _auto_promote = is_extended_mode()
         for domain, count in api_domain_count.items():
-            if count >= 3 or (count >= 1 and self._shares_brand_with_target(domain)):
+            if count >= 1 and self._shares_brand_with_target(domain):
+                # ★ 924 修复：仅同公司体系才晋升；原 "count >= 3 无差别通行" 已删除
+                new_scope.add(domain)
+            elif count >= 3 and _auto_promote:
+                # 逃生门：显式设 XUANJIAN_SCOPE_AUTO_PROMOTE=1 才恢复旧行为
                 new_scope.add(domain)
         return new_scope
 
     def infer_extra_scope(self, captured: list[dict], cookies: list[dict] | None = None) -> set[str]:
         """从爬取流量和 Cookie 自动推断业务关联域名。
 
-        规则（2026-05-22 增强：覆盖低频关联域 + 同租户跨产品）：
+        规则（★ 924 复盘收紧：泄漏①修复）：
         1. Cookie 域覆盖：用户提供的 Cookie 里 domain=.xxx.com，且与目标共享品牌词
-        2. 高频 API 域：流量中出现 ≥3 次 API 调用（xhr/fetch）的域，且不是第三方
-        3. 低频但同公司体系：≥1 次调用 + 与目标共享 SLD 或租户前缀
-        4. 页面内跳转目标：href 链接中出现的非第三方域（需要在流量里也有对应请求）
+        2. 低频/高频但同公司体系：≥1 次调用 + 与目标共享 SLD 或租户前缀
+        3. ~~高频 API 域无差别晋升~~ 已删除："任何域 API≥3 次即认定为业务关联"
+           会把跟链越界资产（如 r.aibank.com → nginx.com → f5.com）整包拉进作用域
+           （task_1790219173 案例：729 条 f5.com 流量 → f5.com 晋升 → 31/32 功能点越界）。
+
+        逃生门：设 XUANJIAN_SCOPE_AUTO_PROMOTE=1 可临时恢复旧行为（不推荐）。
 
         排除：已知第三方黑名单、只有静态资源请求的域、和目标域完全无关的域
         """
         from collections import Counter
+        # ★ AuthorizedScope 契约统一（924 §4.2）：逃生门模式判定单一来源
+        from core.scope_contract import is_extended_mode
         discovered: set[str] = set()
 
         # ★ 提取 target 的纯 hostname（不含端口），用于同主机不同端口的判断
@@ -187,8 +199,9 @@ class ScopeMixin:
             if self._shares_brand_with_target(ck_domain):
                 discovered.add(ck_domain)
 
-        # 2. 高频 + 低频同公司 双策略
+        # 2. 仅"同公司体系"策略（原"≥3 次 API 无差别晋升"已删除）
         api_domain_count: Counter = Counter()
+        rejected_high_freq: list[str] = []
         for req in captured:
             req_url = req.get("url", "")
             resource_type = req.get("resource_type", "")
@@ -210,13 +223,23 @@ class ScopeMixin:
             if resource_type in ("xhr", "fetch") or "/api/" in req_url:
                 api_domain_count[d] += 1
 
+        _auto_promote = is_extended_mode()
         for domain, count in api_domain_count.items():
-            if count >= 3:
-                # 高频通行：任何域只要 API 调用 ≥3 次就认定为业务关联
+            if count >= 1 and self._shares_brand_with_target(domain):
+                # 同公司体系（同 SLD 或同租户前缀）才认定业务关联
                 discovered.add(domain)
-            elif count >= 1 and self._shares_brand_with_target(domain):
-                # 低频但是同公司体系（同 SLD 或同租户前缀）
+            elif count >= 3 and _auto_promote:
+                # 逃生门：显式设 XUANJIAN_SCOPE_AUTO_PROMOTE=1 才恢复旧的"高频晋升"
                 discovered.add(domain)
+            elif count >= 3:
+                # ★ 高频但非同品牌：记录但不晋升 —— 正是 924 案例的污染入口
+                rejected_high_freq.append(f"{domain}({count})")
+
+        if rejected_high_freq:
+            self._report(
+                f"  🔒 作用域保护: {len(rejected_high_freq)} 个高频非同品牌域未自动晋升"
+                f"（如需纳入请在界面上显式授权）: {', '.join(rejected_high_freq[:5])}"
+            )
 
         if discovered:
             self._report(f"  🔗 推断关联域: {', '.join(sorted(discovered))}")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Mapping
 
 from core.sitemap.models import FeaturePoint, CheckItem, CheckResult, Priority, TestStatus
 from core.config import (
@@ -12,6 +12,18 @@ from core.config import (
 from core.sitemap.constants import CHECK_RESULT_ICON
 
 log = logging.getLogger("pentest_agent.sitemap")
+
+# ★ 924：端点来源分类与证据强度已抽到 core/sitemap/surface_classify.py
+#   （原因：被 coverage.py 与 report.py 共用，且 coverage.py 曾因此触到 800 行闸门）。
+#   为兼容既有调用点，这里保留私有别名。
+from core.sitemap.surface_classify import (
+    api_source_label as _api_source_label,
+    classify_api_surface,          # noqa: F401  (供 report.py 等外部导入)
+    ep_attr as _ep_attr,
+    evidence_quality_of as _evidence_quality_of,
+    is_probe_api as _is_probe_api,
+    split_by_strength as _split_by_strength,
+)
 
 
 def _canonical_vuln_type_for_dedup(fp: FeaturePoint, vuln_type: str) -> str:
@@ -52,6 +64,8 @@ def _dirscan_row_to_vuln(row: dict) -> dict:
         "source": "dirscan",
         "evidence": row.get("evidence", ""),
         "url": row.get("url", ""),
+        # ★ 924：带上证据强度（目录发现的 evidence_quality 可能为空 → 视为 content）
+        "evidence_quality": row.get("evidence_quality", "") or "",
     }
 
 
@@ -209,9 +223,13 @@ class CoverageMixin:
                 getattr(self, "_dirscan_sensitive_vulns", []) or []
             )
             _dr_list = [_dirscan_row_to_vuln(dv) for dv in _dr_conf]
+            _strength = _split_by_strength(_dr_list)
             return {"total": 0, "total_deduped": 0, "tested": 0, "coverage": 0,
                     "vulns": len(_dr_list),
                     "vuln_items": len(_dr_list), "vuln_list": _dr_list,
+                    # ★ 924：头条计数据只用 accepted（弱证据单列）
+                    "vulns_accepted": _strength["accepted"],
+                    "vulns_weak_evidence": _strength["weak"],
                     "checks_total": 0, "checks_done": 0, "deferred": deferred_count,
                     "dirscan_confirmed": len(_dr_conf),
                     "dirscan_needs_review": len(_dr_pend),
@@ -249,6 +267,9 @@ class CoverageMixin:
                             "detail": c.detail,
                             "severity": sev,
                             "status": "confirmed",
+                            # ★ 924：带上证据强度，头条计数据此剔除 header_only
+                            "evidence_quality": _evidence_quality_of(c),
+                            "url": (getattr(f, "related_apis", None) or [""])[0] if getattr(f, "related_apis", None) else (f.page_url or ""),
                         })
                 elif c.result == CheckResult.NEEDS_REVIEW:
                     norm_key = _normalize_vuln_key(f, c.vuln_type)
@@ -262,6 +283,9 @@ class CoverageMixin:
                             "detail": c.detail,
                             "severity": sev,
                             "status": "suspected",
+                            # ★ 924：带上证据强度，头条计数据此剔除 header_only
+                            "evidence_quality": _evidence_quality_of(c),
+                            "url": (getattr(f, "related_apis", None) or [""])[0] if getattr(f, "related_apis", None) else (f.page_url or ""),
                         })
 
         # ★ 纳入 DirScan 敏感发现为已确认漏洞（info_disclosure 类型）
@@ -293,6 +317,11 @@ class CoverageMixin:
             "vuln_features": vulns,
             "vuln_items": len(vuln_list),
             "vuln_list": vuln_list,
+            # ★ 924（task_1790223312_c75b16）：头条计数据只能用 accepted。
+            #   该任务头条写"发现 1 个漏洞"，实际唯一一条是
+            #   `server: nginx/1.18.0` 的 header_only 信息泄露（proven 报告 0 已证明）。
+            "vulns_accepted": _split_by_strength(vuln_list)["accepted"],
+            "vulns_weak_evidence": _split_by_strength(vuln_list)["weak"],
             # ★ T8b (0923 v2)：目录类发现的"已确认 / 待复核"计数，
             #   供报告端显式声明"另有 N 条未通过内容校验"
             "dirscan_confirmed": dirscan_confirmed,
@@ -457,15 +486,59 @@ class CoverageMixin:
                 elif c.result in (CheckResult.NOT_VULN, CheckResult.NEEDS_REVIEW):
                     results_parts.append(f"{icon}{c.vuln_type}")
             pending_count = len([c for c in fp.checklist if c.result == CheckResult.PENDING])
+            skipped_items = [c for c in fp.checklist if c.result == CheckResult.SKIPPED]
             display = " ".join(results_parts) if results_parts else "—"
             if pending_count > 0:
                 display += f" ⬜×{pending_count}"
+            # ★ 924（P2-13）：跳过项按**成因**分类显示，不再笼统一个 ➖。
+            #   用户需要区分「worker 崩了（可补测）」/「幽灵端点（不用补）」/
+            #   「主动跳过（无凭证等）」—— 三类处置动作完全不同。
+            if skipped_items:
+                _crash = sum(1 for c in skipped_items
+                             if "worker 异常退出" in (getattr(c, "detail", "") or ""))
+                _ghost_n = 0 if _crash else len(skipped_items)
+                _parts_txt = []
+                if _crash:
+                    _parts_txt.append(f"worker 异常 {_crash}")
+                if _ghost_n:
+                    _parts_txt.append(f"跳过 {_ghost_n}")
+                display += f" ➖×{len(skipped_items)}（{'/'.join(_parts_txt) or '原因未标注'}）"
+            # ★ 924（P2-13）：幽灵端点显式标注，避免被当成"没测"的真面
+            if self._fp_is_ghost(fp):
+                display = f"⏭️ 幽灵端点（实测不可达） {display}"
 
             api_display = ""
             if fp.related_apis:
-                api_display = "<br>".join(fp.related_apis[:2])
+                # ★ 924（P2-12）：把 🔴 归属到**具体 URL**。
+                #   原实现整行只给一个 🔴，多 URL 行无法判断是哪条命中的
+                #   （实测 `GET /` 与 `GET /..;/actuator/env` 共享 🔴 造成误读）。
+                _vuln_by_url: dict[str, list[str]] = {}
+                for _c in fp.checklist:
+                    if _c.result != CheckResult.VULNERABLE:
+                        continue
+                    _ev = str(getattr(_c, "evidence_request", "") or "")
+                    for _a in fp.related_apis:
+                        _u = _a.split(" ", 1)[-1] if " " in _a else _a
+                        if _u and _u in _ev:
+                            _vuln_by_url.setdefault(_a, []).append(_c.vuln_type)
+                _api_lines = []
+                for _a in fp.related_apis[:2]:
+                    _lbl = _api_source_label(_a, getattr(self, "apis", None))
+                    _hit = _vuln_by_url.get(_a) or []
+                    _suffix = f" ← 🔴{('/'.join(_hit))}" if _hit else ""
+                    _api_lines.append(f"{_a} {_lbl}".strip() + _suffix)
+                api_display = "<br>".join(_api_lines)
                 if len(fp.related_apis) > 2:
                     api_display += f"<br>+{len(fp.related_apis)-2}个"
+                # ★ 924（P2-12）：多 URL 行且 🔴 无法自动归属时，显式提示去哪儿看，
+                #   避免读者把 🔴 主观归因到相邻的探针/推测端点上。
+                if (len(fp.related_apis) > 1
+                        and not _vuln_by_url
+                        and any(c.result == CheckResult.VULNERABLE for c in fp.checklist)):
+                    _vuln_types = "、".join(
+                        c.vuln_type for c in fp.checklist
+                        if c.result == CheckResult.VULNERABLE)
+                    api_display += f"<br>（🔴{_vuln_types} 的具体归属 URL 见 §3 漏洞详情）"
             elif fp.page_url:
                 from urllib.parse import urlparse
                 api_display = urlparse(fp.page_url).path or "/"
@@ -490,6 +563,44 @@ class CoverageMixin:
         lines.append(f"\n**统计**: {top_modules} 个一级模块, {len(rows)} 个功能点, "
                      f"{cov['checks_done']}/{cov['checks_total']} 项测试完成, "
                      f"发现 {vuln_count} 个漏洞")
+
+        # ★ 924（P2-14）：探针 / 幽灵端点**独立成区** —— 它们不是攻击面。
+        #   实测 task_1790223312_c75b16：报告 §6 把 `..;/actuator/env`（目录爆破构造的
+        #   探针，稳定命中兜底页）与真实端点并列，读者会把它当成目标的真实接口。
+        _probe_rows: list[str] = []
+        _ghost_rows: list = []
+        for _lv, _fp in rows:
+            if self._fp_is_ghost(_fp):
+                _ghost_rows.append(_fp)
+                continue
+            for _a in (_fp.related_apis or []):
+                if _is_probe_api(_a):
+                    _probe_rows.append(_a)
+        if _probe_rows or _ghost_rows:
+            lines.append("")
+            lines.append("### 未计入攻击面的端点（探针 / 幽灵）")
+            lines.append("")
+            lines.append("> 以下端点**不计入真实攻击面**，仅供参考。目录爆破探针是扫描器"
+                         "自己构造的路径（如路径归一化绕过写法）；幽灵端点经实测不可达"
+                         "（404 / 兜底页）。它们的「存活」不代表目标存在该接口，"
+                         "也不应据此提出修复建议。")
+            lines.append("")
+            if _probe_rows:
+                lines.append("**目录爆破 / 路径归一化探针**：")
+                lines.append("")
+                for _a in sorted(set(_probe_rows)):
+                    lines.append(f"- `{_a}` [探针]")
+                lines.append("")
+            if _ghost_rows:
+                lines.append("**幽灵端点（实测不可达）**：")
+                lines.append("")
+                for _fp in _ghost_rows:
+                    if _fp.related_apis:
+                        _apis = " / ".join(_fp.related_apis[:2])
+                    else:
+                        _apis = _fp.page_url or ""
+                    lines.append(f"- `{_fp.id}` {_fp.name} → {_apis}")
+                lines.append("")
 
         # ★ 附加 DirScan 敏感发现（T8b：唯一渲染入口，两条路径共用）
         _dr_section = self._render_dirscan_section()

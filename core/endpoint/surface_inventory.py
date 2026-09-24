@@ -30,32 +30,49 @@ def build_surface_inventory(
     endpoints: Iterable[Any],
     *,
     host: str | None = None,
+    exclude_keys: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """构建接口面完整度账本。
 
     Args:
         endpoints: 可迭代的端点（dict / 对象 / api_key 字符串），形态同 tag_endpoints。
         host: 目标主域，用于 is_same_host 判定。
+        exclude_keys: 需要**从期望面剔除**的 ``METHOD path`` 键集合。
+
+            ★ 924（task_1790223312_c75b16）：用于剔除**幽灵端点**。
+            `[GHOST-ENDPOINT]` / `test_status=SKIPPED` 原本只打在 feature 层
+            （``feature_gen.filter_phantom_features``），而期望矩阵来自 endpoint 层
+            —— 本函数此前只滤静态资产与跨域，**不认识幽灵标记**，于是 4 个已实测
+            404 的端点照样进 ``expected_coverage_matrix``，L6 报「期望矩阵缺覆盖」
+            把 CI 拉红（``high_count: 0`` 却 ``passed: false``）。
+            这是对 0924「作用域隔离体系」的补齐：幽灵端点必须逐层排除。
 
     Returns:
         dict 含：
           - total: 原始端点数
           - unique: 去重后端点数（method+path）
-          - testable: 可测试端点数（去静态资产 + 跨域后）
+          - testable: 可测试端点数（去静态资产 + 跨域 + 排除键后）
           - static_assets: 静态资产数
           - cross_host: 跨域端点数
+          - ghost_excluded: 因 ``exclude_keys`` 被剔除的端点数
           - by_risk_domain: {域: 端点数}（多域端点在多域计数）
           - surfaces: 去重后的端点清单（含 _tags）
     """
     tagged = tag_endpoints(endpoints, host=host)
+    _ex = {str(k) for k in (exclude_keys or ()) if k}
 
     # 去重键：METHOD + path（不含 query）
     seen: dict[str, dict[str, Any]] = {}
+    ghost_excluded = 0
     for ep in tagged:
         method = str(ep.get("method", "GET")).upper()
         url = str(ep.get("url", ""))
         path = url.split("?", 1)[0] or url
         key = f"{method} {path}"
+        if _ex and key in _ex:
+            # ★ 924：幽灵端点（已实测 404 / catch-all）不进期望面
+            ghost_excluded += 1
+            continue
         if key not in seen:
             ep["_surface_key"] = key
             seen[key] = ep
@@ -90,6 +107,7 @@ def build_surface_inventory(
         "testable": testable,
         "static_assets": static_count,
         "cross_host": cross_count,
+        "ghost_excluded": ghost_excluded,
         "by_risk_domain": by_domain,
         "surfaces": surfaces,
     }

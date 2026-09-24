@@ -115,6 +115,30 @@ def get_model_context_window(model: str) -> int:
     return _DEFAULT_CONTEXT_WINDOW
 
 
+# 默认输出预留（与 LLMClient.chat 的 max_tokens 默认值保持一致）
+_DEFAULT_MAX_TOKENS = 4096
+
+
+def available_input_budget(model: str, max_tokens: int | None = None) -> int:
+    """可用输入预算 = ``int(窗口 × 安全系数) − max_tokens``。
+
+    ★ 924：把这条公式收敛成**单一权威实现**。
+    ``_client.chat()`` 的预检、``_preflight`` 的窗口提示、worker 的
+    "固定开销可行性断言" 三处必须用同一个数，否则会出现「预检说能过、
+    断言说不能过」这类自相矛盾（924 实测：预检报 ``17351 > 15564``，
+    而 preflight 的窗口提示文案里写的是另一个数）。
+
+    Args:
+        model: 模型名（未登记 → 按 ``_DEFAULT_CONTEXT_WINDOW`` 保守估算）。
+        max_tokens: 本次请求预留的输出 token；``None`` 时用默认 4096。
+
+    Returns:
+        可用输入 token 数（可能为负 —— 窗口极小时表示"连输出都放不下"）。
+    """
+    _max = _DEFAULT_MAX_TOKENS if max_tokens is None else int(max_tokens)
+    return int(get_model_context_window(model) * _CONTEXT_PRECHECK_SAFETY) - _max
+
+
 def estimate_text_tokens(text: str) -> int:
     """估算文本的 token 数（无需 tokenizer）。
 

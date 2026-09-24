@@ -65,6 +65,12 @@ class ScanResult:
     # ★ 封禁/熔断标志：标记本次扫描是否因 WAF/超时而提前终止
     waf_blocked: bool = False
     timeout_blocked: bool = False
+    # ★ 924：公开兜底页熔断 —— 该 URL 恒定返回同一份响应体（SPA fallback /
+    #   软 404 / 网关兜底页），后续 payload 类检查已无意义，已提前短路。
+    #   实测 task_1790223312_c75b16：`..;/actuator/env` 被打了 15+ 次探针，
+    #   每次都是同一个 200/2569B 兜底体，纯浪费。
+    public_fallback_detected: bool = False
+    public_fallback_repeats: int = 0
 
     @property
     def vuln_count(self) -> int:

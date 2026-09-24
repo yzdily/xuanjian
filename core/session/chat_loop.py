@@ -1057,6 +1057,15 @@ class ChatLoopMixin:
 
             # ★ 目标可达性预检：重试 3 次，失败后切换被动侦察模式
             target_reachable = await self._probe_target_reachable(url)
+            # ★ 924 复盘：默认欢迎页检测 —— 可达但无真实应用，提示用户确认 URL。
+            # 此时爬虫最容易跟链越界（默认 nginx 页页脚 → nginx.com → f5.com），
+            # 作用域闸门已兜底，但仍应让用户知情。
+            _default_page = getattr(self, "_target_default_page", "") or ""
+            if target_reachable and _default_page:
+                yield self._event("system",
+                    f"⚠️ 目标返回的是{_default_page}（未检测到真实业务应用）。\n"
+                    f"   请确认 URL 是否正确 / 应用是否已交付。当前扫描将仅覆盖默认页本身，\n"
+                    f"   跟链发现的非授权资产会被作用域闸门隔离，不计入报告结论。")
             if not target_reachable:
                 # ★ T9 / B4 (0923 v2)：标记"目标不可达"。
                 #   标记后 _event 会把最终的 done 改写为 task_unreachable，
@@ -1667,6 +1676,15 @@ class ChatLoopMixin:
                 if cleaned_count > 0:
                     yield self._event("system", f"🧹 已清除 {cleaned_count} 个非业务域名的 API（第三方追踪/广告/分析等）")
 
+                # ★ 泄漏②③修复（924 复盘）：把爬虫侧的授权作用域同步给 sitemap，
+                # 使 feature_gen / report 的 host 闸门能拿到完整授权范围
+                # （intent 预注入 + infer_extra_scope 同品牌推断）。
+                _crawl_scope = crawl_result.get("extra_scope") or []
+                if _crawl_scope:
+                    self.sitemap.extra_scope.update(
+                        str(d).lower().lstrip(".") for d in _crawl_scope if d
+                    )
+
                 # 自动生成原子级功能点
                 yield self._event("system", "正在自动生成原子级功能点...")
                 atomic_features = self.sitemap.generate_atomic_features(crawl_result)
@@ -1733,8 +1751,17 @@ class ChatLoopMixin:
                     )
                     if _dir_result.discovered_count > 0:
                         _dir_added = 0
+                        _probe_skipped = 0
                         for _entry in _dir_result.entries:
                             if is_non_business_path(_entry.path):
+                                continue
+                            # ★ 924：路径归一化探针（..;/ ;/ %2e）疑似命中兜底页 →
+                            #   "存活"判定不可信，**不挂 API**（否则它会进权威 API 表
+                            #   与期望矩阵，把 CI 拉红）。实测 ..;/actuator/env 稳定
+                            #   返回 200/2569B 兜底体，被当成真实攻击面。
+                            if getattr(_entry, "probe_suspected_catch_all", False):
+                                _probe_skipped += 1
+                                log.info("[DirScan] 跳过疑似兜底页的归一化探针: %s", _entry.url)
                                 continue
                             if self.sitemap:
                                 self.sitemap.add_page(_entry.url, title=_entry.title or _entry.path)
@@ -1744,6 +1771,10 @@ class ChatLoopMixin:
                                         _dir_added += 1
                                     except Exception:
                                         pass
+                        if _probe_skipped:
+                            yield self._event("system",
+                                f"ℹ️ 目录爆破跳过 {_probe_skipped} 个疑似命中兜底页的"
+                                f"路径归一化探针（存活判定不可信，不挂 API）")
                         if _dir_added > 0:
                             yield self._event("system",
                                 f"📂 主动目录爆破: 发现 {_dir_result.discovered_count} 个存活路径, "

@@ -42,6 +42,15 @@ class Scheduler:
             raise ValueError("max_concurrent 必须 >= 1")
         self.tasks: dict[str, Task] = {}
         self.q: queue.PriorityQueue = queue.PriorityQueue()
+        # ★ 924 修复：依赖未齐的任务**不再塞回就绪队列**，而是移入阻塞区。
+        #
+        # 原实现的活锁（已复现）：就绪队列按 `(priority, tid)` 排序，`tid` 是随机 uuid。
+        # 若"被依赖的任务 A"的 id 恰好大于"依赖方 B"的 id，则 B 的键恒小于 A 的键 ——
+        # worker 每次都 pop 到 B，发现依赖未齐又把 B 塞回去（此时仍是队首），
+        # 于是 **A 永远轮不到执行**，所有 worker 在 B 上空转：
+        #     实测 a_id=813f6a9d / b_id=5ef663ab → 2s 后 running=0、pending=2（彻底死锁）
+        # 概率 ≈50%（uuid 字典序），这正是 test_scheduler_deps_wait 3/6 失败的成因。
+        self._blocked: dict[str, tuple[int, str]] = {}   # tid → (priority, tid)
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
         self.max_concurrent = max_concurrent
@@ -75,11 +84,26 @@ class Scheduler:
         return t.id
 
     def _deps_satisfied(self, tid: str) -> bool:
-        for d in self.tasks[tid].deps:
-            t = self.tasks.get(d)
-            if not t or t.status != "done":
+        t = self.tasks.get(tid)
+        if t is None:
+            return False
+        for d in t.deps:
+            _d = self.tasks.get(d)
+            if not _d or _d.status != "done":
                 return False
         return True
+
+    def _promote_unblocked_locked(self) -> int:
+        """把依赖已齐的阻塞任务移回就绪队列（**必须在持有 ``self.cv`` 时调用**）。
+
+        ★ 924：这是"完成一个任务后主动解阻塞"的唯一入口。
+        返回本次解阻塞的任务数（供 stats / 诊断）。
+        """
+        ready = [tid for tid in list(self._blocked) if self._deps_satisfied(tid)]
+        for tid in ready:
+            prio, _ = self._blocked.pop(tid)
+            self.q.put((prio, tid))
+        return len(ready)
 
     def _loop(self) -> None:
         """worker 主循环。"""
@@ -96,9 +120,11 @@ class Scheduler:
                 except queue.Empty:
                     continue
                 if not self._deps_satisfied(tid):
-                    # 依赖未齐，重新入队
-                    self.q.put((prio, tid))
-                    self.cv.wait(timeout=0.05)
+                    # ★ 924：依赖未齐 → 移入**阻塞区**，等依赖任务完成时由
+                    #   `_promote_unblocked_locked()` 唤醒。
+                    #   ⛔ 绝不能 `self.q.put(...)` 塞回就绪队列 —— 会造成队头活锁
+                    #   （键恒为最小 → 就绪任务永远轮不到），见 __init__ 注释。
+                    self._blocked[tid] = (prio, tid)
                     continue
                 self.tasks[tid].status = "running"
                 self.running += 1
@@ -116,6 +142,8 @@ class Scheduler:
             finally:
                 with self.lock:
                     self.running -= 1
+                    # ★ 924：任务收尾即解阻塞，让依赖它的任务立刻可跑
+                    self._promote_unblocked_locked()
                     self.cv.notify_all()
 
     def _graceful_shutdown(self, timeout: float = 5.0) -> None:
@@ -134,6 +162,9 @@ class Scheduler:
         with self.lock:
             return {
                 "pending": self.q.qsize(),
+                # ★ 924：依赖未齐而等待中的任务数（原实现无此概念，会把它们混在
+                #   pending 里且永远不减少）
+                "blocked": len(self._blocked),
                 "running": self.running,
                 "total": len(self.tasks),
             }

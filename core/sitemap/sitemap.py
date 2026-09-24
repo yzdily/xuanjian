@@ -13,7 +13,9 @@ import json
 import logging
 from dataclasses import asdict, fields
 from pathlib import Path
+from urllib.parse import urlparse
 
+from core.scope_contract import AuthorizedScope
 from core.sitemap.models import (
     TestStatus, CheckResult, Priority,
     PageInfo, APIEndpoint, CheckItem, FeaturePoint,
@@ -33,6 +35,13 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
     def __init__(self, target: str, task_id: str = "default"):
         self.target = target
         self.task_id = task_id
+        # ★ 授权作用域（v2 泄漏①②③修复）：extra_scope 只允许显式来源写入
+        # （用户确认 / 同品牌判定），不再接受"API≥3次自动晋升"。
+        self.extra_scope: set[str] = set()
+        # ★ AuthorizedScope 契约统一（924 §4.2 后续重构项）：
+        #   唯一权威作用域定义，extra_scope 与上面共享同一 set 引用，
+        #   运行期 extra_scope.update(...) 自动反映到契约判定与指纹。
+        self.scope = AuthorizedScope.from_parts(target, self.extra_scope)
         self.pages: dict[str, PageInfo] = {}
         self.apis: dict[str, APIEndpoint] = {}
         self.features: dict[str, FeaturePoint] = {}
@@ -72,6 +81,45 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
         self._persist_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ---- 页面 ----
+
+    # ---- 授权作用域判定（权威实现已上移 core/scope_contract.AuthorizedScope；
+    #      此处保留为委托门面，兼容全部存量调用点）----
+
+    def _authorized_hosts(self) -> set[str]:
+        """计算授权 host 集合（委托 AuthorizedScope.hosts）。
+
+        - target 带端口时同时收录 hostname 与 netloc（同主机不同端口视为同一服务）。
+        - extra_scope 中的条目支持裸域或带 scheme 的 URL，统一归一化为 hostname。
+        """
+        return self.scope.hosts()
+
+    def _host_in_scope(self, url: str) -> bool:
+        """判断 URL 的 host 是否在授权作用域内（委托 AuthorizedScope.contains）。
+
+        无 host 的相对路径/空 URL 一律视为在范围内（不阻断目标内功能点）。
+        """
+        return self.scope.contains(url)
+
+    def scope_fingerprint(self) -> str:
+        """当前作用域指纹（target + 显式 extra_scope + mode 的稳定短哈希）。"""
+        return self.scope.fingerprint()
+
+    def _fp_out_of_scope(self, fp: "FeaturePoint") -> bool:
+        """判断功能点是否越界（host 不在授权作用域内）。"""
+        urls = list(fp.related_apis or [])
+        if fp.page_url:
+            urls.append(fp.page_url)
+        for u in urls:
+            if "://" in (u or "") and not self._host_in_scope(u.split(" ", 1)[-1]):
+                return True
+        return False
+
+    def _fp_is_ghost(self, fp: "FeaturePoint") -> bool:
+        """判断功能点是否为幽灵端点（liveness 检测已标记）。"""
+        return (
+            fp.test_status == TestStatus.SKIPPED
+            or "[GHOST-ENDPOINT]" in (fp.description or "")
+        )
 
     def add_page(self, url: str, title: str = "", description: str = "") -> PageInfo:
         if url not in self.pages:
@@ -138,10 +186,14 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
     # ---- API ----
 
     def add_api(self, method: str, url: str, discovered_by: str = "", **kwargs) -> APIEndpoint | None:
-        from urllib.parse import urlparse
+        from urllib.parse import urlparse as _urlparse
         from core.sitemap.api_samples import _is_high_priority_source, classify_api_source
 
         if method.upper() == "CONNECT":
+            return None
+        # ★ 泄漏②修复（924 复盘）：越界 host 的 API 不入 sitemap.apis。
+        if "://" in (url or "") and not self._host_in_scope(url):
+            log.info("作用域闸门: 拒绝越界 API %s %s", method, url[:80])
             return None
         path_lower = url.split('?')[0].lower()
         if any(path_lower.endswith(ext) for ext in STATIC_EXTS):
@@ -198,6 +250,12 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
             data = {
                 "target": self.target,
                 "task_id": self.task_id,
+                # ★ AuthorizedScope 契约持久化（924 §4.2）：extra_scope 此前不落盘，
+                #   会话恢复后显式授权域丢失 → 越界误判；指纹供审计核对产物作用域。
+                "extra_scope": sorted(self.extra_scope),
+                "scope_mode": getattr(self.scope, "mode", "strict"),
+                "scope_fingerprint": self.scope.fingerprint(),
+                "scope_authorized_hosts": sorted(self._authorized_hosts()),
                 "business_summary": self.business_summary,
                 "tech_stack": self.tech_stack,
                 "pages": {k: asdict(v) for k, v in self.pages.items()},
@@ -270,6 +328,17 @@ class Sitemap(ApiSamplesMixin, FeatureGenMixin, CoverageMixin, ReportMixin):
             return False
         self.business_summary = data.get("business_summary", "")
         self.tech_stack = data.get("tech_stack", "")
+        # ★ 恢复 AuthorizedScope 契约（924 §4.2）：extra_scope 原地并入共享集合
+        #   （契约持有同一引用，无需重建）；mode 随盘恢复以保持行为一致；
+        #   scope_fingerprint_at_save 仅审计留痕，当前指纹按恢复后状态重算。
+        for _s in (data.get("extra_scope") or []):
+            s = str(_s).strip().lower()
+            if s:
+                self.extra_scope.add(s)
+        _saved_mode = str(data.get("scope_mode", "") or "")
+        if _saved_mode in ("strict", "extended"):
+            self.scope.mode = _saved_mode
+        self.scope_fingerprint_at_save = str(data.get("scope_fingerprint", "") or "")
         for k, v in data.get("pages", {}).items():
             self.pages[k] = PageInfo(**v)
         for k, v in data.get("apis", {}).items():

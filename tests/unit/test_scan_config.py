@@ -12,12 +12,48 @@ from __future__ import annotations
 
 import pytest
 
+import core.config as _cfg
 from core.config_runtime import ScanConfig
 
 
 @pytest.fixture
 def cfg() -> ScanConfig:
-    return ScanConfig()
+    """每个用例拿到**确定基线**的配置（与测试执行顺序无关）。
+
+    ★ 924 修复：``ScanConfig`` 构造时从 ``core.config`` 拷贝三个映射表
+    （``VULN_TO_SKILL`` / ``FEATURE_VULN_MAPPING`` / ``VULN_SYNONYMS``），
+    而这三张表会被 ``apply_skill_registry()`` **原地替换** —— 只要有任何用例
+    先导入了 ``web.server``（例如 ``tests/unit/test_telemetry_whitelist.py``），
+    119 个 SKILL 的 frontmatter 就会合并进来，``逻辑漏洞`` 的规范名从
+    ``业务逻辑`` 变成 ``业务逻辑漏洞``，本文件的断言随之失败。
+
+    实测：单独跑 → 通过；与 ``test_telemetry_whitelist.py`` 同跑 → 必挂。
+    这是**测试隔离**问题，不是产品缺陷（SKILL 合并后的状态才是生产态）。
+
+    这里显式 pin 到 ``.py`` 默认值，用例结束后**恢复现场**，
+    避免污染后续用例（它们可能依赖 SKILL 合并后的状态）。
+    """
+    with _cfg._mapping_lock:
+        saved_skill = dict(_cfg.VULN_TO_SKILL)
+        saved_mapping = [list(x) if isinstance(x, (list, tuple)) else x
+                         for x in _cfg.FEATURE_VULN_MAPPING]
+        saved_syn = dict(_cfg.VULN_SYNONYMS)
+
+    _cfg.reset_to_defaults()
+    try:
+        yield ScanConfig()
+    finally:
+        with _cfg._mapping_lock:
+            _cfg.VULN_TO_SKILL.clear()
+            _cfg.VULN_TO_SKILL.update(saved_skill)
+            _cfg.FEATURE_VULN_MAPPING[:] = saved_mapping
+            _cfg.VULN_SYNONYMS.clear()
+            _cfg.VULN_SYNONYMS.update(saved_syn)
+
+
+def test_cfg_fixture_is_order_independent(cfg):
+    """★ 924 回归钉子：基线必须确定，不随"别的测试有没有合并 SKILL"漂移。"""
+    assert cfg.dedup_vuln_type("  逻辑漏洞  ") == "业务逻辑"
 
 
 # ============================================================

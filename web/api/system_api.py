@@ -101,6 +101,75 @@ async def get_scan_stats():
     return get_stats()
 
 
+# ★ 924 修复：/api/scans/compare 是**静态段**路由，必须与 /api/scans/stats 一样
+#   注册在 /api/scans/{task_id} **之前**。原实现放在文件末尾（原 673 行），
+#   导致请求被 /api/scans/{task_id} 抢先匹配 → task_id 被当成字面量 "compare"，
+#   返回 {"error": "扫描不存在: compare"}，该处理器（含 task_id 路径穿越校验）
+#   **永远不可达**。实测 tests/integration/test_web_security.py::TestS1ScanSessionsPathTraversal
+#   两条用例因此失败（此前因托管 venv 缺 fastapi，从未跑到）。
+@router.get("/api/scans/compare")
+async def compare_scans(task_a: str = "", task_b: str = ""):
+    """对比两次扫描结果的漏洞差异。
+
+    返回三部分：
+    - only_a: 在 A 中存在但在 B 中已修复的漏洞
+    - only_b: 在 B 中新发现的漏洞
+    - common: 两者都存在的漏洞
+    """
+    from core.sitemap import Sitemap, CheckResult
+
+    if not task_a or not task_b:
+        return {"error": "需要提供 task_a 和 task_b 两个任务 ID"}
+
+    # ★ S1 扩展：task_a / task_b 校验，防止路径穿越（Sitemap 以 task_id 拼文件路径）。
+    if not validate_task_id(task_a) or not validate_task_id(task_b):
+        return JSONResponse(status_code=400, content={"error": "非法的 task_id"})
+
+    def _get_vulns(task_id: str) -> list[dict]:
+        sitemap = Sitemap(target="", task_id=task_id)
+        if not sitemap.load():
+            return []
+        vulns = []
+        for fp in sitemap.features.values():
+            for c in fp.checklist:
+                if c.result == CheckResult.VULNERABLE:
+                    key = f"{c.vuln_type}@{fp.url or fp.name}"
+                    vulns.append({
+                        "key": key,
+                        "vuln_type": c.vuln_type,
+                        "feature": fp.name,
+                        "url": c.evidence_request or fp.url or "",
+                        "severity": c.severity or "medium",
+                        "detail": c.detail or "",
+                    })
+        return vulns
+
+    vulns_a = _get_vulns(task_a)
+    vulns_b = _get_vulns(task_b)
+
+    keys_a = {v["key"] for v in vulns_a}
+    keys_b = {v["key"] for v in vulns_b}
+
+    common = [v for v in vulns_a if v["key"] in keys_b]
+    only_a = [v for v in vulns_a if v["key"] not in keys_b]
+    only_b = [v for v in vulns_b if v["key"] not in keys_a]
+
+    return {
+        "task_a": task_a,
+        "task_b": task_b,
+        "only_a": {"count": len(only_a), "items": only_a},
+        "only_b": {"count": len(only_b), "items": only_b},
+        "common": {"count": len(common), "items": common},
+        "summary": {
+            "vulns_a": len(vulns_a),
+            "vulns_b": len(vulns_b),
+            "fixed": len(only_a),
+            "new": len(only_b),
+            "unchanged": len(common),
+        },
+    }
+
+
 @router.get("/api/scans/{task_id}")
 async def get_scan_detail(task_id: str):
     """获取单条扫描详情（含漏洞列表）。"""
@@ -664,70 +733,3 @@ async def mcp_health():
             all_ok = False
 
     return {"healthy": all_ok, "servers": results}
-
-
-# ================================================================
-# ★ P3: 扫描结果对比（两次 diff）
-# ================================================================
-
-@router.get("/api/scans/compare")
-async def compare_scans(task_a: str = "", task_b: str = ""):
-    """对比两次扫描结果的漏洞差异。
-
-    返回三部分：
-    - only_a: 在 A 中存在但在 B 中已修复的漏洞
-    - only_b: 在 B 中新发现的漏洞
-    - common: 两者都存在的漏洞
-    """
-    from core.sitemap import Sitemap, CheckResult
-
-    if not task_a or not task_b:
-        return {"error": "需要提供 task_a 和 task_b 两个任务 ID"}
-
-    # ★ S1 扩展：task_a / task_b 校验，防止路径穿越（Sitemap 以 task_id 拼文件路径）。
-    if not validate_task_id(task_a) or not validate_task_id(task_b):
-        return JSONResponse(status_code=400, content={"error": "非法的 task_id"})
-
-    def _get_vulns(task_id: str) -> list[dict]:
-        sitemap = Sitemap(target="", task_id=task_id)
-        if not sitemap.load():
-            return []
-        vulns = []
-        for fp in sitemap.features.values():
-            for c in fp.checklist:
-                if c.result == CheckResult.VULNERABLE:
-                    key = f"{c.vuln_type}@{fp.url or fp.name}"
-                    vulns.append({
-                        "key": key,
-                        "vuln_type": c.vuln_type,
-                        "feature": fp.name,
-                        "url": c.evidence_request or fp.url or "",
-                        "severity": c.severity or "medium",
-                        "detail": c.detail or "",
-                    })
-        return vulns
-
-    vulns_a = _get_vulns(task_a)
-    vulns_b = _get_vulns(task_b)
-
-    keys_a = {v["key"] for v in vulns_a}
-    keys_b = {v["key"] for v in vulns_b}
-
-    common = [v for v in vulns_a if v["key"] in keys_b]
-    only_a = [v for v in vulns_a if v["key"] not in keys_b]
-    only_b = [v for v in vulns_b if v["key"] not in keys_a]
-
-    return {
-        "task_a": task_a,
-        "task_b": task_b,
-        "only_a": {"count": len(only_a), "items": only_a},
-        "only_b": {"count": len(only_b), "items": only_b},
-        "common": {"count": len(common), "items": common},
-        "summary": {
-            "vulns_a": len(vulns_a),
-            "vulns_b": len(vulns_b),
-            "fixed": len(only_a),
-            "new": len(only_b),
-            "unchanged": len(common),
-        },
-    }

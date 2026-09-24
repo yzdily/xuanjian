@@ -47,9 +47,19 @@ from core.llm._tokens import (
     _DEFAULT_CONTEXT_WINDOW,
     _MODEL_CONTEXT_WINDOWS,
     ContextLimitError,
+    available_input_budget,
     estimate_messages_tokens,
     estimate_text_tokens,
     get_model_context_window,
+)
+# ★ 924：空响应熔断（模型链路不兼容的显式化）。必须早于 _client 导入，
+#   因为 _client.chat() 在返回路径上会调用 _health.record_*。
+from core.llm import _health  # noqa: F401  提供 core.llm._health 供 _client 使用
+from core.llm._health import (
+    LLMEmptyResponseError,
+    empty_parse_streak,
+    get_llm_health_stats,
+    reset_llm_health,
 )
 from core.llm._crypto import (
     _ENC_KEY_INFO,
@@ -103,6 +113,10 @@ __all__ = [
     "mask_api_key",
     # ★ 0923 v2（T10 限速 / T12 preflight）
     "get_llm_rate_limiter", "preflight_llm",
+    # ★ 924（模型链路健康度：空解析熔断 + 预算单一权威）
+    "LLMEmptyResponseError", "empty_parse_streak",
+    "get_llm_health_stats", "reset_llm_health",
+    "available_input_budget",
     # private (re-exported for back-compat with business code / tests)
     "_monitor", "_response_cache", "_parse_sse_chat_payload",
     "_MODEL_NAME_CORRECTIONS", "_parse_xml_tool_calls", "_normalize_provider",

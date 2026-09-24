@@ -22,6 +22,10 @@ class DirEntry:
     title: str              # 从 HTML <title> 提取的标题（无则空）
     body_hash: str          # 响应体哈希（用于通配符对比）
     body_text: str = ""     # 响应体文本截断（用于相似度对比，可选）
+    # ★ 924：该条目是路径归一化探针（..;/ ;/ %2e 等）且**疑似命中兜底页**。
+    #   由 apply_catch_all_veto 的探针子集判定写入。True 表示"存活判定不可信"，
+    #   调用方不应据此挂载 API（见 _finding_policy.is_normalization_probe_path）。
+    probe_suspected_catch_all: bool = False
 
 
 @dataclass
@@ -69,6 +73,10 @@ class DirScanResult:
     #   实测 ics.aibank.com 同时存在 4113B 与 2569B 两个不同兜底体，
     #   单基线 wildcard 检测只看一簇，另一簇会畅通无阻 → 必须按簇判定。
     catch_all_clusters: dict = field(default_factory=dict)
+    # ★ 924：归一化探针（..;/ ;/ %2e）子集的兜底页簇（更宽松阈值判定）。
+    #   与 catch_all_clusters 分开存：前者是全量簇、后者是探针子集，
+    #   消费方（API 挂载）据此跳过"存活判定不可信"的探针路径。
+    catch_all_probe_clusters: dict = field(default_factory=dict)
     # ★ catch-all 响应体（用于相似度对比，过滤近似重复）
     catch_all_body: str = ""
     # ★ 早期 catch-all 中止：首批 API 路径扫描后检测到 catch-all，

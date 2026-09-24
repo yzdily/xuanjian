@@ -8,6 +8,8 @@ FastScanner 继承 4 个 check mixin，通过 MRO 在运行期解析 self._check
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 import random
 import time
 
@@ -24,6 +26,18 @@ from ._checks_server import _ChecksServer
 from ._checks_auth import _ChecksAuth
 from ._checks_p2 import _ChecksP2
 from ._sitemap_integration import _SitemapIntegration
+
+# ★ 924：公开兜底页熔断阈值 —— 同一 URL 连续拿到多少次**字节级相同**的 2xx 响应后
+#   判定为"兜底页"并短路剩余规则。默认 6（≈省掉一半以上无效探针），
+#   可用 XUANJIAN_FASTSCAN_FALLBACK_BREAKER=0 关闭。
+def _public_fallback_threshold() -> int:
+    raw = (os.environ.get("XUANJIAN_FASTSCAN_FALLBACK_BREAKER") or "").strip()
+    if not raw:
+        return 6
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 6
 
 log = get_logger("fast_scanner")
 
@@ -98,6 +112,15 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _ChecksP2, _Site
         # ★ 响应日志采样：同规则/状态/长度桶的重复响应只在里程碑输出，减少 500 噪声刷屏
         self._response_log_counts: dict[str, int] = {}
         self._response_log_suppressed = 0
+        # ★ 924：公开兜底页熔断状态。
+        #   同一 URL 连续 N 次拿到**完全相同的响应体**（且是 2xx）说明这是
+        #   SPA fallback / 软 404 / 网关兜底页 —— 再打 payload 也不会得到不同结果。
+        #   实测 `..;/actuator/env` 被打 15+ 次探针全是同一个 200/2569B 兜底体。
+        self._public_fallback_hash: str = ""
+        self._public_fallback_hits: int = 0
+        self._public_fallback_len: int = 0
+        self._public_fallback_detected: bool = False
+        self._public_fallback_skip_logged: bool = False
         # ★ YAML 规则缓存：从 rules/*.yaml 加载的规则列表
         self._yaml_rules: list[dict] = []
         # ★ 生产修复：_check_ssrf 末尾的 SSRF OOB 增强分支会读取 self.config，
@@ -124,6 +147,19 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _ChecksP2, _Site
         key = f"{rule_tag}|{method}|{parent}|{status}|{length_bucket}"
         count = self._response_log_counts.get(key, 0) + 1
         self._response_log_counts[key] = count
+
+        # ★ 924：公开兜底页探测（只统计 2xx；兜底页是 200，4xx 是普通错误页）
+        _th = _public_fallback_threshold()
+        if _th > 0 and 200 <= status < 300 and resp.content:
+            _h = hashlib.sha256(resp.content).hexdigest()
+            if _h == self._public_fallback_hash:
+                self._public_fallback_hits += 1
+            else:
+                self._public_fallback_hash = _h
+                self._public_fallback_hits = 1
+                self._public_fallback_len = len(resp.content)
+            if self._public_fallback_hits >= _th:
+                self._public_fallback_detected = True
 
         noisy_status = status >= 500 or status in (403, 404, 418, 429)
         milestones = {1, 2, 3, 10, 30, 100, 300, 1000}
@@ -499,6 +535,12 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _ChecksP2, _Site
         # 内的重复度，便于识别 catch-all/soft-404 误报模式。
         # _response_log_suppressed 不重置：scan_target 用 delta（suppressed_before）计算本目标抑制数。
         self._response_log_counts.clear()
+        # ★ 924：公开兜底页状态按目标重置（否则跨目标累积会误熔断）
+        self._public_fallback_hash = ""
+        self._public_fallback_hits = 0
+        self._public_fallback_len = 0
+        self._public_fallback_detected = False
+        self._public_fallback_skip_logged = False
         findings: list[VulnFinding] = []
 
         # ★ 分批执行规则：每批 max_workers 个规则，批次间检查熔断标志
@@ -541,6 +583,17 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _ChecksP2, _Site
                 if not self._timeout_skip_logged:
                     self._timeout_skip_logged = True
                     log.info("[SCAN] 超时已熔断，跳过剩余 %d 个规则", len(all_handlers) - i)
+                break
+            # ★ 924：公开兜底页熔断 —— 该 URL 恒返回同一份响应体，
+            #   后续 payload 类检查不可能得到不同结果，直接短路。
+            if self._public_fallback_detected:
+                if not self._public_fallback_skip_logged:
+                    self._public_fallback_skip_logged = True
+                    log.warning(
+                        "[SCAN] 检测到公开兜底页（同一响应体连续 %d 次，body=%dB），"
+                        "跳过剩余 %d 个规则: %s",
+                        self._public_fallback_hits, self._public_fallback_len,
+                        len(all_handlers) - i, target.url)
                 break
 
             # ★ 调用 handler(target) 获取协程对象
@@ -588,6 +641,8 @@ class FastScanner(_ChecksInjection, _ChecksServer, _ChecksAuth, _ChecksP2, _Site
             log_suppressed_count=max(0, self._response_log_suppressed - suppressed_before),
             waf_blocked=self._waf_blocked,
             timeout_blocked=self._timeout_blocked,
+            public_fallback_detected=self._public_fallback_detected,
+            public_fallback_repeats=self._public_fallback_hits,
         )
 
     async def scan_targets(

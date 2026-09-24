@@ -291,7 +291,12 @@ def _build_surfaces(sitemap: Any, host: str | None) -> dict[str, Any]:
         ("features.related_apis", feature_apis),
         host=host,
     )
-    inv = build_surface_inventory(union["endpoints"], host=host)
+    # ★ 924：把幽灵端点（已实测 404 / catch-all）从期望面剔除。
+    #   原因见 build_surface_inventory(exclude_keys=...) 的 docstring。
+    _ghost_keys = _ghost_surface_keys(sitemap)
+    inv = build_surface_inventory(union["endpoints"], host=host,
+                                 exclude_keys=_ghost_keys)
+    inv["ghost_excluded_keys"] = sorted(_ghost_keys)
     inv["source_union"] = {
         "sources": union["sources"],
         "contributions": union["contributions"],
@@ -299,6 +304,67 @@ def _build_surfaces(sitemap: Any, host: str | None) -> dict[str, Any]:
         "union_unique": union["unique"],
     }
     return inv
+
+
+# 解析 "GET https://host/path" 形式的端点字符串时用到的 HTTP 方法白名单
+_SURFACE_METHODS = frozenset(
+    {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
+)
+
+
+def _normalize_surface_key(raw: str, default_method: str = "GET") -> str:
+    """把端点字符串归一成 ``METHOD path（含 scheme+host，不含 query）``。
+
+    与 ``build_surface_inventory`` 内部的 ``_surface_key`` 口径保持一致
+    （那边是 ``f"{method} {url.split('?')[0]}"``）。
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    method = default_method
+    _parts = s.split(None, 1)
+    if _parts and _parts[0].upper() in _SURFACE_METHODS:
+        method = _parts[0].upper()
+        s = _parts[1].strip() if len(_parts) > 1 else ""
+    if not s:
+        return ""
+    s = s.split("?", 1)[0]
+    return f"{method} {s}"
+
+
+def _ghost_surface_keys(sitemap: Any) -> set[str]:
+    """从**幽灵功能点**反推「不应进入期望矩阵」的 surface_key 集合。
+
+    ★ 924（task_1790223312_c75b16）：``[GHOST-ENDPOINT]`` / ``test_status=SKIPPED``
+    原本只打在 feature 层，endpoint 层（期望矩阵）看不到 → 已实测 404 的端点照样
+    进 ``expected_coverage_matrix``，L6 报「期望矩阵缺覆盖」，把 CI 拉红
+    （``high_count: 0`` 却 ``passed: false``）。本函数把幽灵判定**下沉到 endpoint 层**，
+    是 0924「作用域隔离体系」的补齐点（幽灵标记的下游消费方必须排除）。
+
+    Returns:
+        归一化后的 ``METHOD path`` 键集合（与 surface_key 同口径）。
+    """
+    _is_ghost = getattr(sitemap, "_fp_is_ghost", None)
+    if not callable(_is_ghost):
+        return set()
+    feats = getattr(sitemap, "features", None) or {}
+    if isinstance(feats, Mapping):
+        feats = list(feats.values())
+    keys: set[str] = set()
+    for fp in feats or []:
+        try:
+            if not _is_ghost(fp):
+                continue
+        except Exception:
+            continue
+        for u in (getattr(fp, "related_apis", None) or []):
+            _k = _normalize_surface_key(str(u))
+            if _k:
+                keys.add(_k)
+        _k2 = _normalize_surface_key(getattr(fp, "page_url", "") or "")
+        if _k2:
+            keys.add(_k2)
+    return keys
 
 
 def enrich_sitemap_apis(sitemap: Any) -> int:
@@ -331,6 +397,20 @@ def _artifacts_dir(task_id: str) -> str:
     return d
 
 
+def _surface_in_scope(surface: Mapping[str, Any], sitemap: Any) -> bool:
+    """★ 924 修复：判断 surface（端点面）host 是否在 sitemap 授权作用域内。"""
+    url = str(surface.get("url", "") or "")
+    if not url or "://" not in url:
+        return True
+    _host_fn = getattr(sitemap, "_host_in_scope", None)
+    if callable(_host_fn):
+        try:
+            return bool(_host_fn(url))
+        except Exception:
+            return True
+    return True
+
+
 def export_scan_artifacts(session: Any) -> str:
     """G4/G5/G6/G7 统一导出：在 Phase 3 前调用一次。
 
@@ -361,6 +441,33 @@ def export_scan_artifacts(session: Any) -> str:
     features = getattr(sitemap, "features", None) or {}
     if isinstance(features, dict):
         features = list(features.values())
+
+    # ★ 泄漏④修复（924 复盘）：作用域完整性闸门 —— 越界资产的功能点不参与
+    # coverage 推导 / 漏洞统计 / 期望矩阵，否则 f5.com 越界端点会撑爆期望矩阵，
+    # 闸门也会被脏数据误导。若发现越界漏洞，直接判 coverage_failed。
+    _oos_vuln_count = 0
+    _oos_fp_count = 0
+    _scope_filter = getattr(sitemap, "_fp_out_of_scope", None)
+    if callable(_scope_filter):
+        _in_scope_features: list[Any] = []
+        for _fp in features:
+            try:
+                if _scope_filter(_fp):
+                    _oos_fp_count += 1
+                    _oos_vuln_count += sum(
+                        1 for _c in (getattr(_fp, "checklist", None) or [])
+                        if getattr(_c, "result", None) is not None
+                        and getattr(_c.result, "name", "") in ("VULNERABLE", "NEEDS_REVIEW")
+                    )
+                    continue
+            except Exception:
+                pass
+            _in_scope_features.append(_fp)
+        if _oos_fp_count:
+            log.warning("作用域完整性闸门: 排除 %d 个越界功能点（含 %d 条越界漏洞发现）",
+                        _oos_fp_count, _oos_vuln_count)
+        features = _in_scope_features
+        surfaces = [s for s in surfaces if _surface_in_scope(s, sitemap)]
     # path → method / 权威键 对齐表（让 coverage 行键与账本矩阵键**真正**一致）
     # ★ 键对齐修复：矩阵键来自 `build_surface_inventory._surface_key`，含 scheme+host
     #   （真实 sitemap 的 apis[].url 是全 URL），而 coverage 行原先用 normalize_path
@@ -390,6 +497,13 @@ def export_scan_artifacts(session: Any) -> str:
         ci_reasons.append(gate_reason)
     if high_count > 0:
         ci_reasons.append(f"发现 {high_count} 个 High/Critical 漏洞")
+    if _oos_fp_count:
+        # ★ 924 复盘：越界发现 → 覆盖率闸门阻断（passed=false）
+        ci_reasons.append(
+            f"作用域违规: {_oos_fp_count} 个功能点来自非授权资产"
+            f"（含 {_oos_vuln_count} 条漏洞发现），已隔离并阻断 — 检查爬取作用域"
+        )
+        ci_passed = False
     if not ci_reasons:
         ci_reasons.append("覆盖门控通过且无非高危漏洞")
 
@@ -491,13 +605,30 @@ def export_scan_artifacts(session: Any) -> str:
         f.write(stride_summary(confirmed) + "\n")
 
     # G8 CI 门禁结果
+    # ★ AuthorizedScope 契约打标（924 §4.2）：CI 产物带作用域指纹，
+    #   审计时可核对"该判定是在哪个授权作用域状态下做出的"。
+    _scope_obj = getattr(sitemap, "scope", None)
+    _scope_fp = ""
+    _scope_mode = ""
+    if _scope_obj is not None:
+        try:
+            _scope_fp = _scope_obj.fingerprint()
+            _scope_mode = getattr(_scope_obj, "mode", "") or ""
+        except Exception:
+            _scope_fp, _scope_mode = "", ""
     ci_result = {
         "passed": ci_passed,
         "high_count": high_count,
-        "coverage_failed": not gate_passed,
+        "coverage_failed": (not gate_passed) or _oos_fp_count > 0,
         "coverage_reason": gate_reason,
         "reasons": ci_reasons,
         "task_id": task_id,
+        # ★ AuthorizedScope 契约打标（924 §4.2）：审计指纹
+        "scope_fingerprint": _scope_fp,
+        "scope_mode": _scope_mode,
+        # ★ 924 修复：作用域完整性统计
+        "out_of_scope_features": _oos_fp_count,
+        "out_of_scope_vuln_findings": _oos_vuln_count,
         # §1.5 P0：覆盖率闸门（L6–L10 + L-NOVEL）判定结果
         "coverage_gate": _gate_payload,
     }

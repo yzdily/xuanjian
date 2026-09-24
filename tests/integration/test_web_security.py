@@ -979,6 +979,26 @@ class TestS1ScanSessionsPathTraversal:
         （单源），防止日后又出现第二份漂移实现。"""
         assert reports_api._validate_task_id is validate_task_id
 
+    def test_scans_static_routes_registered_before_task_id(self):
+        """★ 924 回归钉子：`/api/scans` 下的**静态段**路由必须注册在
+        `/api/scans/{task_id}` 之前，否则该段会被当作 task_id 吞掉。
+
+        实测缺陷：`/api/scans/compare` 原先定义在文件末尾（`{task_id}` 之后）→
+        请求被 `/api/scans/{task_id}` 抢先匹配，返回 `{"error": "扫描不存在: compare"}`，
+        **该处理器连同它的 task_id 路径穿越校验一起变成不可达代码**。
+        同一文件里 `/api/scans/stats` 的注释已明确此规则，`compare` 漏了。
+        """
+        from web.api.system_api import router
+
+        paths = [getattr(r, "path", "") for r in router.routes]
+        assert "/api/scans/{task_id}" in paths
+        _idx_param = paths.index("/api/scans/{task_id}")
+        for _static in ("/api/scans/stats", "/api/scans/compare"):
+            assert _static in paths, f"{_static} 未注册"
+            assert paths.index(_static) < _idx_param, (
+                f"{_static} 注册在 /api/scans/{{task_id}} 之后 → 会被 task_id 遮蔽"
+            )
+
     def test_compare_rejects_invalid_task_id(self, monkeypatch, tmp_path):
         """GET /api/scans/compare?task_a=../../etc → 400（不读文件）。"""
         monkeypatch.chdir(tmp_path)
@@ -1004,10 +1024,21 @@ class TestS1ScanSessionsPathTraversal:
         app.include_router(system_router)
         client = TestClient(app)
 
-        # 缺参数 → 原始 400（"需要提供 task_a 和 task_b"），而非 "非法的 task_id"。
+        # ★ 924 修复：原断言与用例自身的 docstring 矛盾 —— docstring 说"合法 task_id
+        #   走正常分支、不报 400"，但正文请求**带了两个合法参数**却断言返回
+        #   "需要提供"（那是"缺参数"分支的文案）。该用例此前因托管 venv 缺 fastapi
+        #   从未被执行，矛盾被掩盖。现按 docstring 的真实意图拆成两条断言。
         resp = client.get("/api/scans/compare?task_a=task-a&task_b=task-b")
         assert resp.status_code == 200
-        assert "需要提供" in resp.json().get("error", "")
+        body = resp.json()
+        # 合法 id 不得被判"非法"（路径穿越校验不能误伤）
+        assert "非法" not in body.get("error", "")
+        # 且必须走到正常对比分支（而不是被 /api/scans/{task_id} 抢先匹配）
+        assert "summary" in body, f"未进入 compare 正常分支: {body}"
+
+        # 缺参数 → 走"需要提供"分支（该检查在 id 校验之前）
+        resp_missing = client.get("/api/scans/compare?task_a=task-a")
+        assert "需要提供" in resp_missing.json().get("error", "")
 
     def test_sessions_switch_rejects_invalid_task_id(self, monkeypatch, tmp_path):
         """POST /api/sessions/switch 非法 task_id → 直接拒绝，不拼路径。"""

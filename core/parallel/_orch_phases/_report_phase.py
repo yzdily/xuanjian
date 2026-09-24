@@ -714,7 +714,25 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
         except OSError:
             pass
 
-    yield session._event("phase", f"Phase 3: 汇总报告 — 覆盖率 {cov['coverage']}%, 发现 {cov['vulns']} 个漏洞")
+    # ★ 924（task_1790223312_c75b16）：口径统一。
+    #   原实现用 feature 级 `cov['coverage']`（该任务 = 50.0%），而报告正文用
+    #   checklist 级「真实完成」（该任务 = 1/51 = 2.0%）—— 同一份产物出现两个
+    #   互相矛盾的"覆盖率"。这里改为直接引用报告的唯一权威实现
+    #   `Sitemap.get_execution_quality()`，两边永远一致。
+    _eq = None
+    try:
+        _eq = session.sitemap.get_execution_quality()
+    except Exception as _eq_e:  # pragma: no cover
+        log.debug("execution_quality 不可用，回落 coverage: %s", _eq_e)
+    if _eq is not None:
+        _cov_line = (
+            f"Phase 3: 汇总报告 — 真实完成 {_eq['real_completed']}/{_eq['total_checks']} "
+            f"项（{_eq['completion_rate']:.1f}%），发现 {cov.get('vulns_accepted', cov['vulns'])} 个漏洞"
+        )
+    else:
+        _cov_line = (f"Phase 3: 汇总报告 — 覆盖率 {cov['coverage']}%, "
+                     f"发现 {cov.get('vulns_accepted', cov['vulns'])} 个漏洞")
+    yield session._event("phase", _cov_line)
     session.current_context = session._new_context_for_phase(PHASE_REPORT_PROMPT)
     _report_extra = ""
     if cov_summary_text:

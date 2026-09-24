@@ -18,6 +18,13 @@ from pathlib import Path
 
 from core.log import get_logger
 from core.prompts.phases import WORKER_SYSTEM_PROMPT
+# ★ 924：system 块裁剪优先级（治「固定开销 > 输入预算」）。见 core/context.py 头部。
+from core.context import (
+    SYSTEM_PRIORITY_CRITICAL,
+    SYSTEM_PRIORITY_HIGH,
+    SYSTEM_PRIORITY_SKILL,
+    SYSTEM_PRIORITY_SKILL_CONSTRAINT,
+)
 
 log = get_logger("worker")
 
@@ -576,26 +583,49 @@ class _WorkerAgentHelpers:
             lines.append("⚠️ **如何与 SKILL 配合**：SKILL 是通用方法论，业务理解是针对本目标的具体假设。")
             lines.append("测试时**两者都要参考**：用 SKILL 的 Phase 步骤展开测试动作，但优先选择能验证业务假设的 endpoint/参数。")
 
-            self.context.add_system("\n".join(lines))
+            self.context.add_system("\n".join(lines),
+                                    kind="biz", priority=SYSTEM_PRIORITY_HIGH)
             log.info("[%s] 注入业务理解: %d promises, %d hypotheses (筛选后 %d), %d top_directions",
                      self.worker_id, len(high_pri_promises), len(hypotheses),
                      len(related_hypotheses), len(top3))
         except Exception as e:
             log.warning("[%s] 注入业务理解失败: %s", self.worker_id, e)
 
+    def _ensure_context_fits(self, tools: list[dict] | None = None,
+                             *, reserve_ratio: float = 0.9) -> dict:
+        """断言「固定开销 < 可用输入预算」；不成立则按优先级裁剪 system 块。
+
+        ★ 924：实现见 ``core/context_budget.ensure_context_fits``（与
+        browse_worker 共用，避免两处逻辑漂移）。此处只负责把本 worker 的
+        模型名与 ``_context_feasible`` 状态接上。
+        """
+        from core.context_budget import ensure_context_fits
+        _model = getattr(getattr(self.llm, "config", None), "model", "") or ""
+        _stats = ensure_context_fits(self.context, _model, tools,
+                                     reserve_ratio=reserve_ratio, who=self.worker_id)
+        self._context_feasible = bool(_stats.get("ok", True))
+        return _stats
+
     def _init_context(self):
+        # ★ 924：每条 system 块都标注 kind + priority，供 shrink_system_messages()
+        #   按优先级裁剪（治「固定开销 > 输入预算」）。
+        #   优先级常量在模块顶部导入。
         prompts_dir = Path(__file__).parent.parent / "prompts"
         if (prompts_dir / "solver.md").exists():
             self.context.add_system(
-                (prompts_dir / "solver.md").read_text(encoding="utf-8")
+                (prompts_dir / "solver.md").read_text(encoding="utf-8"),
+                kind="prompt:solver", priority=SYSTEM_PRIORITY_CRITICAL,
             )
 
-        self.context.add_system(WORKER_SYSTEM_PROMPT)
+        self.context.add_system(
+            WORKER_SYSTEM_PROMPT, kind="prompt:worker", priority=SYSTEM_PRIORITY_CRITICAL,
+        )
 
         sampling_path = Path("skills_my/core/sampling-inference/SKILL.md")
         if sampling_path.exists():
             self.context.add_system(
-                f"## 核心策略（必须遵守）\n\n{sampling_path.read_text(encoding='utf-8')}"
+                f"## 核心策略（必须遵守）\n\n{sampling_path.read_text(encoding='utf-8')}",
+                kind="skill:core-strategy", priority=SYSTEM_PRIORITY_HIGH,
             )
 
         if self.session_info:
@@ -615,7 +645,8 @@ class _WorkerAgentHelpers:
                 f"## 认证信息（所有请求必须携带，最高优先级）\n\n```json\n{auth_info}\n```\n"
                 "发送 HTTP 请求时，**必须把上面 headers 字典里的全部字段都带上**（不只是 Cookie/Authorization）。\n"
                 "⚠️ API 请求样本中可能包含爬取时的旧 Cookie/签名，**以此处的认证信息为准**，样本中的对应字段仅供参考请求格式。"
-                f"{custom_hint}"
+                f"{custom_hint}",
+                kind="auth", priority=SYSTEM_PRIORITY_HIGH,
             )
 
         # ---- 加密配置注入 ----
@@ -636,7 +667,8 @@ class _WorkerAgentHelpers:
                 algo = cc.get("algorithm", "?")
                 crypto_info.append(f"  [{i}] {algo}")
             crypto_info.append("\n示例：crypto_encrypt({\"plaintext\": \"' OR 1=1--\", \"config_index\": 0})")
-            self.context.add_system("\n".join(crypto_info))
+            self.context.add_system("\n".join(crypto_info),
+                                    kind="crypto", priority=SYSTEM_PRIORITY_HIGH)
 
         # ---- ★ SKILL 策略：只注入当前第一个功能点最关键的 1-2 个，其余按需加载 ----
         # 这样初始上下文从 100K+ 降到 ~15K，大幅减少幻觉风险
@@ -678,17 +710,27 @@ class _WorkerAgentHelpers:
                                 skill_name + "\")` 加载完整版)")
 
                         # 必测清单 + 速查附录无截断完整保留（关键约束段）
-                        full_content = body + ("\n\n" + checklist_appendix if checklist_appendix else "")
-
-                        self.context.add_system(
+                        # ★ 924：主体与「必测自检清单」拆成两条 system 块，分别标优先级 ——
+                        #   超预算时**先裁主体**（`knowledge_load_skill` 可随时恢复），
+                        #   最后才动约束清单（它决定 agent 敢不敢乱标 not_vuln）。
+                        _skill_head = (
                             f"## 方法论：{c.vuln_type}\n"
                             f"以下是 {c.vuln_type} 的方法论。\n"
                             f"**⛔ 严格按 SKILL 的流程和决策树执行，不得用自己的推理覆盖 SKILL 的判定结论。**\n"
                             f"**测试时按 SKILL 主体的 Phase 步骤执行**；\n"
                             f"**SKILL 决策树中明确写了「满足 X → 标 vulnerable」时，必须照办，不得降级为 needs_review 或标 not_vuln**；\n"
-                            f"**标 not_vuln/skipped 前必须按 SKILL 末尾的「最低必测自检清单」逐条交账**。\n\n"
-                            f"{full_content}"
+                            f"**标 not_vuln/skipped 前必须按「最低必测自检清单」逐条交账**。\n\n"
                         )
+                        self.context.add_system(
+                            _skill_head + body,
+                            kind=f"skill:{skill_name}", priority=SYSTEM_PRIORITY_SKILL,
+                        )
+                        if checklist_appendix:
+                            self.context.add_system(
+                                f"## 方法论附表（{c.vuln_type}）：最低必测自检清单\n\n{checklist_appendix}",
+                                kind=f"skill-constraint:{skill_name}",
+                                priority=SYSTEM_PRIORITY_SKILL_CONSTRAINT,
+                            )
                         injected_skills.add(skill_name)
                         injected_count += 1
                         log.info("[%s] 预注入 SKILL: %s → %s (body %d / appendix %d)",

@@ -38,6 +38,33 @@ TOOL_SUMMARY_MAX_ITEMS = int(os.getenv("CONTEXT_TOOL_SUMMARY_MAX", "40"))
 
 COMPRESS_PROMPT = load_prompt("compress")
 
+
+# ============================================================
+# ★ 924：system 消息裁剪（治「固定开销 > 输入预算」）
+#
+# 背景（task_1790223312_c75b16 实测）：
+#   `compress()` 按设计**只压 history、不碰 system_messages**，而超限的恰恰是
+#   system_messages（WORKER_SYSTEM_PROMPT 4113 tok + 2 个 SKILL ≈ 13K tok
+#   + 工具 schema）。实测 w1 估算 17351 > 预算 15564，压缩重试后**仍是 17351**，
+#   于是"压缩后重试"变成 no-op，worker 第 1 轮即崩、36 项 checklist 全跳过。
+#   结论：治超限只能靠**裁剪 system 内容**，不是 compress。
+#
+# 优先级语义：数值越大越不可裁。低优先级的块先丢、大块先丢（同优先级）。
+# ============================================================
+
+#: 绝不裁剪（系统提示本体 / solver 规约）
+SYSTEM_PRIORITY_CRITICAL = 100
+#: 高价值（认证信息 / 业务理解假设 / 加密配置）
+SYSTEM_PRIORITY_HIGH = 50
+#: SKILL 的「最低必测自检清单」—— 关键约束段，晚于主体被裁
+SYSTEM_PRIORITY_SKILL_CONSTRAINT = 45
+#: 未标注来源的默认值
+SYSTEM_PRIORITY_DEFAULT = 40
+#: SKILL 方法论主体（可裁：`knowledge_load_skill` 能随时恢复）
+SYSTEM_PRIORITY_SKILL = 20
+#: SKILL 附表 / 知识库片段（最先裁）
+SYSTEM_PRIORITY_SKILL_APPENDIX = 10
+
 # ★ 2026-05-28：BrowseWorker 专用压缩 prompt
 # 针对浏览器操作场景优化，重点保留 checklist 进度和 selector 失败记录
 BROWSE_COMPRESS_PROMPT = load_prompt("browse_compress")
@@ -61,6 +88,16 @@ class ContextManager:
         self.llm = llm
         self.compress_mode = compress_mode
         self.system_messages: list[Message] = []
+        # ★ 924：与 system_messages 一一对应的元数据（kind / priority），
+        #   供 shrink_system_messages() 按优先级裁剪。不改变 system_messages
+        #   的类型与既有消费点（browse_worker 直接遍历它）。
+        self._system_meta: list[dict] = []
+        # ★ 924：裁剪累计统计（供 ContextGauge / 报告引用）
+        self.system_drop_count: int = 0
+        self.last_shrink_stats: dict = {
+            "ok": True, "dropped": 0, "dropped_kinds": [],
+            "before": 0, "after": 0, "target": 0,
+        }
         self.history: list[Message] = []
         self._compressed_summary: str = ""
         # ★ Token 估算缓存：避免每次 should_compress() 都重新计算
@@ -80,9 +117,112 @@ class ContextManager:
             "after_tokens": 0,
         }
 
-    def add_system(self, content: str) -> None:
+    def add_system(self, content: str, *, kind: str = "", priority: int = 0) -> None:
+        """追加一条 system 消息。
+
+        Args:
+            content: 消息正文。
+            kind: 来源标签（如 ``skill`` / ``auth`` / ``biz`` / ``prompt``），
+                仅用于诊断与裁剪报告。
+            priority: 裁剪优先级，数值越大越不可裁；``0`` 表示用默认值
+                （``SYSTEM_PRIORITY_DEFAULT``）。见文件头部的
+                ``SYSTEM_PRIORITY_*`` 常量。
+        """
         self.system_messages.append(Message(role="system", content=content))
+        self._system_meta.append({
+            "kind": kind or "misc",
+            "priority": int(priority) if priority else SYSTEM_PRIORITY_DEFAULT,
+        })
         self._token_estimate_dirty = True
+
+    def system_overhead(self, tools: list[dict] | None = None) -> int:
+        """当前 system_messages（+ 可选工具 schema）的 token 估算。
+
+        ★ 924：这是**固定开销** —— ``compress()`` 动不了它，所以必须单独测、
+        单独裁。发请求前用它和 ``available_input_budget()`` 做可行性断言。
+        """
+        return estimate_messages_tokens(self.system_messages, tools)
+
+    def system_blocks(self) -> list[dict]:
+        """system 块的诊断视图：``[{index, kind, priority, tokens}]``（按原序）。"""
+        out: list[dict] = []
+        for i, m in enumerate(self.system_messages):
+            meta = self._system_meta[i] if i < len(self._system_meta) else {}
+            out.append({
+                "index": i,
+                "kind": meta.get("kind", "misc"),
+                "priority": meta.get("priority", SYSTEM_PRIORITY_DEFAULT),
+                "tokens": estimate_messages_tokens([m]),
+            })
+        return out
+
+    def shrink_system_messages(
+        self,
+        target_tokens: int,
+        tools: list[dict] | None = None,
+    ) -> dict:
+        """按优先级裁剪 system 消息，使其（含工具开销）不超过 ``target_tokens``。
+
+        策略：每次挑「优先级最低、体积最大」的块丢弃，循环直到达标或只剩
+        CRITICAL 块。**不丢 CRITICAL**（系统提示本体）——若丢完仍超限，
+        返回 ``ok=False`` 由调用方显式失败，而不是假装修好。
+
+        Args:
+            target_tokens: 目标上限（= ``available_input_budget()``）。
+            tools: 工具 schema（其开销必须计入固定开销）。
+
+        Returns:
+            ``{"ok", "dropped", "dropped_kinds", "before", "after", "target"}``
+        """
+        before = self.system_overhead(tools)
+        dropped_kinds: list[str] = []
+        stats = {
+            "ok": before <= target_tokens,
+            "dropped": 0,
+            "dropped_kinds": dropped_kinds,
+            "before": before,
+            "after": before,
+            "target": int(target_tokens),
+        }
+        self.last_shrink_stats = stats
+        if before <= target_tokens:
+            return stats
+
+        # 预算为负 / 窗口极小：连一个 CRITICAL 都放不下，直接判不可行
+        while True:
+            cur = self.system_overhead(tools)
+            if cur <= target_tokens:
+                stats["ok"] = True
+                break
+            # 候选：非 CRITICAL、优先级最低优先；同优先级取体积最大者
+            cand: int | None = None
+            cand_key: tuple[int, int] | None = None
+            for i, m in enumerate(self.system_messages):
+                meta = self._system_meta[i] if i < len(self._system_meta) else {}
+                prio = meta.get("priority", SYSTEM_PRIORITY_DEFAULT)
+                if prio >= SYSTEM_PRIORITY_CRITICAL:
+                    continue
+                size = estimate_messages_tokens([m])
+                key = (prio, -size)
+                if cand_key is None or key < cand_key:
+                    cand_key = key
+                    cand = i
+            if cand is None:
+                # 只剩 CRITICAL 仍超限 → 不可行（由调用方显式失败）
+                stats["ok"] = False
+                break
+            _meta = self._system_meta[cand] if cand < len(self._system_meta) else {}
+            dropped_kinds.append(_meta.get("kind", "misc"))
+            del self.system_messages[cand]
+            if cand < len(self._system_meta):
+                del self._system_meta[cand]
+            self.system_drop_count += 1
+            self._token_estimate_dirty = True
+
+        stats["dropped"] = len(dropped_kinds)
+        stats["after"] = self.system_overhead(tools)
+        self.last_shrink_stats = stats
+        return stats
 
     def add_user(self, content: str) -> None:
         self.history.append(Message(role="user", content=content))

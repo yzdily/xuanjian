@@ -21,6 +21,9 @@ from typing import Any
 ERROR = "ERROR"
 WARNING = "WARNING"
 
+#: L7：单个 finding 的最少 payload 数
+MIN_PAYLOADS = 2
+
 _NA_TOKENS = ("n/a", "na", "不适用", "无", "-", "")
 
 
@@ -65,16 +68,28 @@ def run_coverage_gate(
             )
 
     # L7 — 单 finding payloads >= 2
+    #
+    # ★ 924 修复（task_1790223312_c75b16）：必须**只判定确实带 payloads 字段**的
+    #   finding。本项目 ``confirmed`` 的 schema 里根本没有 ``payloads`` 字段，
+    #   原实现会把 `None` 当 `0` 判 → 100% 误报，实测落盘为
+    #   ``{"level":"L7","severity":"ERROR","message":"finding(?) payloads=0 < 2"}``
+    #   —— 一条连 id 都取不到的幽灵阻断，即使 L6 修好也会稳定把 CI 拉红。
+    #   这与下面 L8 注释里的设计意图一致（"无字段的条目不参与判定，否则会对
+    #   100% 条目误报"），L7 此前漏了这层保护。
     for f in findings:
         if not isinstance(f, dict):
             continue
+        if "payloads" not in f:
+            continue
         payloads = f.get("payloads")
         n = len(payloads) if isinstance(payloads, (list, tuple)) else 0
-        if n < 2:
+        if n < MIN_PAYLOADS:
+            # id 兜底链补上 url —— 避免再出现 `finding(?)` 这种无法定位的输出
+            _fid = f.get("rule") or f.get("id") or f.get("url") or f.get("title") or "?"
             results.append(
                 GateResult(
                     "L7", ERROR, False,
-                    f"finding({f.get('rule') or f.get('id') or '?'}) payloads={n} < 2",
+                    f"finding({_fid}) payloads={n} < {MIN_PAYLOADS}",
                 )
             )
 

@@ -23,6 +23,17 @@ log = get_logger("session.explore")
 class ExplorePhaseMixin:
     """Phase 0 爬虫相关辅助方法。"""
 
+    # ★ 924 复盘（泄漏⑥/放大器）：常见服务器默认欢迎页特征。
+    # 目标返回默认页 = 真实应用未交付，此时"无米下锅"，爬虫极易跟链越界
+    # （task_1790219173: r.aibank.com 默认 nginx 页 → nginx.com → f5.com 污染）。
+    _DEFAULT_PAGE_MARKERS = (
+        ("Welcome to nginx!", "nginx 默认欢迎页"),
+        ("It works!", "Apache 默认页"),
+        ("Apache2 Ubuntu Default Page", "Apache2 Ubuntu 默认页"),
+        ("If you're seeing this page via a web browser, it means you've setup your Apache HTTP Server deployment successfully", "Apache 默认测试页"),
+        ("<title>IIS Windows Server", "IIS 默认页"),
+    )
+
     async def _probe_target_reachable(self, url: str, max_retries: int = 3) -> bool:
         """目标可达性预检：重试 max_retries 次，每次间隔递增。
 
@@ -47,6 +58,19 @@ class ExplorePhaseMixin:
                         _log.warning("目标返回 %d（服务端错误），视为不可达（第 %d/%d 次）: %s",
                                      resp.status_code, attempt + 1, max_retries, url)
                     else:
+                        # ★ 924 复盘：检测默认欢迎页 —— 可达 ≠ 有真实应用
+                        try:
+                            _body = (resp.text or "")[:20000]
+                        except Exception:
+                            _body = ""
+                        for marker, label in self._DEFAULT_PAGE_MARKERS:
+                            if marker in _body:
+                                self._target_default_page = label
+                                _log.warning("目标返回%s（%d 字节），疑似应用未交付: %s",
+                                             label, len(_body), url)
+                                break
+                        else:
+                            self._target_default_page = ""
                         # 2xx/3xx/4xx 都说明目标可达（服务在线，可能需认证或路径不存在）
                         _log.info("目标可达性预检（第 %d 次）: %s => %d",
                                   attempt + 1, url, resp.status_code)
@@ -166,7 +190,11 @@ class ExplorePhaseMixin:
                     "skipped": is_non_biz,
                 })
                 # ★ 非业务路径（管理后台/认证猜测等）不写入 sitemap，仅记录在摘要中
-                if self.sitemap and not is_non_biz:
+                # ★ 924：路径归一化探针（..;/ ;/ %2e）疑似命中兜底页 → 不挂 API。
+                #   "存活"来自绕网关构造，不代表端点真实存在；挂上去会进权威 API 表
+                #   与期望矩阵（实测 ..;/actuator/env 稳定 200/2569B 兜底体）。
+                _probe_suspect = getattr(entry, "probe_suspected_catch_all", False)
+                if self.sitemap and not is_non_biz and not _probe_suspect:
                     self.sitemap.add_page(entry.url, title=entry.title or entry.path)
                     # API-like 路径补建为 API，供下游 FastScanner 测试
                     if self._is_api_like_path(entry.path, entry.content_type):
@@ -179,7 +207,8 @@ class ExplorePhaseMixin:
                     "url": entry.url,
                     "detail": f"目录扫描发现: {entry.path} (HTTP {entry.status}, "
                               f"{entry.length}B, {entry.content_type})"
-                              + (" [非业务路径，已跳过功能创建]" if is_non_biz else ""),
+                              + (" [非业务路径，已跳过功能创建]" if is_non_biz else "")
+                              + (" [疑似兜底页的归一化探针，已跳过]" if _probe_suspect else ""),
                 })
 
             for f in dir_result.findings:
