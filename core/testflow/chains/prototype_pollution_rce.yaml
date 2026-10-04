@@ -1,0 +1,15 @@
+# 链模板 9/12（§6）：原型污染 → gadget → RCE
+chain: prototype_pollution_rce
+name: "原型污染 → gadget → RCE"
+severity_baseline: critical
+hops:
+  - id: pollution_entry
+    role: entry
+    match: { domains: [injection, config], vuln_types: [prototype_pollution], verdicts: [confirmed, open_proof_gap] }
+    produces: [rce_cap]
+  - id: gadget_exec
+    role: sink
+    match: { domains: [injection, config], vuln_types: [rce], verdicts: [confirmed, open_proof_gap] }
+    consumes: [rce_cap]
+    produces: [shell]
+min_hops: 2

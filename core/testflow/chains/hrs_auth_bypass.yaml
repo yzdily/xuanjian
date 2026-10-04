@@ -1,0 +1,15 @@
+# 链模板 11/12（§6）：HTTP 请求走私 → 绕过前置鉴权/缓存投毒
+chain: hrs_auth_bypass
+name: "HTTP 请求走私 → 绕过前置鉴权/缓存投毒"
+severity_baseline: high
+hops:
+  - id: smuggling_entry
+    role: entry
+    match: { domains: [injection], vuln_types: [http_request_smuggling], verdicts: [confirmed, open_proof_gap] }
+    produces: [auth_bypass_cap, cache_poison]
+  - id: authz_bypass
+    role: sink
+    match: { domains: [authz], vuln_types: [auth_bypass], verdicts: [confirmed, open_proof_gap] }
+    consumes: [auth_bypass_cap]
+    produces: [admin_session]
+min_hops: 2

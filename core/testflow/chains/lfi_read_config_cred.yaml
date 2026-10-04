@@ -1,0 +1,22 @@
+# 链模板 5/12（§6）：LFI → 配置文件 → 凭据 → 内部接口
+chain: lfi_read_config_cred
+name: "LFI → 配置文件 → 凭据 → 内部接口"
+severity_baseline: high
+implicit_link: credential
+hops:
+  - id: lfi_entry
+    role: entry
+    match: { domains: [file], vuln_types: [lfi], verdicts: [confirmed, open_proof_gap] }
+    produces: [config_leak, source_read]
+  - id: config_read
+    role: relay
+    match: { domains: [config], verdicts: [confirmed, open_proof_gap] }
+    consumes: [config_leak]
+    produces: [credential]
+    counter_evidence:
+      - "响应为统一登录页 / catch_all 壳"
+  - id: internal_access
+    role: sink
+    match: { domains: [authz, config], vuln_types: [auth_bypass, privilege_escalation], verdicts: [confirmed, open_proof_gap] }
+    consumes: [credential]
+min_hops: 2

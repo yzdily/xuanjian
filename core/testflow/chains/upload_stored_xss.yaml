@@ -1,0 +1,20 @@
+# 链模板 3/12（§6）：上传 → 可读回 → 存储 XSS → 管理员会话
+chain: upload_stored_xss
+name: "上传 → 可读回 → 存储 XSS → 管理员会话"
+severity_baseline: high
+hops:
+  - id: upload_entry
+    role: entry
+    match: { domains: [upload], vuln_types: [upload], verdicts: [confirmed, open_proof_gap] }
+    produces: [file_readback]
+  - id: readback_relay
+    role: relay
+    match: { domains: [file], verdicts: [confirmed, open_proof_gap] }
+    consumes: [file_readback]
+    produces: [storage_or_reflect]
+  - id: stored_xss
+    role: sink
+    match: { vuln_types: [xss], verdicts: [confirmed, open_proof_gap] }
+    consumes: [storage_or_reflect]
+    produces: [session_hijack]
+min_hops: 2

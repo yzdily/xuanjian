@@ -1,0 +1,22 @@
+# 链模板 4/12（§6）：IDOR → 越权读 → 敏感字段 → 横向枚举
+chain: idor_bola_horizontal
+name: "IDOR → 越权读 → 敏感字段 → 横向枚举"
+severity_baseline: high
+implicit_link: credential
+hops:
+  - id: idor_entry
+    role: entry
+    match: { vuln_types: [idor], verdicts: [confirmed, open_proof_gap] }
+    produces: [other_user_data, credential]
+  - id: authz_read
+    role: relay
+    match: { domains: [authz], verdicts: [confirmed, open_proof_gap] }
+    consumes: [other_user_data]
+    produces: [credential, weak_authz]
+    counter_evidence:
+      - "响应为统一登录页 / catch_all 壳"
+  - id: sensitive_pull
+    role: sink
+    match: { vuln_types: [sensitive_response], verdicts: [confirmed, open_proof_gap] }
+    consumes: [credential]
+min_hops: 2

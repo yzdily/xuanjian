@@ -1,0 +1,15 @@
+# 链模板 6/12（§6）：XXE → 外带/SSRF → 内网探测
+chain: xxe_ssrf
+name: "XXE → 外带/SSRF → 内网探测"
+severity_baseline: high
+hops:
+  - id: xxe_entry
+    role: entry
+    match: { domains: [injection], vuln_types: [xxe], verdicts: [confirmed, open_proof_gap] }
+    produces: [internal_reach, file_read]
+  - id: oob_relay
+    role: sink
+    match: { domains: [ssrf], vuln_types: [ssrf], verdicts: [confirmed, open_proof_gap] }
+    consumes: [internal_reach]
+    produces: [http_response_controlled]
+min_hops: 2

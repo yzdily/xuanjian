@@ -1,0 +1,20 @@
+# 链模板 7/12（§6）：SQLi → 拖库/凭据 → 后台登录横向
+chain: sqli_cred_lateral
+name: "SQLi → 拖库/凭据 → 后台登录横向"
+severity_baseline: critical
+implicit_link: credential
+hops:
+  - id: sqli_entry
+    role: entry
+    match: { domains: [injection], vuln_types: [sqli], verdicts: [confirmed, open_proof_gap] }
+    produces: [db_read, credential, file_write]
+  - id: db_dump
+    role: relay
+    match: { domains: [injection], vuln_types: [sensitive_response], verdicts: [confirmed, open_proof_gap] }
+    consumes: [db_read]
+    produces: [credential]
+  - id: lateral_login
+    role: sink
+    match: { domains: [authz, config], vuln_types: [auth_bypass], verdicts: [confirmed, open_proof_gap] }
+    consumes: [credential]
+min_hops: 2

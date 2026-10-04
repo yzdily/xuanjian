@@ -1,0 +1,15 @@
+# 链模板 12/12（§6）：开放重定向 → OAuth code 劫持 → 账号接管
+chain: openredirect_oauth_ato
+name: "开放重定向 → OAuth code 劫持 → 账号接管"
+severity_baseline: high
+hops:
+  - id: redirect_entry
+    role: entry
+    match: { domains: [ssrf], vuln_types: [open_redirect], verdicts: [confirmed, open_proof_gap] }
+    produces: [code_hijack]
+  - id: oauth_ato
+    role: sink
+    match: { domains: [authz], vuln_types: [auth_bypass], verdicts: [confirmed, open_proof_gap] }
+    consumes: [code_hijack]
+    produces: [admin_session]
+min_hops: 2

@@ -1,0 +1,22 @@
+# 链模板 2/12（§6）：上传 → 解析/包含 → 执行（RCE）
+chain: upload_parse_exec
+name: "上传 → 解析/包含 → 执行（RCE）"
+severity_baseline: critical
+hops:
+  - id: upload_entry
+    role: entry
+    match: { domains: [upload], vuln_types: [upload], verdicts: [confirmed, open_proof_gap] }
+    produces: [file_write, file_exec]
+  - id: parse_include
+    role: relay
+    match: { domains: [file], vuln_types: [lfi], verdicts: [confirmed, open_proof_gap] }
+    consumes: [file_write]
+    produces: [source_read, config_leak]
+    counter_evidence:
+      - "响应为统一登录页 / catch_all 壳"
+  - id: exec_sink
+    role: sink
+    match: { vuln_types: [rce], verdicts: [confirmed, open_proof_gap] }
+    consumes: [file_exec]
+    produces: [shell]
+min_hops: 2

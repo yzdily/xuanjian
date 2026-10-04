@@ -71,8 +71,10 @@ def derive_expected_vuln_types(
         method = str(getattr(ep, "method", "GET")).upper()
         url = str(getattr(ep, "url", ""))
     else:
-        # 未打标兜底：现场 classify
-        from .risk_domain import classify_risk_domain
+        # 未打标兜底：现场 classify。★ 必须导入权威源 core.endpoint.risk_domain；
+        # 旧写法 `from .risk_domain` 指向不存在的 core.loops.risk_domain，
+        # 一旦走到本分支即 ModuleNotFoundError —— 真实运行缺陷，已修。
+        from core.endpoint.risk_domain import classify_risk_domain
         tags = {"risk_domain": classify_risk_domain(str(ep), "GET")}
         method, url = "GET", str(ep)
 

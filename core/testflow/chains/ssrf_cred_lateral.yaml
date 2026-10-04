@@ -1,0 +1,29 @@
+# 链模板 1/12（§6）：SSRF → 云元数据 → 凭据窃取 → 横向移动
+# 契约：§5.1；词表经 validate_chain_template（模板词表越界即红）
+chain: ssrf_cred_lateral
+name: "SSRF → 云元数据 → 凭据窃取 → 横向移动"
+severity_baseline: critical
+implicit_link: credential   # 值池未显式接上时允许"凭据类"隐式续链（降一档）
+hops:
+  - id: ssrf_entry
+    role: entry
+    match: { domains: [ssrf], vuln_types: [], verdicts: [confirmed, open_proof_gap] }
+    produces: [internal_reach, http_response_controlled]
+  - id: metadata_relay
+    role: relay
+    match: { domains: [config], verdicts: [confirmed, open_proof_gap] }
+    consumes: [internal_reach]
+    produces: [credential, config_leak]
+    counter_evidence:            # 命中任一 → 该跳判 ruled_out（链坍缩，§3.3）
+      - "响应为统一登录页 / catch_all 壳"
+      - "内网地址被 WAF 明确 403 且无可达回显"
+  - id: cred_leak
+    role: relay
+    match: { vuln_types: [sensitive_response], verdicts: [confirmed, open_proof_gap] }
+    consumes: [credential]
+    produces: [credential]
+  - id: lateral_move
+    role: sink
+    match: { domains: [authz, config], vuln_types: [auth_bypass, privilege_escalation, rce], verdicts: [confirmed, open_proof_gap] }
+    consumes: [credential]
+min_hops: 2

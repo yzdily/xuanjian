@@ -1,0 +1,53 @@
+# 能力池（§3.1）：漏洞类型 → requires/produces 能力前/后条件。
+# 链模板 hops 的 consumes/produces 引用此处的能力键；可达性推导：
+# chain 可达 ⟺ ∃ 路径 h0→…→hn 使 produces(hi) ∩ requires(h(i+1)) ≠ ∅。
+# 中间能力键（internal_reach/credential/config_leak 等）为 requires/produces 的取值，不单列。
+capabilities:
+  ssrf:
+    requires: [server_side_fetch]
+    produces: [internal_reach, http_response_controlled]
+  sensitive_response:
+    requires: [readable_endpoint]
+    produces: [credential, config_leak]
+  idor:
+    requires: [object_ref, weak_authz]
+    produces: [other_user_data, credential]
+  upload:
+    requires: [file_write]
+    produces: [file_readback, file_exec]
+  lfi:
+    requires: [path_param]
+    produces: [config_leak, source_read]
+  sqli:
+    requires: [injectable_param]
+    produces: [db_read, credential, file_write]
+  xxe:
+    requires: [xml_parser]
+    produces: [file_read, internal_reach]
+  auth_bypass:
+    requires: [credential]
+    produces: [admin_session]
+  rce:
+    requires: [file_exec_or_cmdi]
+    produces: [shell, lateral]
+  mass_assignment:
+    requires: [json_body]
+    produces: [privilege_escalation_cap]
+  prototype_pollution:
+    requires: [js_merge]
+    produces: [rce_cap]
+  race_conditions:
+    requires: [state_change]
+    produces: [state_change_bypass]
+  logic:
+    requires: [state_change_bypass]
+    produces: [logic_bypassed]
+  xss:
+    requires: [storage_or_reflect]
+    produces: [session_hijack]
+  http_request_smuggling:
+    requires: [frontend_backend_desync]
+    produces: [auth_bypass_cap, cache_poison]
+  open_redirect:
+    requires: [redirect_param]
+    produces: [code_hijack]

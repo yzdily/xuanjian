@@ -499,29 +499,16 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
 
     # ★ testflow G6 前置（v3 §五 Stage 5）：GATE-TRI 六项准入 —— finish_scan 前插。
     # engine.finish() 已备（core/testflow/engine.py）；对 sitemap 汇总的
-    # VULNERABLE/CONFIRMED findings 跑溯源门 + verdict 三道门：
+    # VULNERABLE findings 跑溯源门 + verdict 三道门：
     #   缺 evidence_request/response → 转人工复核（NEEDS_REVIEW，不入库不静默删）；
     #   verdict 三道门未过 → severity 降 Info 留人工复核。
     # XUANJIAN_GATE_TRI=0 可关闭（兼容存量回归钉）。
     if session.sitemap and os.getenv("XUANJIAN_GATE_TRI", "1") != "0":
         try:
             from core.testflow.engine import TestflowEngine
-            _gate_findings: list[dict] = []
-            for fp in session.sitemap.features.values():
-                for c in fp.checklist:
-                    if c.result and c.result.name in ("VULNERABLE", "CONFIRMED"):
-                        _gate_findings.append({
-                            "vuln_type": c.vuln_type,
-                            "severity": (getattr(c, "severity", "medium") or "medium"),
-                            "url": (", ".join(fp.related_apis[:2]) if fp.related_apis else "") or fp.page_url,
-                            "method": "",
-                            "detail": c.detail or "",
-                            "evidence_request": getattr(c, "evidence_request", "") or getattr(c, "evidence_flow_id", "") or (c.detail or "")[:300],
-                            "evidence_response": getattr(c, "evidence_response", "") or (c.detail or "")[300:800],
-                            "evidence": getattr(c, "evidence_request", "") or (c.detail or "")[:300],
-                            "response": getattr(c, "evidence_response", "") or (c.detail or "")[300:800],
-                            "_check": c,
-                        })
+            from core.testflow.findings import collect_triage_findings
+            # v3 §3v3-4：内联采集抽出为 collect_triage_findings，与链引擎输入同源复用
+            _gate_findings = collect_triage_findings(session.sitemap)
             if _gate_findings:
                 _tf_engine = TestflowEngine(session, session.sitemap)
                 _admitted, _blocked = _tf_engine.finish(_gate_findings)
@@ -554,6 +541,23 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
                     pass
         except Exception as e:
             log.warning("GATE-TRI 异常（不影响报告主流程）: %s", e, exc_info=True)
+
+    # ★ 链式规则（v4 §5.7）：GATE-TRI 收敛后、矩阵落盘前，纯分析层串联攻击链。
+    #   零 IO/零新请求，只消费三态收敛集；XUANJIAN_CHAIN_RULES=0 可关闭；
+    #   异常不影响主报告；findings 与 GATE-TRI 同源 collect_triage_findings（§3v3-4）。
+    _chain_path = ""
+    if session.sitemap and os.getenv("XUANJIAN_CHAIN_RULES", "1") != "0":
+        try:
+            from core.testflow.chain_engine import load_all_chains, load_capabilities, match_all
+            from core.testflow.chain_render import write_attack_chain_report
+            from core.testflow.findings import collect_triage_findings
+            _chain_findings = collect_triage_findings(session.sitemap)
+            _camps = match_all(load_all_chains(), _chain_findings, load_capabilities())
+            if _camps:
+                _chain_path = write_attack_chain_report(_camps, session)
+                yield session._event("system", f"🔗 攻击链分析: {len(_camps)} 条链 → {_chain_path}")
+        except Exception as _chain_e:
+            log.warning("攻击链分析异常（不影响主报告）: %s", _chain_e, exc_info=True)
 
     session.phase = "report"
     # 持久化扫描完成状态
@@ -596,7 +600,7 @@ async def _enter_report_phase(session: "AgentSession") -> AsyncGenerator[str, No
     if session.sitemap:
         for fp in session.sitemap.features.values():
             for c in fp.checklist:
-                if c.result and c.result.name in ("VULNERABLE", "CONFIRMED"):
+                if c.result and c.result.name in ("VULNERABLE",):
                     upsert_vuln(
                         session.task_id, fp.id, c.vuln_type,
                         feature_name=fp.name, severity=getattr(c, "severity", "medium"),

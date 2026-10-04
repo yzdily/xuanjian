@@ -1,0 +1,15 @@
+# 链模板 8/12（§6）：Mass Assignment → 改 role → 提权
+chain: massassgn_privesc
+name: "Mass Assignment → 改 role → 提权"
+severity_baseline: critical
+hops:
+  - id: massassign_entry
+    role: entry
+    match: { domains: [authz], vuln_types: [privilege_escalation], verdicts: [confirmed, open_proof_gap] }
+    produces: [privilege_escalation_cap]
+  - id: role_change
+    role: sink
+    match: { domains: [authz], vuln_types: [auth_bypass, privilege_escalation], verdicts: [confirmed, open_proof_gap] }
+    consumes: [privilege_escalation_cap]
+    produces: [admin_session]
+min_hops: 2

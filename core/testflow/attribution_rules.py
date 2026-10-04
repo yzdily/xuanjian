@@ -1,7 +1,9 @@
-"""域归属规则 — bug-legacy RISK_DOMAIN_RULES 8 域复制件（v3 §2.1）。
+"""域归属规则 — 权威源转发件（v3 §2.1 → v4 漂移修正）。
 
-来源：api-pentest-extension/skills/api-pentest-workflow/scripts/endpoint_analyzer.py:501-531
-口径纪律：判定表照抄已验证实现（161 测试通过），只适配不改口径。
+判定表与分类函数**不再复制**，直接从权威源 `core.endpoint.risk_domain`
+（链式规则 v4 词表 A 源）导入——v4 §8 双实现对拍发现本文件的旧复制件已过期：
+缺 Security 修正（"link"/"load" 过宽关键字移除——"load" 子串误命中 "upload"
+产生 ssrf 假阳）、缺中文关键字、缺 query 截断。复制件已删除，单点维护。
 
 与 64 域方案的关系：本表是归属层的稳定 8 域 vocab；64 域目录在 playbook 层
 按域展开（authz 域 playbook 内含 IDOR/Mass Assignment/Batch Survey 等子类），
@@ -11,6 +13,9 @@ from __future__ import annotations
 
 import re
 
+from core.endpoint.risk_domain import RISK_DOMAIN_RULES  # noqa: E402  权威源，原样导入
+from core.endpoint.risk_domain import classify_risk_domain  # noqa: E402  判定复用，不重复实现
+
 __all__ = [
     "RISK_DOMAIN_RULES",
     "RISK_DOMAINS",
@@ -19,26 +24,7 @@ __all__ = [
     "PHASE_ORDER",
     "DOMAIN_PHASE",
     "script_applies_to_endpoint",
-]
-
-# bug-legacy §2 分类法（已落地 v1.0）：路径特征 → 归属域（多域并集）
-RISK_DOMAIN_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("upload", ("upload", "uploads", "file", "files", "attachment", "attachments",
-                "media", "import", "avatar", "头像", "oss", "s3")),
-    ("ssrf", ("url", "fetch", "proxy", "webhook", "redirect", "callback",
-              "link", "load", "remote")),
-    ("injection", ("query", "search", "sql", "report", "export", "exec",
-                   "cmd", "inject", "render", "template")),
-    ("authz", ("user", "users", "order", "orders", "role", "roles", "admin",
-               "permission", "account", "tenant", "org", "profile", "member",
-               "customer", "agent", "dept")),
-    ("csrf", ("conf", "config", "setting", "settings", "csrf", "token",
-              "password", "reset", "oauth", "sso")),
-    ("file", ("export", "download", "getfile", "path", "temp",
-              "read", "document")),
-    ("business", ("pay", "transfer", "stock", "coupon", "code", "batch", "recharge")),
-    ("config", ("getparamconfiglist", "getconfig", "queryconfig", "actuator",
-                "swagger", "rememberme", "env")),
+    "is_write_endpoint",
 ]
 
 # 8 域 vocab（vocab 完备性断言用）
@@ -58,21 +44,6 @@ _WRITE_VERB_PATH = re.compile(
     r"/(create|add|update|delete|remove|edit|modify|save|submit|insert|import|upload)",
     re.IGNORECASE,
 )
-
-
-def classify_risk_domain(path: str, method: str = "GET") -> list[str]:
-    """返回归属域列表（多域并集，去重保序）— bug-legacy §2.1 铁律。
-
-    risk_domain 是列表而非单值：一个接口可同时命中多个域
-    （如上传接口下载时弹 XSS → upload + file）。
-    """
-    p = (path or "").lower()
-    matched = [dom for dom, kws in RISK_DOMAIN_RULES if any(k in p for k in kws)]
-    if matched:
-        return list(dict.fromkeys(matched))
-    if str(method).upper() in _STATE_CHANGING_METHODS:
-        return ["authz"]
-    return ["general"]
 
 
 def group_by_risk_domain(feature_points) -> dict[str, list]:
