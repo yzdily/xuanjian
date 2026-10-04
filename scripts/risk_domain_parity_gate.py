@@ -21,8 +21,7 @@ core/endpoint/risk_domain.py 后来做了 Security 修正（移除 "link"/"load"
   故模块名以「仓库根」为基准计算；**绝不可**再为 ``core`` 等目录追加
   ``__init__.py``（会引入 src 布局歧义，令 ``from .risk_domain`` 被解析成
   幽灵模块 ``core.core.…``，属门禁自身缺陷）。
-  跳过目录（如归档参考项目 ``hollowing-optimization-plan`` / ``strix-main``）
-  不参与扫描，即使它们被误标为包也无效。
+  跳过目录（第三方/归档项目）不参与扫描，即使它们被误标为包也无效。
 
 局限：importlib 等动态导入不在 AST 静态扫描范围内（门禁只盯静态引用）。
 
@@ -50,7 +49,12 @@ AUTHORITY_MODULE = "core.endpoint.risk_domain"
 AUTHORITY_REL = "core/endpoint/risk_domain.py"
 GUARDED_SYMBOLS = ("RISK_DOMAIN_RULES", "classify_risk_domain")
 NOQA_MARKER = "# noqa: risk-domain-gate"
-# 归档的参考项目（非本项目代码）与第三方包，不纳入扫描范围
+# 不纳入扫描范围的目录：
+#   - 第三方依赖/缓存：__pycache__ / .git / node_modules / venv / site-packages
+#   - hollowing-optimization-plan：优化方案归档区（含 strix-main）
+#   - strix-main：**第三方开源项目 Strix（github.com/usestrix/strix）的源码副本**，
+#     被 gitignore、不被本项目引用；其漏洞分类（29 类）已固化为本项目源码
+#     （core/testflow/chain_rules.py:39），故本体不参与构建，也不应被扫描。
 _SKIP_DIR_NAMES = {
     "__pycache__", ".git", "node_modules", "venv", "site-packages",
     "hollowing-optimization-plan", "strix-main",
@@ -75,7 +79,7 @@ class _Registry:
 
 
 def _is_skipped(path: Path, root: Path) -> bool:
-    """__pycache__/.git/venv/隐藏目录/归档参考项目跳过。"""
+    """__pycache__/.git/venv/隐藏目录/第三方与归档项目跳过。"""
     try:
         rel_parts = path.relative_to(root).parts[:-1]
     except ValueError:
@@ -108,7 +112,7 @@ def _build_registry(root: Path) -> _Registry:
     module_is_pkg: dict[str, bool] = {}
     for py in _iter_py_files(root):
         try:
-            rel = py.relative_to(base)
+            py.relative_to(base)
         except ValueError:
             continue
         mod = _module_name_of(py, base)
