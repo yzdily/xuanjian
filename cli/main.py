@@ -28,9 +28,9 @@ def _build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="启动一次扫描")
     r.add_argument(
         "--mode",
-        choices=["fast", "standard", "deep"],
+        choices=["fast", "standard", "deep", "smart"],
         default="standard",
-        help="扫描模式（fast/standard/deep）",
+        help="扫描模式（fast/standard/deep/smart，与 core ScanMode 枚举对齐）",
     )
     r.add_argument(
         "--vuln-class",
@@ -128,8 +128,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 url=args.url,
             ) or 0
         except TypeError:
-            # 旧签名不接 kwargs；回退到位置参数或无参
-            rc = start_browser_feature_test() or 0
+            # 旧签名不接 kwargs；回退到位置参数或无参。
+            # 回退调用同样可能 TypeError（如签名要求 session）——必须包住，
+            # 否则未捕获异常直接 traceback 崩溃（P1 修复：run 链路崩溃防护）。
+            try:
+                rc = start_browser_feature_test() or 0
+            except TypeError as e:
+                print(
+                    f"[ERR] 扫描入口签名不兼容（{e}）：请改用 Web 界面或"
+                    "等待 CLI 编排入口适配",
+                    file=sys.stderr,
+                )
+                return 2
+        if not isinstance(rc, int):
+            # 异步生成器/协程等非退出码对象不能作为进程退出码
+            print(
+                f"[ERR] 扫描入口返回了非退出码对象（{type(rc).__name__}）："
+                "编排 API 契约异常",
+                file=sys.stderr,
+            )
+            return 2
         if args.ci_gate:
             return _apply_ci_gate(rc)
         return rc

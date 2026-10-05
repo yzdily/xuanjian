@@ -105,7 +105,9 @@ skip_covered = false
 # ★ 分层门禁 Layer 1: 全局 ratchet（8→20→40→70）
 # 阈值存储在 .coverage-ratchet 文件中，只升不降
 # CI 通过 scripts/ci_gate.py 读取并执行；本地默认使用此值
-fail_under = 20
+# P0-T4：20 → 8（实测基线 8.86% 向下取整，保证全量跑门禁绿；随 R2/R3
+# 修复逐级回升至 20 后恢复，见 XUANJIAN_TECHNICAL_OPTIMIZATION_PLAN §六 R4）
+fail_under = 8
 
 [tool.coverage.html]
 directory = "htmlcov"

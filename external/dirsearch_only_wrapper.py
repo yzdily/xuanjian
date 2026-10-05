@@ -21,7 +21,7 @@ dirsearch_scanner.py（位于 api-pentest-extension/skills/content-discovery-dir
     PENTEST_TOKEN        — Bearer token / Authorization 值
     PENTEST_COOKIES      — Cookie 字符串
     PENTEST_PROXY        — 代理地址（可选）
-    PENTEST_SKILLS_DIR   — skills 目录路径（默认: D:\\qianwencode\\api-pentest-extension\\skills）
+    PENTEST_SKILLS_DIR   — skills 目录路径（默认: 仓库内 external/skills，可被环境变量覆盖）
     DIRSEARCH_THREADS    — 并发线程数（默认: 15）
     DIRSEARCH_RECURSIVE  — 是否递归扫描（"1"/"true" 启用）
     DIRSEARCH_MAX_DEPTH  — 递归深度（默认: 2）
@@ -40,8 +40,17 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-# ── 默认 skills 目录（用户本地 api-pentest-extension 路径）──
-DEFAULT_SKILLS_DIR = r"D:\qianwencode\api-pentest-extension\skills"
+# ── 默认 skills 目录（环境无关，P0-T5 修复：不再硬编码他机绝对路径）──
+# 解析顺序：环境变量 PENTEST_SKILLS_DIR（由玄鉴 runner 注入）→
+# 仓库内 external/skills（相对本文件，随仓库迁移）。
+def _resolve_default_skills_dir() -> str:
+    env_dir = os.environ.get("PENTEST_SKILLS_DIR")
+    if env_dir:
+        return env_dir
+    return str(Path(__file__).resolve().parent / "skills")
+
+
+DEFAULT_SKILLS_DIR = _resolve_default_skills_dir()
 
 # ── dirsearch 脚本在 registry 中的定位 ──
 DIRSEARCH_SKILL = "content-discovery-dirsearch"

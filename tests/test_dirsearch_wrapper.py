@@ -349,16 +349,21 @@ class TestNormalizeFindingCompat:
 # ============================================================
 
 class TestLocateScript:
-    def test_default_skills_dir_exists(self):
-        """用户本地 api-pentest-extension 目录存在。"""
+    def test_default_skills_dir_resolves(self):
+        """默认 skills 目录解析为非空路径（环境无关，P0-T5）。
+
+        不再断言"用户本地目录必须存在"（他机硬编码路径在其他环境必红），
+        只验证解析逻辑不崩且给出绝对路径；存在性由 skip 分支覆盖。
+        """
         skills_dir = Path(DEFAULT_SKILLS_DIR)
-        assert skills_dir.exists(), f"skills 目录不存在: {skills_dir}"
+        assert str(DEFAULT_SKILLS_DIR), "默认 skills 目录解析为空"
+        assert skills_dir.is_absolute(), f"默认 skills 目录应为绝对路径: {skills_dir}"
 
     def test_locate_dirsearch_in_default_path(self):
-        """在默认路径能找到 dirsearch_scanner.py。"""
+        """在默认路径能找到 dirsearch_scanner.py（目录缺失则 skip）。"""
         skills_dir = Path(DEFAULT_SKILLS_DIR)
         if not skills_dir.exists():
-            pytest.skip(f"skills 目录不存在: {skills_dir}")
+            pytest.skip(f"skills 目录不存在（环境无该依赖）: {skills_dir}")
         script_path = locate_dirsearch_script(skills_dir)
         assert script_path is not None
         assert script_path.exists()
